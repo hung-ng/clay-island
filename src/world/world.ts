@@ -2,8 +2,9 @@ import { EventBus, type TargetKind } from '../core/events'
 import { RNG } from '../core/rng'
 import { Villager, spawnVillagers } from '../villagers/villager'
 import { craterAt } from './craters'
+import { FIRE_CONFIG, FireSystem, type FireEvent, type Flammable } from './fire'
 import { Island } from './island'
-import { Campfire, Hut, Tree } from './objects'
+import { Campfire, FlowerPatch, Grave, Hut, Pond, Tree } from './objects'
 import { placeSites } from './scatter'
 
 type Position = { x: number; z: number }
@@ -28,10 +29,12 @@ export class World {
   trees: Tree[] = []
   huts: Hut[] = []
   campfire!: Campfire
-  graves: unknown[] = []
-  ponds: unknown[] = []
+  graves: Grave[] = []
+  ponds: Pond[] = []
+  flowerPatches: FlowerPatch[] = []
   villagers: Villager[] = []
   private repopulateTimer: number | null = null
+  private fireSystem = new FireSystem()
 
   constructor(public island: Island, public bus = new EventBus()) {}
 
@@ -46,10 +49,11 @@ export class World {
   nearestBurning(x: number, z: number, radius: number): Position | null {
     let nearest: Position | null = null
     let nearestDistance = radius
-    const burning: Array<Tree | Hut> = [
-      ...this.trees.filter(tree => tree.state === 'burning'),
-      ...this.huts.filter(hut => hut.state === 'burning'),
+    const burning: Array<Tree | Hut | Campfire> = [
+      ...this.trees.filter(tree => tree.burning),
+      ...this.huts.filter(hut => hut.burning),
     ]
+    if (this.campfire?.burning) burning.push(this.campfire)
     for (const object of burning) {
       const distance = Math.hypot(object.x - x, object.z - z)
       if (distance <= nearestDistance) {
@@ -70,6 +74,16 @@ export class World {
     return 'ground'
   }
 
+  villagerAt(x: number, z: number, radius = 1): Villager | null {
+    return this.villagers
+      .filter(villager => villager.alive && within(villager, x, z, radius))
+      .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0] ?? null
+  }
+
+  pondAt(x: number, z: number): Pond | null {
+    return this.ponds.find(pond => within(pond, x, z, pond.radius)) ?? null
+  }
+
   objectsNear(x: number, z: number, radius: number): Array<Tree | Hut | Campfire> {
     const objects: Array<Tree | Hut | Campfire> = [...this.trees, ...this.huts]
     if (this.campfire) objects.push(this.campfire)
@@ -80,6 +94,158 @@ export class World {
     for (const villager of this.villagers) {
       if (villager.alive && within(villager, x, z, radius)) villager.panic({ x, z })
     }
+  }
+
+  igniteNear(x: number, z: number, radius: number, rng: RNG, chance: number): void {
+    const candidates: Array<Tree | Hut | Campfire> = [...this.trees, ...this.huts]
+    if (this.campfire) candidates.push(this.campfire)
+    for (const object of candidates) {
+      if (!within(object, x, z, radius) || !rng.chance(chance)) continue
+      const wasBurning = object.burning
+      object.ignite()
+      if (!wasBurning && object.burning) {
+        this.bus.emit({
+          type: 'fire:ignited',
+          kind: object.kind,
+          bySpread: false,
+          burning: this.burningCount(),
+        })
+      }
+    }
+  }
+
+  igniteTarget(kind: 'tree' | 'hut', x: number, z: number): void {
+    const candidates: Array<Tree | Hut> = kind === 'tree' ? this.trees : this.huts
+    const object = candidates
+      .filter(candidate => within(candidate, x, z, kind === 'tree' ? 1.3 : 1.8))
+      .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0]
+    if (!object) return
+    const wasBurning = object.burning
+    object.ignite()
+    if (wasBurning || !object.burning) return
+    this.bus.emit({
+      type: 'fire:ignited', kind: object.kind, bySpread: false, burning: this.burningCount(),
+    })
+    this.alarmNear(object.x, object.z, 7)
+  }
+
+  addGrave(x: number, z: number, rng: RNG, lowFx = false): Grave {
+    const grave = new Grave(x, z, this.island.sampleHeight(x, z), rng, lowFx)
+    this.graves.push(grave)
+    this.island.group.add(grave.group)
+    return grave
+  }
+
+  fillCratersNear(x: number, z: number, radius: number, rng: RNG, lowFx = false): number {
+    let created = 0
+    for (const crater of this.island.craters) {
+      if (Math.hypot(crater.x - x, crater.z - z) + crater.radius > radius) continue
+      if (this.ponds.some(pond => Math.hypot(pond.x - crater.x, pond.z - crater.z) < 0.1)) continue
+      const waterY = this.island.sampleHeight(crater.x, crater.z) + crater.depth * 0.48
+      const pond = new Pond(crater.x, crater.z, crater.radius, waterY, rng, lowFx)
+      this.ponds.push(pond)
+      this.island.group.add(pond.group)
+      this.bus.emit({ type: 'pond:created', x: crater.x, z: crater.z })
+      created++
+    }
+    return created
+  }
+
+  growFruitNear(x: number, z: number, radius: number): number {
+    let grown = 0
+    for (const tree of this.trees) {
+      if (tree.state !== 'normal' || !within(tree, x, z, radius) || !tree.growFruit()) continue
+      this.bus.emit({ type: 'fruit:grown', treeId: tree.id })
+      grown++
+    }
+    return grown
+  }
+
+  bloomNear(x: number, z: number, radius: number, rng: RNG, lowFx = false): FlowerPatch {
+    const patch = new FlowerPatch(x, z, radius, (px, pz) => this.island.sampleHeight(px, pz), rng, lowFx)
+    this.flowerPatches.push(patch)
+    this.island.group.add(patch.group)
+    this.bus.emit({ type: 'flower:bloomed' })
+    return patch
+  }
+
+  grumpNear(x: number, z: number, radius: number): void {
+    for (const villager of this.villagers) {
+      if (villager.alive && within(villager, x, z, radius)) villager.grumpAtRain(this)
+    }
+  }
+
+  sadNear(x: number, z: number, radius: number): void {
+    for (const villager of this.villagers) {
+      if (villager.alive && within(villager, x, z, radius)) villager.emote('sad')
+    }
+  }
+
+  updateGraves(dt: number): void {
+    for (const grave of this.graves) grave.update(dt)
+  }
+
+  updatePonds(qt: number): void {
+    for (const pond of this.ponds) pond.update(qt)
+  }
+
+  updateFire(dt: number, rng: RNG): void {
+    const events = this.fireSystem.update(dt, this.flammables(), rng)
+    for (const event of events) {
+      const object = this.fireObject(event.id, event.kind)
+      if (!object) continue
+      if (event.type === 'ignited') {
+        object.ignite()
+        this.bus.emit({
+          type: 'fire:ignited',
+          kind: event.kind,
+          bySpread: true,
+          burning: this.burningCount(),
+        })
+        this.alarmNear(object.x, object.z, 7)
+        continue
+      }
+      if (event.type === 'burnt') {
+        if (event.kind === 'tree') this.trees.find(tree => tree.id === event.id)?.setBurnt()
+        else this.huts.find(hut => hut.id === event.id)?.setRuin()
+        this.bus.emit({ type: 'burnt', kind: event.kind })
+      }
+    }
+  }
+
+  douseNear(
+    x: number,
+    z: number,
+    radius: number = FIRE_CONFIG.douseRadius,
+    byRain = false,
+  ): void {
+    const burningBefore = this.burningCount()
+    const campfireWasLit = this.campfire?.lit && within(this.campfire, x, z, radius)
+    const events = this.fireSystem.douse(x, z, this.flammables(), radius)
+    for (const event of events) {
+      this.fireObject(event.id, event.kind)?.extinguish()
+      this.bus.emit({ type: 'fire:doused', byRain, burning: burningBefore })
+    }
+    if (campfireWasLit && !events.some(event => event.kind === 'campfire')) {
+      this.campfire.douse()
+      this.bus.emit({ type: 'fire:doused', byRain, burning: burningBefore })
+    }
+  }
+
+  updateFireLights(camera: Position): void {
+    const candidates: Array<Tree | Hut | Campfire> = [
+      ...this.trees.filter(tree => tree.burning),
+      ...this.huts.filter(hut => hut.burning),
+    ]
+    if (this.campfire?.lit) candidates.push(this.campfire)
+    candidates.sort((a, b) => (
+      (a.x - camera.x) ** 2 + (a.z - camera.z) ** 2
+      - (b.x - camera.x) ** 2 - (b.z - camera.z) ** 2
+    ))
+    const enabled = new Set(candidates.slice(0, 3))
+    for (const tree of this.trees) tree.setFireLightEnabled(enabled.has(tree))
+    for (const hut of this.huts) hut.setFireLightEnabled(enabled.has(hut))
+    if (this.campfire) this.campfire.setFireLightEnabled(enabled.has(this.campfire))
   }
 
   repopulate(dt: number, rng: RNG, lowFx = false): void {
@@ -101,6 +267,27 @@ export class World {
       animateIn: true,
     })
     this.repopulateTimer = null
+  }
+
+  private burningCount(): number {
+    return this.trees.filter(tree => tree.burning).length
+      + this.huts.filter(hut => hut.burning).length
+      + Number(this.campfire?.burning ?? false)
+  }
+
+  private flammables(): Flammable[] {
+    const items: Flammable[] = [
+      ...this.trees,
+      ...this.huts.filter(hut => hut.state === 'built' || hut.state === 'burning' || hut.state === 'ruin'),
+    ]
+    if (this.campfire) items.push(this.campfire)
+    return items
+  }
+
+  private fireObject(id: string, kind: FireEvent['kind']): Tree | Hut | Campfire | null {
+    if (kind === 'tree') return this.trees.find(tree => tree.id === id) ?? null
+    if (kind === 'hut') return this.huts.find(hut => hut.id === id) ?? null
+    return this.campfire?.id === id ? this.campfire : null
   }
 }
 

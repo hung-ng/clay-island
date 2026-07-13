@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { EventBus } from '../core/events'
-import type { RNG } from '../core/rng'
+import { RNG } from '../core/rng'
 import { EmoteSprite, type EmoteKind } from '../fx/emotes'
 import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
@@ -53,6 +53,14 @@ export class Villager {
   private model = new THREE.Group()
   private arms: THREE.Mesh[] = []
   private emoteSprite = new EmoteSprite()
+  private visualMaterials: THREE.MeshToonMaterial[] = []
+  private rainLeaf: THREE.Mesh
+  private rainTime = 0
+  private zapTime = -1
+  private zapLastQt = Number.NEGATIVE_INFINITY
+  private ghost = new THREE.Group()
+  private ghostArm: THREE.Mesh
+  private ghostMaterials: THREE.Material[] = []
   private tx: number
   private tz: number
   private speed = 0.86
@@ -74,11 +82,11 @@ export class Villager {
     public id: string,
     public x: number,
     public z: number,
-    island: Island,
+    private readonly island: Island,
     private rng: RNG,
     private world: World,
     private bus: EventBus,
-    lowFx = false,
+    private readonly lowFx = false,
     animateIn = false,
   ) {
     this.tx = x
@@ -123,13 +131,61 @@ export class Villager {
     }
 
     this.model.scale.setScalar(MODEL_SCALE)
-    this.group.add(this.model, this.emoteSprite.sprite)
+    const propRng = new RNG([...id].reduce((seed, character) => seed * 31 + character.charCodeAt(0), 17))
+    this.rainLeaf = new THREE.Mesh(
+      wobble(new THREE.SphereGeometry(0.3, 9, 6), propRng, 0.035),
+      clayMaterial(PALETTE.leafA),
+    )
+    this.rainLeaf.name = 'rain-leaf'
+    this.rainLeaf.position.set(-0.16, 1.22, 0)
+    this.rainLeaf.scale.set(1.25, 0.16, 0.9)
+    this.rainLeaf.rotation.z = -0.22
+    this.rainLeaf.visible = false
+    this.rainLeaf.castShadow = !lowFx
+
+    const ghostMaterial = clayMaterial(PALETTE.ghost)
+    ghostMaterial.transparent = true
+    const ghostBody = new THREE.Mesh(
+      wobble(new THREE.SphereGeometry(0.28, 10, 8), propRng, 0.035),
+      ghostMaterial,
+    )
+    ghostBody.name = 'villager-ghost'
+    ghostBody.scale.y = 1.2
+    const faceMaterial = new THREE.MeshBasicMaterial({ color: PALETTE.scorch, transparent: true })
+    for (const side of [-1, 1]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 4), faceMaterial)
+      eye.position.set(side * 0.085, 0.055, 0.25)
+      this.ghost.add(eye)
+    }
+    const armMaterial = clayMaterial(PALETTE.ghost)
+    armMaterial.transparent = true
+    this.ghostArm = new THREE.Mesh(
+      wobble(new THREE.CapsuleGeometry(0.045, 0.18, 4, 7), propRng, 0.012),
+      armMaterial,
+    )
+    this.ghostArm.position.set(0.28, 0, 0)
+    this.ghostArm.rotation.z = -0.8
+    this.ghost.add(ghostBody, this.ghostArm)
+    this.ghost.name = 'zap-ghost'
+    this.ghost.visible = false
+    this.ghostMaterials.push(ghostMaterial, faceMaterial, armMaterial)
+    island.group.add(this.ghost)
+
+    this.group.add(this.model, this.emoteSprite.sprite, this.rainLeaf)
     if (lowFx) this.addBlobShadow()
     this.enter('wander', world)
   }
 
   update(dt: number, qt: number, world: World, island: Island): void {
     if (!this.alive) return
+    if (this.zapTime >= 0) {
+      this.updateZap(dt, qt)
+      return
+    }
+    if (this.rainTime > 0) {
+      this.updateRainReaction(dt, qt, world, island)
+      return
+    }
     const ticked = qt !== this.lastQt
 
     this.updateFleeTarget(dt, world)
@@ -157,12 +213,41 @@ export class Villager {
     if (!this.alive) return
     this.alive = false
     this.group.visible = false
-    this.world.graves.push({ x: this.x, z: this.z, fresh: true })
+    this.rainLeaf.visible = false
+    this.ghost.visible = false
+    this.world.addGrave(this.x, this.z, this.rng, this.lowFx)
     this.bus.emit({ type: 'villager:died', cause })
   }
 
   emote(kind: EmoteKind): void {
     this.emoteSprite.show(kind, 2.2)
+  }
+
+  zap(): void {
+    if (!this.alive || this.zapTime >= 0) return
+    this.zapTime = 0
+    this.zapLastQt = Number.NEGATIVE_INFINITY
+    this.rainTime = 0
+    this.rainLeaf.visible = false
+    this.resetPose()
+    for (const material of this.visualMaterials) material.color.set(PALETTE.scorch)
+    this.arms[0].rotation.z = -Math.PI / 2
+    this.arms[1].rotation.z = Math.PI / 2
+    this.ghost.visible = false
+  }
+
+  grumpAtRain(world: World): void {
+    if (!this.alive || this.zapTime >= 0) return
+    this.rainTime = 2.6
+    this.state = 'wander'
+    this.resetPose()
+    this.rainLeaf.visible = true
+    this.arms[0].rotation.z = -2.25
+    this.emote('water')
+    const hut = world.huts
+      .filter(candidate => candidate.state === 'built')
+      .sort((a, b) => distance(this, a) - distance(this, b))[0]
+    this.setTarget(hut ?? this.randomWalkPoint())
   }
 
   panic(from: Point): void {
@@ -178,7 +263,65 @@ export class Villager {
 
   private addPart(mesh: THREE.Mesh, lowFx: boolean): void {
     mesh.castShadow = !lowFx
+    if (mesh.material instanceof THREE.MeshToonMaterial) {
+      this.visualMaterials.push(mesh.material)
+    }
     this.model.add(mesh)
+  }
+
+  private updateZap(dt: number, qt: number): void {
+    this.zapTime += dt
+    const ticked = qt !== this.zapLastQt
+    if (ticked) {
+      this.zapLastQt = qt
+      const frame = Math.floor(this.zapTime * TIMING.fps)
+      const blink = frame === 4 || frame === 5 || frame === 9 || frame === 10
+      this.model.scale.setScalar(MODEL_SCALE * (blink ? 1.08 : 1))
+      this.arms[0].rotation.z = -Math.PI / 2
+      this.arms[1].rotation.z = Math.PI / 2
+    }
+
+    const tip = THREE.MathUtils.clamp((this.zapTime - 1.05) / 0.5, 0, 1)
+    this.group.rotation.z = tip * Math.PI / 2
+
+    if (this.zapTime >= 1.45) {
+      const float = THREE.MathUtils.clamp((this.zapTime - 1.45) / 1.05, 0, 1)
+      this.ghost.visible = true
+      this.ghost.position.set(
+        this.x,
+        this.island.sampleHeight(this.x, this.z) + 1 + float * 4,
+        this.z,
+      )
+      this.ghostArm.rotation.z = -0.8 + Math.sin(this.zapTime * 18) * 0.55
+      const opacity = 1 - Math.max(0, (float - 0.72) / 0.28)
+      for (const material of this.ghostMaterials) material.opacity = opacity
+    }
+
+    if (this.zapTime < 2.5) return
+    this.zapTime = -1
+    this.ghost.visible = false
+    for (const material of this.ghostMaterials) material.opacity = 1
+    this.die('lightning')
+  }
+
+  private updateRainReaction(dt: number, qt: number, world: World, island: Island): void {
+    this.rainTime = Math.max(0, this.rainTime - dt)
+    if (!this.arrived) this.steer(dt, world)
+    const ticked = qt !== this.lastQt
+    if (ticked) {
+      this.lastQt = qt
+      this.group.position.set(this.x, island.sampleHeight(this.x, this.z), this.z)
+      this.group.rotation.y = Math.atan2(this.tx - this.x, this.tz - this.z)
+      const frame = Math.floor(qt * TIMING.fps)
+      this.group.rotation.z = frame % 4 === 0 ? 0.08 : frame % 4 === 2 ? -0.08 : 0
+      this.rainLeaf.position.y = 1.22 + (frame % 2 === 0 ? 0.035 : 0)
+      this.arms[0].rotation.z = -2.25
+      this.emoteSprite.update(qt)
+    }
+    if (this.rainTime > 0) return
+    this.rainLeaf.visible = false
+    this.resetPose()
+    this.enter('wander', world)
   }
 
   private addBlobShadow(): void {

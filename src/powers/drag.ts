@@ -1,0 +1,227 @@
+import * as THREE from 'three'
+import type { PowerId, TargetKind } from '../core/events'
+import { clayMaterial } from '../fx/clayMaterial'
+import { PALETTE } from '../ui/tokens'
+import { ISLAND_RADIUS, type Island } from '../world/island'
+import type { World } from '../world/world'
+
+type PointerArm = {
+  id: PowerId
+  pointerId: number
+  clientX: number
+  clientY: number
+}
+
+const TARGET_LABELS: Record<TargetKind, string> = {
+  ground: 'over open ground',
+  tree: 'over a tree',
+  hut: 'over a hut',
+  villager: 'over a villager',
+  pond: 'over a pond',
+  crater: 'over a crater',
+  campfire: 'over the campfire',
+}
+
+function powerButton(target: EventTarget | null): HTMLButtonElement | null {
+  if (!(target instanceof Element)) return null
+  const button = target.closest<HTMLButtonElement>('button[data-power]')
+  return button?.getAttribute('aria-disabled') === 'true' ? null : button
+}
+
+export class DragTargeting {
+  private readonly raycaster = new THREE.Raycaster()
+  private readonly pointer = new THREE.Vector2()
+  private readonly reticle: THREE.Mesh<THREE.RingGeometry, THREE.MeshToonMaterial>
+  private readonly liveRegion: HTMLDivElement
+  private activePower: PowerId | null = null
+  private activePointerId: number | null = null
+  private pendingPointer: PointerArm | null = null
+  private keyboardMode = false
+  private validTarget = false
+  private targetKind: TargetKind = 'ground'
+  private targetX = 0
+  private targetZ = 0
+  private focusOrigin: HTMLButtonElement | null = null
+  private previousCursor = ''
+
+  constructor(
+    private readonly dom: HTMLElement,
+    private readonly camera: THREE.Camera,
+    private readonly island: Island,
+    private readonly world: World,
+    private readonly onFire: (id: PowerId, x: number, z: number, kind: TargetKind) => void,
+  ) {
+    const geometry = new THREE.RingGeometry(0.7, 0.94, 32)
+    const material = clayMaterial(PALETTE.paper, { flat: true })
+    material.side = THREE.DoubleSide
+    material.depthWrite = false
+    this.reticle = new THREE.Mesh(geometry, material)
+    this.reticle.name = 'power-target-reticle'
+    this.reticle.rotation.x = -Math.PI / 2
+    this.reticle.renderOrder = 3
+    this.reticle.visible = false
+    this.island.group.add(this.reticle)
+
+    this.liveRegion = document.createElement('div')
+    this.liveRegion.className = 'target-readout'
+    this.liveRegion.setAttribute('role', 'status')
+    this.liveRegion.setAttribute('aria-live', 'polite')
+    this.liveRegion.setAttribute('aria-atomic', 'true')
+    const overlay = document.getElementById('ui') ?? document.body
+    overlay.appendChild(this.liveRegion)
+
+    document.addEventListener('pointerdown', this.capturePointerArm, true)
+    addEventListener('pointermove', this.movePointer)
+    addEventListener('pointerup', this.releasePointer)
+    addEventListener('pointercancel', this.cancelPointer)
+    document.addEventListener('keydown', this.handleKey)
+  }
+
+  arm(id: PowerId): void {
+    if (this.activePower) this.cancel(false)
+    this.activePower = id
+    this.focusOrigin = document.activeElement instanceof HTMLButtonElement
+      ? document.activeElement
+      : document.querySelector<HTMLButtonElement>(`button[data-power="${id}"]`)
+    this.previousCursor = this.dom.style.cursor
+    this.dom.style.cursor = 'crosshair'
+    this.liveRegion.classList.add('active')
+
+    if (this.pendingPointer?.id === id) {
+      this.keyboardMode = false
+      this.activePointerId = this.pendingPointer.pointerId
+      this.updateFromPointer(this.pendingPointer.clientX, this.pendingPointer.clientY)
+      return
+    }
+
+    this.keyboardMode = true
+    this.activePointerId = null
+    this.setTarget(0, 0)
+  }
+
+  cancel(returnFocus = false): void {
+    if (!this.activePower) return
+    this.activePower = null
+    this.activePointerId = null
+    this.pendingPointer = null
+    this.keyboardMode = false
+    this.validTarget = false
+    this.reticle.visible = false
+    this.dom.style.cursor = this.previousCursor
+    this.liveRegion.classList.remove('active')
+    this.liveRegion.textContent = ''
+    if (returnFocus) this.focusOrigin?.focus({ preventScroll: true })
+    this.focusOrigin = null
+  }
+
+  update(): void {
+    if (!this.activePower || !this.validTarget) return
+    this.reticle.position.y = this.island.sampleHeight(this.targetX, this.targetZ) + 0.08
+    this.setTargetKind(this.world.resolveTarget(this.targetX, this.targetZ))
+  }
+
+  private readonly capturePointerArm = (event: PointerEvent): void => {
+    const button = powerButton(event.target)
+    const id = button?.dataset.power as PowerId | undefined
+    if (!id || event.button !== 0) {
+      this.pendingPointer = null
+      return
+    }
+    this.pendingPointer = {
+      id,
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+    }
+  }
+
+  private readonly movePointer = (event: PointerEvent): void => {
+    if (!this.activePower || this.keyboardMode || event.pointerId !== this.activePointerId) return
+    this.updateFromPointer(event.clientX, event.clientY)
+  }
+
+  private readonly releasePointer = (event: PointerEvent): void => {
+    if (!this.activePower || this.keyboardMode || event.pointerId !== this.activePointerId) return
+    this.updateFromPointer(event.clientX, event.clientY)
+    if (this.validTarget) this.fire()
+    else this.cancel(false)
+  }
+
+  private readonly cancelPointer = (event: PointerEvent): void => {
+    if (event.pointerId === this.activePointerId) this.cancel(false)
+  }
+
+  private readonly handleKey = (event: KeyboardEvent): void => {
+    if (!this.activePower) return
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      this.cancel(true)
+      return
+    }
+    if (!this.keyboardMode) return
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      this.fire()
+      return
+    }
+    if (event.key === ' ') {
+      event.preventDefault()
+      return
+    }
+
+    const offsets: Partial<Record<string, [number, number]>> = {
+      ArrowLeft: [-2, 0],
+      ArrowRight: [2, 0],
+      ArrowUp: [0, -2],
+      ArrowDown: [0, 2],
+    }
+    const offset = offsets[event.key]
+    if (!offset) return
+    event.preventDefault()
+    const x = this.targetX + offset[0]
+    const z = this.targetZ + offset[1]
+    if (Math.hypot(x, z) <= ISLAND_RADIUS - 0.5) this.setTarget(x, z)
+  }
+
+  private updateFromPointer(clientX: number, clientY: number): void {
+    const rect = this.dom.getBoundingClientRect()
+    this.pointer.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    )
+    this.camera.updateMatrixWorld()
+    this.island.topMesh.updateWorldMatrix(true, false)
+    this.raycaster.setFromCamera(this.pointer, this.camera)
+    const hit = this.raycaster.intersectObject(this.island.topMesh, false)[0]
+    if (!hit) {
+      this.validTarget = false
+      this.reticle.visible = false
+      this.liveRegion.textContent = 'Move over the island'
+      return
+    }
+    const local = this.island.group.worldToLocal(hit.point.clone())
+    this.setTarget(local.x, local.z)
+  }
+
+  private setTarget(x: number, z: number): void {
+    this.targetX = x
+    this.targetZ = z
+    this.validTarget = true
+    this.reticle.position.set(x, this.island.sampleHeight(x, z) + 0.08, z)
+    this.reticle.visible = true
+    this.setTargetKind(this.world.resolveTarget(x, z))
+  }
+
+  private setTargetKind(kind: TargetKind): void {
+    if (kind === this.targetKind && this.liveRegion.textContent) return
+    this.targetKind = kind
+    this.liveRegion.textContent = TARGET_LABELS[kind]
+  }
+
+  private fire(): void {
+    if (!this.activePower || !this.validTarget) return
+    const { activePower, targetX, targetZ, targetKind } = this
+    this.cancel(false)
+    this.onFire(activePower, targetX, targetZ, targetKind)
+  }
+}

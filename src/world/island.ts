@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { fbm2 } from '../core/noise'
 import { RNG } from '../core/rng'
 import { clayMaterial } from '../fx/clayMaterial'
+import { accumulateScorch, blendChannel } from '../fx/decals'
 import { PALETTE } from '../ui/tokens'
 import { craterOffset, type Crater } from './craters'
 
@@ -20,6 +21,7 @@ export function islandSurfaceY(x: number, z: number): number {
 const GRASS_A = new THREE.Color(PALETTE.grassDark)
 const GRASS_B = new THREE.Color(PALETTE.grassLight)
 const DIRT = new THREE.Color(PALETTE.dirt)
+const SCORCH = new THREE.Color(PALETTE.scorch)
 
 export class Island {
   group = new THREE.Group()
@@ -85,6 +87,79 @@ export class Island {
     return islandSurfaceY(x, z) - craterOffset(x, z, this.craters)
   }
 
-  // addCrater() and scorch() are implemented in Task 10; they push to `craters`,
-  // rewrite the position/color attributes, and recompute normals.
+  addCrater(crater: Crater): void {
+    this.craters.push(crater)
+    const geometry = this.topMesh.geometry
+    const positions = geometry.getAttribute('position')
+    const colors = geometry.getAttribute('color')
+    const ringStep = ISLAND_RADIUS / this.rings
+
+    this.forEachVertexNear(crater.x, crater.z, crater.radius + ringStep, (index, x, z, distance) => {
+      positions.setY(index, this.sampleHeight(x, z))
+      if (distance >= crater.radius || crater.radius <= 0) return
+
+      const exposed = 1 - distance / crater.radius
+      const colorIndex = index * 3
+      this.baseColors[colorIndex] = blendChannel(this.baseColors[colorIndex], DIRT.r, exposed)
+      this.baseColors[colorIndex + 1] = blendChannel(this.baseColors[colorIndex + 1], DIRT.g, exposed)
+      this.baseColors[colorIndex + 2] = blendChannel(this.baseColors[colorIndex + 2], DIRT.b, exposed)
+      this.writeVisibleColor(colors, index)
+    })
+
+    positions.needsUpdate = true
+    colors.needsUpdate = true
+    geometry.computeVertexNormals()
+  }
+
+  scorch(x: number, z: number, radius: number): void {
+    if (radius <= 0) return
+    const colors = this.topMesh.geometry.getAttribute('color')
+    let painted = false
+
+    this.forEachVertexNear(x, z, radius, (index, _vx, _vz, distance) => {
+      const next = accumulateScorch(this.scorchAmt[index], distance, radius)
+      if (next === this.scorchAmt[index]) return
+      this.scorchAmt[index] = next
+      this.writeVisibleColor(colors, index)
+      painted = true
+    })
+
+    if (painted) colors.needsUpdate = true
+  }
+
+  private forEachVertexNear(
+    x: number,
+    z: number,
+    radius: number,
+    visit: (index: number, x: number, z: number, distance: number) => void,
+  ): void {
+    if (radius <= 0) return
+    const positions = this.topMesh.geometry.getAttribute('position')
+    const ringStep = ISLAND_RADIUS / this.rings
+    const centreRadius = Math.hypot(x, z)
+    const firstRing = Math.max(0, Math.floor((centreRadius - radius) / ringStep))
+    const lastRing = Math.min(this.rings, Math.ceil((centreRadius + radius) / ringStep))
+
+    for (let ring = firstRing; ring <= lastRing; ring++) {
+      const ringStart = ring * (this.segs + 1)
+      for (let segment = 0; segment <= this.segs; segment++) {
+        const index = ringStart + segment
+        const vx = positions.getX(index)
+        const vz = positions.getZ(index)
+        const distance = Math.hypot(vx - x, vz - z)
+        if (distance <= radius) visit(index, vx, vz, distance)
+      }
+    }
+  }
+
+  private writeVisibleColor(colors: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, index: number): void {
+    const colorIndex = index * 3
+    const amount = this.scorchAmt[index]
+    colors.setXYZ(
+      index,
+      blendChannel(this.baseColors[colorIndex], SCORCH.r, amount),
+      blendChannel(this.baseColors[colorIndex + 1], SCORCH.g, amount),
+      blendChannel(this.baseColors[colorIndex + 2], SCORCH.b, amount),
+    )
+  }
 }

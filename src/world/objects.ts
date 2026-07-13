@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import { RNG } from '../core/rng'
 import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
-import { PALETTE } from '../ui/tokens'
+import { PALETTE, TIMING } from '../ui/tokens'
 
 export type TreeState = 'normal' | 'chopped' | 'burning' | 'burnt'
 export type HutState = 'site' | 'building' | 'built' | 'burning' | 'ruin'
@@ -52,9 +52,125 @@ function hash(value: number): number {
   return Math.sin(value * 12.9898) * 43758.5453 % 1
 }
 
+function seedFromId(value: string): number {
+  let seed = 2166136261
+  for (let i = 0; i < value.length; i++) {
+    seed ^= value.charCodeAt(i)
+    seed = Math.imul(seed, 16777619)
+  }
+  return seed >>> 0
+}
+
+class BurningVisual {
+  readonly group = new THREE.Group()
+
+  private readonly flames: THREE.Mesh[] = []
+  private readonly smoke: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>[] = []
+  private readonly light: THREE.PointLight
+  private lightEnabled = false
+  private lastQt = Number.NEGATIVE_INFINITY
+
+  constructor(seed: number, baseY: number, radius: number, lowFx: boolean) {
+    const rng = new RNG(seed)
+    this.group.name = 'burning-fx'
+    this.group.visible = false
+
+    const flameCount = rng.int(3, 5)
+    for (let i = 0; i < flameCount; i++) {
+      const size = rng.range(radius * 0.55, radius)
+      const flame = new THREE.Mesh(
+        wobble(new THREE.SphereGeometry(size, 9, 7), rng, size * 0.15),
+        clayMaterial(i % 2 === 0 ? PALETTE.flame : PALETTE.ember),
+      )
+      flame.name = 'fire-flame'
+      const angle = rng.range(0, Math.PI * 2)
+      const spread = rng.range(0, radius * 0.9)
+      flame.userData.baseX = Math.cos(angle) * spread
+      flame.userData.baseY = baseY + rng.range(-radius * 0.2, radius * 0.55)
+      flame.userData.baseZ = Math.sin(angle) * spread
+      flame.userData.phase = rng.range(0, 100)
+      flame.position.set(flame.userData.baseX, flame.userData.baseY, flame.userData.baseZ)
+      flame.scale.y = rng.range(1.25, 1.7)
+      flame.castShadow = false
+      this.flames.push(flame)
+      this.group.add(flame)
+    }
+
+    const smokeCount = lowFx ? 2 : 3
+    for (let i = 0; i < smokeCount; i++) {
+      const material = clayMaterial(PALETTE.stone)
+      material.transparent = true
+      material.depthWrite = false
+      const blob = new THREE.Mesh(
+        wobble(new THREE.SphereGeometry(radius * 0.48, 8, 6), rng, radius * 0.08),
+        material,
+      )
+      blob.name = 'fire-smoke'
+      blob.userData.phase = i / smokeCount
+      blob.userData.curl = rng.range(0, Math.PI * 2)
+      blob.userData.baseY = baseY
+      blob.castShadow = false
+      this.smoke.push(blob)
+      this.group.add(blob)
+    }
+
+    this.light = new THREE.PointLight(PALETTE.flame, lowFx ? 0.8 : 1.2, 5)
+    this.light.name = 'fire-point-light'
+    this.light.position.y = baseY + radius
+    this.light.castShadow = false
+    this.light.visible = false
+    this.group.add(this.light)
+  }
+
+  setBurning(on: boolean): void {
+    this.group.visible = on
+    this.light.visible = on && this.lightEnabled
+    if (!on) this.lastQt = Number.NEGATIVE_INFINITY
+  }
+
+  setLightEnabled(on: boolean): void {
+    this.lightEnabled = on
+    this.light.visible = this.group.visible && on
+  }
+
+  update(qt: number): void {
+    if (!this.group.visible || qt === this.lastQt) return
+    const frame = Math.floor(qt * 12)
+    for (let i = 0; i < this.flames.length; i++) {
+      const flame = this.flames[i]
+      const phase = flame.userData.phase as number
+      const jx = hash(frame * 7.1 + phase)
+      const jy = hash(frame * 13.7 + phase * 1.7)
+      const jz = hash(frame * 19.3 + phase * 2.3)
+      flame.position.set(
+        (flame.userData.baseX as number) + jx * 0.12,
+        (flame.userData.baseY as number) + Math.abs(jy) * 0.12,
+        (flame.userData.baseZ as number) + jz * 0.12,
+      )
+      flame.scale.set(0.85 + Math.abs(jz) * 0.2, 1.25 + Math.abs(jx) * 0.45, 0.85)
+    }
+    for (const blob of this.smoke) {
+      const phase = (qt * 0.28 + (blob.userData.phase as number)) % 1
+      const curl = (blob.userData.curl as number) + phase * Math.PI * 2
+      blob.position.set(
+        Math.sin(curl) * (0.12 + phase * 0.28),
+        (blob.userData.baseY as number) + phase * 2.4,
+        Math.cos(curl) * (0.12 + phase * 0.2),
+      )
+      blob.scale.setScalar(0.65 + phase * 1.15)
+      blob.material.opacity = (1 - phase) * 0.58
+    }
+    this.lastQt = qt
+  }
+}
+
 export class Tree {
   state: TreeState = 'normal'
   group = new THREE.Group()
+  readonly kind = 'tree' as const
+  burning = false
+  burnt = false
+  burnTime = 0
 
   private crown = new THREE.Group()
   private crownMaterials: THREE.MeshToonMaterial[] = []
@@ -65,6 +181,7 @@ export class Tree {
   private burnMix = 0
   private fruit: THREE.InstancedMesh | null = null
   private fruitTime = 0
+  private fireVisual: BurningVisual
 
   constructor(
     public id: string,
@@ -105,6 +222,8 @@ export class Tree {
     this.crown.position.y = 1.45
     this.crown.rotation.y = rng.range(0, Math.PI * 2)
     this.group.add(this.crown)
+    this.fireVisual = new BurningVisual(seedFromId(id), 1.25, 0.34, lowFx)
+    this.group.add(this.fireVisual.group)
     addBlobShadow(this.group, 1.05, lowFx)
   }
 
@@ -115,27 +234,44 @@ export class Tree {
   }
 
   ignite(): void {
-    if (this.state === 'burnt') return
+    if (this.state === 'burning' || this.state === 'burnt') return
     this.state = 'burning'
+    this.burning = true
+    this.burnt = false
+    this.burnTime = 0
     this.burnMix = 0
+    this.fireVisual.setBurning(true)
   }
 
   extinguish(): void {
     if (this.state !== 'burning') return
     this.state = 'normal'
+    this.burning = false
+    this.burnTime = 0
     this.burnMix = 0
+    this.fireVisual.setBurning(false)
     this.resetCrownColors()
   }
 
   setBurnt(): void {
     this.state = 'burnt'
+    this.burning = false
+    this.burnt = true
     this.burnMix = 1
+    this.fireVisual.setBurning(false)
     this.beginRecovery()
     for (const material of this.crownMaterials) material.color.copy(SCORCH)
   }
 
-  growFruit(): void {
-    if (this.fruit) this.crown.remove(this.fruit)
+  setFireLightEnabled(on: boolean): void {
+    this.fireVisual.setLightEnabled(on)
+  }
+
+  growFruit(): boolean {
+    if (this.fruit) {
+      this.fruitTime = 60
+      return false
+    }
     const geometry = wobble(new THREE.SphereGeometry(0.12, 8, 6), new RNG(this.id.length * 97), 0.018)
     const fruit = new THREE.InstancedMesh(geometry, clayMaterial(PALETTE.smockA), 4)
     const matrix = new THREE.Matrix4()
@@ -155,6 +291,11 @@ export class Tree {
     this.crown.add(fruit)
     this.fruit = fruit
     this.fruitTime = 60
+    return true
+  }
+
+  get hasFruit(): boolean {
+    return this.fruit !== null
   }
 
   update(dt: number, qt: number): void {
@@ -179,6 +320,8 @@ export class Tree {
       }
       if (regrowth >= 1) {
         this.state = 'normal'
+        this.burnt = false
+        this.burnTime = 0
         this.crown.scale.setScalar(1)
         this.resetCrownColors()
       }
@@ -192,6 +335,7 @@ export class Tree {
         this.fruit = null
       }
     }
+    this.fireVisual.update(qt)
   }
 
   private beginRecovery(): void {
@@ -208,6 +352,10 @@ export class Tree {
 export class Hut {
   group = new THREE.Group()
   progress: number
+  readonly kind = 'hut' as const
+  burning = false
+  burnt = false
+  burnTime = 0
 
   private base: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>
   private door: THREE.Mesh
@@ -216,6 +364,7 @@ export class Hut {
   private smoke: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>[] = []
   private lastQt = Number.NEGATIVE_INFINITY
   private burnMix = 0
+  private fireVisual: BurningVisual
 
   constructor(
     public id: string,
@@ -270,12 +419,18 @@ export class Hut {
     }
 
     this.group.add(this.base, this.door, this.roofKnob, this.siteStones)
+    this.fireVisual = new BurningVisual(seedFromId(id), 1.05, 0.42, lowFx)
+    this.group.add(this.fireVisual.group)
     addBlobShadow(this.group, 1.35, lowFx)
     this.syncAppearance()
   }
 
   buildTick(): void {
     if (this.state !== 'site' && this.state !== 'building' && this.state !== 'ruin') return
+    if (this.state === 'ruin') {
+      this.burnt = false
+      this.burnTime = 0
+    }
     this.state = 'building'
     this.progress = Math.min(1, this.progress + 0.34)
     if (this.progress >= 1) this.state = 'built'
@@ -283,25 +438,39 @@ export class Hut {
   }
 
   ignite(): void {
-    if (this.state !== 'built') return
+    if (this.state !== 'built' || this.burnt) return
     this.state = 'burning'
+    this.burning = true
+    this.burnt = false
+    this.burnTime = 0
     this.burnMix = 0
+    this.fireVisual.setBurning(true)
     this.syncAppearance()
   }
 
   extinguish(): void {
     if (this.state !== 'burning') return
     this.state = 'built'
+    this.burning = false
+    this.burnTime = 0
     this.burnMix = 0
     this.base.material.color.set(PALETTE.hutClay)
+    this.fireVisual.setBurning(false)
     this.syncAppearance()
   }
 
   setRuin(): void {
     this.state = 'ruin'
+    this.burning = false
+    this.burnt = true
     this.progress = 0
     this.burnMix = 1
+    this.fireVisual.setBurning(false)
     this.syncAppearance()
+  }
+
+  setFireLightEnabled(on: boolean): void {
+    this.fireVisual.setLightEnabled(on)
   }
 
   update(dt: number, qt: number): void {
@@ -319,6 +488,7 @@ export class Hut {
         blob.material.opacity = (1 - phase) * 0.78
       }
     }
+    this.fireVisual.update(qt)
     this.lastQt = qt
   }
 
@@ -340,11 +510,18 @@ export class Hut {
 export class Campfire {
   group = new THREE.Group()
   lit = true
+  readonly id = 'campfire'
+  readonly kind = 'campfire' as const
+  burning = false
+  burnt = false
+  burnTime = 0
 
   private flames: THREE.Mesh[] = []
   private light: THREE.PointLight
+  private lightEnabled = true
   private lastQt = Number.NEGATIVE_INFINITY
   private flareTime = 0
+  private flareScale = 1
 
   constructor(
     public x: number,
@@ -389,21 +566,40 @@ export class Campfire {
     addBlobShadow(this.group, 1.05, lowFx)
   }
 
-  flare(): void {
+  flare(seconds = 1, scale = 1.75): void {
     this.lit = true
-    this.flareTime = 1
+    this.flareTime = seconds
+    this.flareScale = scale
+  }
+
+  ignite(): void {
+    this.burning = true
+    this.burnTime = 0
+    this.flare()
   }
 
   douse(): void {
     this.lit = false
+    this.burning = false
+    this.burnTime = 0
     this.flareTime = 0
+    this.flareScale = 1
+  }
+
+  extinguish(): void {
+    this.douse()
+  }
+
+  setFireLightEnabled(on: boolean): void {
+    this.lightEnabled = on
+    this.light.visible = this.lit && on
   }
 
   update(dt: number, qt: number): void {
     this.flareTime = Math.max(0, this.flareTime - dt)
-    const flareScale = this.flareTime > 0 ? 1.75 : 1
+    const flareScale = this.flareTime > 0 ? this.flareScale : 1
     for (const flame of this.flames) flame.visible = this.lit
-    this.light.visible = this.lit
+    this.light.visible = this.lit && this.lightEnabled
     this.light.intensity = this.lit ? 1.5 * flareScale : 0
 
     if (!this.lit || qt === this.lastQt) return
@@ -417,5 +613,143 @@ export class Campfire {
       flame.scale.set(flareScale * (0.9 + Math.abs(jz) * 0.18), flareScale * (1.35 + Math.abs(jx) * 0.3), flareScale)
     }
     this.lastQt = qt
+  }
+}
+
+export class Pond {
+  readonly group = new THREE.Group()
+  hasFish = true
+
+  private readonly water: THREE.Mesh<THREE.CircleGeometry, THREE.MeshToonMaterial>
+  private readonly floatingFish = new THREE.Group()
+  private lastQt = Number.NEGATIVE_INFINITY
+
+  constructor(
+    public x: number,
+    public z: number,
+    public radius: number,
+    y: number,
+    rng: RNG,
+    lowFx = false,
+  ) {
+    this.group.name = 'pond'
+    this.group.position.set(x, y, z)
+
+    const material = clayMaterial(PALETTE.water, { flat: true })
+    material.transparent = true
+    material.opacity = 0.72
+    material.depthWrite = false
+    material.side = THREE.DoubleSide
+    this.water = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.86, 40), material)
+    this.water.name = 'pond-water'
+    this.water.rotation.x = -Math.PI / 2
+    this.water.position.y = 0.025
+    this.water.receiveShadow = !lowFx
+    this.group.add(this.water)
+
+    const fishGeometry = wobble(new THREE.SphereGeometry(0.19, 8, 6), rng, 0.025)
+    const fishMaterial = clayMaterial(PALETTE.ghost)
+    for (let i = 0; i < 3; i++) {
+      const fish = new THREE.Mesh(fishGeometry, fishMaterial)
+      fish.name = 'floating-fish'
+      const angle = (i / 3) * Math.PI * 2 + rng.range(-0.25, 0.25)
+      fish.position.set(Math.cos(angle) * radius * 0.38, 0.1, Math.sin(angle) * radius * 0.38)
+      fish.scale.set(1.35, 0.45, 0.72)
+      fish.rotation.y = angle + Math.PI / 2
+      fish.castShadow = !lowFx
+      this.floatingFish.add(fish)
+    }
+    this.floatingFish.visible = false
+    this.group.add(this.floatingFish)
+  }
+
+  floatFish(): boolean {
+    if (!this.hasFish) return false
+    this.hasFish = false
+    this.floatingFish.visible = true
+    return true
+  }
+
+  update(qt: number): void {
+    if (qt === this.lastQt) return
+    const frame = Math.floor(qt * TIMING.fps)
+    const pulse = 1 + Math.sin(frame * 0.45) * 0.012
+    this.water.scale.setScalar(pulse)
+    this.water.material.opacity = 0.69 + Math.sin(frame * 0.32) * 0.035
+    if (this.floatingFish.visible) {
+      this.floatingFish.position.y = 0.035 + (frame % 4 < 2 ? 0.025 : 0)
+      this.floatingFish.rotation.y = Math.sin(frame * 0.2) * 0.035
+    }
+    this.lastQt = qt
+  }
+}
+
+export class Grave {
+  readonly group = new THREE.Group()
+  fresh = true
+
+  private age = 0
+
+  constructor(
+    public x: number,
+    public z: number,
+    y: number,
+    rng: RNG,
+    lowFx = false,
+  ) {
+    this.group.name = 'grave'
+    this.group.position.set(x, y, z)
+    this.group.rotation.y = rng.range(-0.28, 0.28)
+    const slab = new THREE.Mesh(
+      wobble(new THREE.BoxGeometry(0.58, 0.86, 0.18, 3, 4, 2), rng, 0.035),
+      clayMaterial(PALETTE.stone),
+    )
+    slab.name = 'grave-slab'
+    slab.position.y = 0.39
+    slab.rotation.z = rng.range(-0.09, 0.09)
+    slab.castShadow = !lowFx
+    this.group.add(slab)
+    addBlobShadow(this.group, 0.42, lowFx)
+  }
+
+  update(dt: number): void {
+    if (!this.fresh) return
+    this.age += dt
+    if (this.age >= 60) this.fresh = false
+  }
+}
+
+export class FlowerPatch {
+  readonly group = new THREE.Group()
+
+  constructor(
+    public x: number,
+    public z: number,
+    radius: number,
+    sampleHeight: (x: number, z: number) => number,
+    rng: RNG,
+    lowFx = false,
+  ) {
+    this.group.name = 'flowers'
+    const count = 36
+    const geometry = wobble(new THREE.SphereGeometry(0.085, 7, 5), rng, 0.015)
+    const flowers = new THREE.InstancedMesh(geometry, clayMaterial(PALETTE.bloom), count)
+    flowers.name = 'flower-patch'
+    flowers.castShadow = !lowFx
+    const dummy = new THREE.Object3D()
+    for (let i = 0; i < count; i++) {
+      const angle = rng.range(0, Math.PI * 2)
+      const distance = Math.sqrt(rng.next()) * radius
+      const px = x + Math.cos(angle) * distance
+      const pz = z + Math.sin(angle) * distance
+      dummy.position.set(px, sampleHeight(px, pz) + rng.range(0.08, 0.16), pz)
+      const scale = rng.range(0.7, 1.35)
+      dummy.scale.set(scale, scale * rng.range(0.85, 1.35), scale)
+      dummy.rotation.set(rng.range(-0.25, 0.25), rng.range(0, Math.PI * 2), rng.range(-0.25, 0.25))
+      dummy.updateMatrix()
+      flowers.setMatrixAt(i, dummy.matrix)
+    }
+    flowers.instanceMatrix.needsUpdate = true
+    this.group.add(flowers)
   }
 }
