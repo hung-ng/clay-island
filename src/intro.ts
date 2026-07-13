@@ -22,6 +22,7 @@ export class Intro {
     this.restCamera.copy(options.camera.position)
     this.startCamera.copy(this.restCamera).setY(this.restCamera.y - 4).multiplyScalar(1.12)
     options.tray.classList.add('intro-hidden')
+    options.tray.inert = true
     options.controls.enabled = false
     if (!this.reduced) options.camera.position.copy(this.startCamera)
     for (const villager of options.world.villagers) villager.setIntroWake(0)
@@ -56,5 +57,6 @@ export class Intro {
     this.options.controls.update()
     for (const villager of this.options.world.villagers) villager.setIntroWake(1)
     this.options.tray.classList.remove('intro-hidden')
+    this.options.tray.inert = false
   }
 }

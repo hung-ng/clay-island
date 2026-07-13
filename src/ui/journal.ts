@@ -8,9 +8,6 @@ type JournalUIOptions = {
 export type JournalUI = {
   toast(moment: Moment): void
   setUnlocked(unlocked: ReadonlySet<MomentId>): void
-  rect(): DOMRect
-  readonly isOpen: boolean
-  onOpenChange(handler: (open: boolean) => void): () => void
   close(): void
 }
 
@@ -41,7 +38,7 @@ export function createJournalUI(
 
   const heading = document.createElement('h2')
   heading.id = 'journal-heading'
-  heading.textContent = 'Little Moments'
+  heading.textContent = 'Journal'
 
   const count = document.createElement('p')
   count.className = 'journal-progress'
@@ -50,20 +47,20 @@ export function createJournalUI(
   const closeButton = document.createElement('button')
   closeButton.type = 'button'
   closeButton.className = 'journal-close'
-  closeButton.textContent = 'Close book'
+  closeButton.textContent = 'Close'
+  closeButton.setAttribute('aria-label', 'Close journal')
 
-  const viewport = document.createElement('div')
-  viewport.id = 'journal-book-viewport'
+  const slab = document.createElement('div')
+  slab.className = 'journal-slab'
 
   const grid = document.createElement('div')
   grid.className = 'moment-grid'
   grid.setAttribute('role', 'grid')
-  grid.setAttribute('aria-label', 'Discovered moments')
+  grid.setAttribute('aria-label', 'Journal moments')
 
   const hint = document.createElement('p')
   hint.className = 'journal-hint'
   hint.setAttribute('aria-live', 'polite')
-  hint.textContent = 'Focus an unpressed tile for a hint.'
 
   const tiles = MOMENTS.map((moment, index) => {
     const button = document.createElement('button')
@@ -77,19 +74,23 @@ export function createJournalUI(
     const showHint = (): void => {
       hint.textContent = journal.has(moment.id) ? moment.title : moment.hint
     }
+    const clearHint = (): void => {
+      hint.textContent = ''
+    }
     button.addEventListener('focus', showHint)
+    button.addEventListener('blur', clearHint)
     button.addEventListener('pointerenter', showHint)
+    button.addEventListener('pointerleave', clearHint)
     return button
   })
 
-  viewport.append(grid)
-  dialog.append(heading, count, closeButton, viewport, hint)
+  slab.append(heading, count, closeButton, grid, hint)
+  dialog.append(slab)
   layer.append(backdrop, dialog)
   ui.appendChild(layer)
 
   let open = false
   let closeTimer = 0
-  const openHandlers = new Set<(value: boolean) => void>()
   const trayButtons = [...document.querySelectorAll<HTMLButtonElement>('#tray button')]
     .filter(button => button !== trigger)
   const trayTabIndexes = new Map<HTMLButtonElement, string | null>()
@@ -110,10 +111,6 @@ export function createJournalUI(
     if (!value) trayTabIndexes.clear()
   }
 
-  const notify = (): void => {
-    for (const handler of openHandlers) handler(open)
-  }
-
   const setOpen = (value: boolean): void => {
     if (open === value) return
     open = value
@@ -122,6 +119,7 @@ export function createJournalUI(
     setBackgroundInert(open)
 
     if (open) {
+      hint.textContent = ''
       layer.hidden = false
       requestAnimationFrame(() => layer.classList.add('open'))
       closeButton.focus({ preventScroll: true })
@@ -131,7 +129,6 @@ export function createJournalUI(
       if (prefersReducedMotion()) layer.hidden = true
       else closeTimer = window.setTimeout(() => { layer.hidden = true }, 340)
     }
-    notify()
   }
 
   trigger.addEventListener('click', () => setOpen(true))
@@ -202,6 +199,7 @@ export function createJournalUI(
       tiles.forEach((button, index) => {
         const moment = MOMENTS[index]
         const isUnlocked = unlocked.has(moment.id)
+        const wasUnlocked = button.classList.contains('unlocked')
         button.classList.toggle('unlocked', isUnlocked)
         button.setAttribute(
           'aria-label',
@@ -209,16 +207,14 @@ export function createJournalUI(
         )
         button.style.setProperty('--moment-color', moment.color)
         button.textContent = isUnlocked ? moment.title : ''
+        if (isUnlocked && !wasUnlocked && !prefersReducedMotion()) {
+          button.classList.remove('pop')
+          // Force a reflow so re-adding the class restarts the animation.
+          void button.offsetWidth
+          button.classList.add('pop')
+        }
       })
-      count.textContent = `${unlocked.size} of ${MOMENTS.length} moments pressed`
-    },
-    rect() {
-      return (open ? viewport : trigger).getBoundingClientRect()
-    },
-    get isOpen() { return open },
-    onOpenChange(handler) {
-      openHandlers.add(handler)
-      return () => { openHandlers.delete(handler) }
+      count.textContent = `${unlocked.size} of ${MOMENTS.length} moments`
     },
     close() { setOpen(false) },
   }

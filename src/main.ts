@@ -12,7 +12,6 @@ import { Meteor } from './powers/meteor'
 import { PowerManager } from './powers/power'
 import { Rain } from './powers/rain'
 import { createScene } from './scene'
-import { ClayBook } from './ui/book'
 import { createJournalUI } from './ui/journal'
 import { TIMING } from './ui/tokens'
 import { createTray } from './ui/tray'
@@ -74,13 +73,7 @@ tray.onMute(() => {
 })
 const journal = new Journal(storage)
 const journalUI = createJournalUI(ui, journal, { lowFx })
-const book = new ClayBook(renderer, { lowFx })
 tray.setJournalCount(journal.count())
-book.setUnlocked(journal.unlocked)
-journalUI.onOpenChange((open) => {
-  if (open) book.open()
-  else book.close()
-})
 world.bus.on((event) => {
   const unlocked = journal.observe(event)
   if (!unlocked) return
@@ -88,7 +81,6 @@ world.bus.on((event) => {
   sfx.reward()
   journalUI.setUnlocked(journal.unlocked)
   tray.setJournalCount(journal.count())
-  book.setUnlocked(journal.unlocked)
 })
 const trayElement = document.getElementById('tray')!
 const intro = new Intro({ camera, controls, tray: trayElement, world })
@@ -132,12 +124,6 @@ const loop = new GameLoop(
     updateSky(dt)
     if (lowFx) renderer.render(scene, camera)
     else composer.render()
-    book.setRect(journalUI.rect())
-    book.update(dt, clock.quantizedTime)
-    book.render()
-    if (import.meta.env.DEV) {
-      document.documentElement.dataset.bookDrawCalls = String(book.drawCalls)
-    }
     if (first) {
       first = false
       splash.classList.add('gone')

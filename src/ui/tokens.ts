@@ -32,7 +32,7 @@ export const PALETTE = {
   fillSky: '#bcd7ff',
   fillGround: '#e8b087',
   // ui
-  paper: '#e8d5b7', // clay-cream, the tray + book surface
+  paper: '#e8d5b7', // clay-cream, the tray + journal surface
   ink: '#3d3436',
   inkSoft: '#6f645f',
   toonShadow: '#555555',
