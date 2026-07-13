@@ -27,6 +27,7 @@ export type CastCtx = PowerContext & {
   x: number
   z: number
   kind: TargetKind
+  power: PowerId
 }
 
 export abstract class Power {
@@ -51,7 +52,7 @@ export class PowerManager {
     const power = this.powers.get(id)
     if (!power || !this.ready(id)) return
     const kind = this.context.world.resolveTarget(x, z)
-    this.timelines.push(power.cast({ ...this.context, x, z, kind }))
+    this.timelines.push(power.cast({ ...this.context, x, z, kind, power: id }))
     this.cooldowns.set(id, power.cooldown)
   }
 

@@ -4,6 +4,8 @@ import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
 import { PALETTE } from '../ui/tokens'
 import { ISLAND_RADIUS } from '../world/island'
+import { resolveInteraction } from './matrix'
+import { applyInteractions } from './outcomes'
 import { Power, type CastCtx } from './power'
 
 const RAIN_RADIUS = 5
@@ -14,35 +16,6 @@ type RainActor = {
   start(): void
   stop(): void
   remove(): void
-}
-
-let rainAudio: AudioContext | null = null
-
-function rainTone(seconds: number): void {
-  try {
-    rainAudio ??= new AudioContext()
-    void rainAudio.resume()
-    const start = rainAudio.currentTime
-    const oscillator = rainAudio.createOscillator()
-    const gain = rainAudio.createGain()
-    oscillator.type = 'triangle'
-    oscillator.frequency.setValueAtTime(118, start)
-    oscillator.frequency.exponentialRampToValueAtTime(72, start + seconds)
-    gain.gain.setValueAtTime(0.0001, start)
-    gain.gain.exponentialRampToValueAtTime(0.022, start + 0.6)
-    gain.gain.setValueAtTime(0.022, start + Math.max(0.7, seconds - 0.8))
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + seconds)
-    oscillator.connect(gain)
-    gain.connect(rainAudio.destination)
-    oscillator.addEventListener('ended', () => {
-      oscillator.disconnect()
-      gain.disconnect()
-    })
-    oscillator.start(start)
-    oscillator.stop(start + seconds)
-  } catch {
-    // Rain remains complete without WebAudio.
-  }
 }
 
 export function rainOffset(
@@ -241,6 +214,7 @@ export class Rain extends Power {
 
   cast(ctx: CastCtx): Timeline {
     const actor = rainField(ctx)
+    const y0 = ctx.island.sampleHeight(ctx.x, ctx.z)
     let bloomed = false
     const effectTick = (): void => {
       const campfireWasLit = ctx.world.campfire.lit
@@ -260,15 +234,16 @@ export class Rain extends Power {
       .at(0, () => {
         ctx.bus.emit({ type: 'power:anticipate', power: this.id, x: ctx.x, z: ctx.z })
         actor.start()
-        rainTone(7.2)
       })
       .at(1.2, () => {
         ctx.bus.emit({
           type: 'power:impact', power: this.id, target: ctx.kind, x: ctx.x, z: ctx.z,
         })
+        effectTick()
+        applyInteractions(resolveInteraction(this.id, ctx.kind), ctx, y0)
       })
 
-    for (let i = 0; i < 12; i++) timeline.at(1.2 + i * 0.5, effectTick)
+    for (let i = 1; i < 12; i++) timeline.at(1.2 + i * 0.5, effectTick)
     return timeline
       .at(7.2, () => actor.stop())
       .at(8.4, () => actor.remove())

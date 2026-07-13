@@ -3,59 +3,13 @@ import { Timeline } from '../core/timeline'
 import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
 import { PALETTE } from '../ui/tokens'
+import { resolveInteraction } from './matrix'
+import { applyInteractions } from './outcomes'
 import { Power, type CastCtx } from './power'
 
 type Actor = {
   start(): void
   remove(): void
-}
-
-let lightningAudio: AudioContext | null = null
-
-function tone(kind: 'rumble' | 'crack', seconds: number): void {
-  try {
-    lightningAudio ??= new AudioContext()
-    void lightningAudio.resume()
-    const start = lightningAudio.currentTime
-    const oscillator = lightningAudio.createOscillator()
-    const gain = lightningAudio.createGain()
-    oscillator.type = kind === 'rumble' ? 'sawtooth' : 'square'
-    oscillator.frequency.setValueAtTime(kind === 'rumble' ? 58 : 940, start)
-    oscillator.frequency.exponentialRampToValueAtTime(kind === 'rumble' ? 34 : 120, start + seconds)
-    gain.gain.setValueAtTime(0.0001, start)
-    gain.gain.exponentialRampToValueAtTime(kind === 'rumble' ? 0.035 : 0.09, start + 0.015)
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + seconds)
-    oscillator.connect(gain)
-    gain.connect(lightningAudio.destination)
-    oscillator.addEventListener('ended', () => {
-      oscillator.disconnect()
-      gain.disconnect()
-    })
-    oscillator.start(start)
-    oscillator.stop(start + seconds)
-  } catch {
-    // Lightning remains fully legible when WebAudio is unavailable.
-  }
-}
-
-function applyLightningOutcome(ctx: CastCtx): void {
-  if (ctx.kind === 'tree' || ctx.kind === 'hut') {
-    ctx.world.igniteTarget(ctx.kind, ctx.x, ctx.z)
-    return
-  }
-  if (ctx.kind === 'villager') {
-    ctx.world.villagerAt(ctx.x, ctx.z, 1.2)?.zap()
-    return
-  }
-  if (ctx.kind === 'pond') {
-    const pond = ctx.world.pondAt(ctx.x, ctx.z)
-    if (pond?.floatFish()) ctx.bus.emit({ type: 'fish:floated' })
-    return
-  }
-  if (ctx.kind === 'campfire') {
-    ctx.world.campfire.flare(2, 3)
-    ctx.bus.emit({ type: 'campfire:flared' })
-  }
 }
 
 function gatheringCloud(ctx: CastCtx): Actor {
@@ -187,17 +141,18 @@ export class Lightning extends Power {
           }
         }
         cloud.start()
-        tone('rumble', 0.9)
       })
       .at(0.9, () => {
         bolt.start()
         ctx.fx.flash(PALETTE.ghost, 0.06)
         ctx.fx.shake.add(0.35, 0.24)
-        tone('crack', 0.14)
+        for (const villager of ctx.world.villagers) {
+          if (villager.alive) villager.flinch()
+        }
         ctx.bus.emit({
           type: 'power:impact', power: this.id, target: ctx.kind, x: ctx.x, z: ctx.z,
         })
-        applyLightningOutcome(ctx)
+        applyInteractions(resolveInteraction(this.id, ctx.kind), ctx, y0)
       })
       .at(0.9 + 2 / 12, () => bolt.remove())
       .at(1.2, () => cloud.remove())

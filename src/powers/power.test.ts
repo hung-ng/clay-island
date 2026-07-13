@@ -13,6 +13,7 @@ class TestPower extends Power {
   cast(ctx: CastCtx): Timeline {
     this.casts++
     expect(ctx.kind).toBe('ground')
+    expect(ctx.power).toBe('meteor')
     return new Timeline()
       .at(0, () => this.hits.push('anticipation'))
       .at(0.5, () => this.hits.push('impact'))

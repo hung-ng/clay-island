@@ -60,3 +60,55 @@ describe('villager persistent activities', () => {
     expect(villager.enter).toHaveBeenCalledWith('wander', world)
   })
 })
+
+describe('villager performance outcomes', () => {
+  type ZapHarness = {
+    alive: boolean
+    zapTime: number
+    zapLastQt: number
+    x: number
+    z: number
+    model: { scale: { setScalar: ReturnType<typeof vi.fn> } }
+    arms: Array<{ rotation: { z: number } }>
+    group: { rotation: { z: number } }
+    ghost: { visible: boolean; position: { set: ReturnType<typeof vi.fn> } }
+    ghostArm: { rotation: { z: number } }
+    ghostMaterials: Array<{ opacity: number }>
+    island: { sampleHeight(): number }
+    visualMaterials: Array<{ color: { copy: ReturnType<typeof vi.fn> } }>
+    visualColors: unknown[]
+    resetPose: ReturnType<typeof vi.fn>
+    enter: ReturnType<typeof vi.fn>
+    world: World
+    updateZap(dt: number, qt: number): void
+  }
+
+  it('recovers alive after the full comic lightning zap', () => {
+    const villager = Object.create(Villager.prototype) as ZapHarness
+    Object.assign(villager, {
+      alive: true,
+      zapTime: 2.4,
+      zapLastQt: Number.NEGATIVE_INFINITY,
+      x: 1,
+      z: 2,
+      model: { scale: { setScalar: vi.fn() } },
+      arms: [{ rotation: { z: 0 } }, { rotation: { z: 0 } }],
+      group: { rotation: { z: 0 } },
+      ghost: { visible: true, position: { set: vi.fn() } },
+      ghostArm: { rotation: { z: 0 } },
+      ghostMaterials: [{ opacity: 1 }],
+      island: { sampleHeight: () => 0 },
+      visualMaterials: [{ color: { copy: vi.fn() } }],
+      visualColors: [{}],
+      resetPose: vi.fn(),
+      enter: vi.fn(),
+      world: {} as World,
+    })
+
+    villager.updateZap(0.1, 3)
+
+    expect(villager.alive).toBe(true)
+    expect(villager.zapTime).toBe(-1)
+    expect(villager.enter).toHaveBeenCalledWith('wander', villager.world)
+  })
+})

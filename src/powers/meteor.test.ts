@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
+import { resolveInteraction } from './matrix'
+import { applyInteractions } from './outcomes'
 import type { CastCtx } from './power'
-import { applyMeteorOutcome } from './meteor'
 
 function context(kind: CastCtx['kind']): CastCtx {
   return {
     x: 2,
     z: 3,
     kind,
+    power: 'meteor',
     world: {
       igniteTarget: vi.fn(),
       destroyTarget: vi.fn(),
@@ -23,7 +25,7 @@ describe('Meteor target outcomes', () => {
   it('ignites and destroys a directly hit tree', () => {
     const ctx = context('tree')
 
-    applyMeteorOutcome(ctx, 1.5)
+    applyInteractions(resolveInteraction('meteor', ctx.kind), ctx, 1.5)
 
     expect(ctx.world.igniteTarget).toHaveBeenCalledWith('tree', 2, 3)
     expect(ctx.world.destroyTarget).toHaveBeenCalledWith('tree', 2, 3)
@@ -32,7 +34,7 @@ describe('Meteor target outcomes', () => {
   it('destroys a directly hit hut', () => {
     const ctx = context('hut')
 
-    applyMeteorOutcome(ctx, 1.5)
+    applyInteractions(resolveInteraction('meteor', ctx.kind), ctx, 1.5)
 
     expect(ctx.world.destroyTarget).toHaveBeenCalledWith('hut', 2, 3)
   })
@@ -40,7 +42,7 @@ describe('Meteor target outcomes', () => {
   it('kills a villager caught at the impact point', () => {
     const ctx = context('villager')
 
-    applyMeteorOutcome(ctx, 1.5)
+    applyInteractions(resolveInteraction('meteor', ctx.kind), ctx, 1.5)
 
     expect(ctx.world.killVillagerNear).toHaveBeenCalledWith(2, 3, 3, 'meteor')
   })
@@ -48,7 +50,7 @@ describe('Meteor target outcomes', () => {
   it('empties a pond and releases a visible steam burst', () => {
     const ctx = context('pond')
 
-    applyMeteorOutcome(ctx, 1.5)
+    applyInteractions(resolveInteraction('meteor', ctx.kind), ctx, 1.5)
 
     expect(ctx.world.emptyPondAt).toHaveBeenCalledWith(2, 3)
     expect(ctx.fx.particles.burst).toHaveBeenCalledWith(expect.objectContaining({
@@ -61,7 +63,7 @@ describe('Meteor target outcomes', () => {
   it('scatters a directly hit campfire', () => {
     const ctx = context('campfire')
 
-    applyMeteorOutcome(ctx, 1.5)
+    applyInteractions(resolveInteraction('meteor', ctx.kind), ctx, 1.5)
 
     expect(ctx.world.scatterCampfire).toHaveBeenCalled()
   })
@@ -69,7 +71,7 @@ describe('Meteor target outcomes', () => {
   it.each(['ground', 'crater'] as const)('leaves %s to the crater effect', (kind) => {
     const ctx = context(kind)
 
-    applyMeteorOutcome(ctx, 1.5)
+    applyInteractions(resolveInteraction('meteor', ctx.kind), ctx, 1.5)
 
     expect(ctx.world.destroyTarget).not.toHaveBeenCalled()
     expect(ctx.world.killVillagerNear).not.toHaveBeenCalled()

@@ -3,38 +3,13 @@ import { Timeline } from '../core/timeline'
 import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
 import { PALETTE } from '../ui/tokens'
+import { resolveInteraction } from './matrix'
+import { applyInteractions } from './outcomes'
 import { Power, type CastCtx } from './power'
 
 type AnimatedActor = {
   start(): void
   remove(): void
-}
-
-let whistleContext: AudioContext | null = null
-
-function whistle(seconds: number): void {
-  try {
-    whistleContext ??= new AudioContext()
-    void whistleContext.resume()
-    const start = whistleContext.currentTime
-    const oscillator = whistleContext.createOscillator()
-    const gain = whistleContext.createGain()
-    oscillator.type = 'sine'
-    oscillator.frequency.setValueAtTime(220, start)
-    oscillator.frequency.exponentialRampToValueAtTime(980, start + seconds)
-    gain.gain.setValueAtTime(0.0001, start)
-    gain.gain.exponentialRampToValueAtTime(0.045, start + seconds * 0.72)
-    gain.gain.exponentialRampToValueAtTime(0.0001, start + seconds)
-    oscillator.connect(gain).connect(whistleContext.destination)
-    oscillator.addEventListener('ended', () => {
-      oscillator.disconnect()
-      gain.disconnect()
-    }, { once: true })
-    oscillator.start(start)
-    oscillator.stop(start + seconds)
-  } catch {
-    // Visual staging remains complete when WebAudio is unavailable.
-  }
 }
 
 function growingShadow(parent: THREE.Object3D, x: number, y: number, z: number): AnimatedActor {
@@ -153,39 +128,6 @@ function dustRing(parent: THREE.Object3D, x: number, y: number, z: number): void
   }
 }
 
-/** Temporary Task 12 outcome dispatch; Task 16 replaces this with the pure matrix. */
-export function applyMeteorOutcome(ctx: CastCtx, y0: number): void {
-  if (ctx.kind === 'tree') {
-    ctx.world.igniteTarget('tree', ctx.x, ctx.z)
-    ctx.world.destroyTarget('tree', ctx.x, ctx.z)
-    return
-  }
-  if (ctx.kind === 'hut') {
-    ctx.world.destroyTarget('hut', ctx.x, ctx.z)
-    return
-  }
-  if (ctx.kind === 'villager') {
-    ctx.world.killVillagerNear(ctx.x, ctx.z, 3, 'meteor')
-    return
-  }
-  if (ctx.kind === 'pond') {
-    if (!ctx.world.emptyPondAt(ctx.x, ctx.z)) return
-    ctx.fx.particles.burst({
-      x: ctx.x,
-      y: y0 + ctx.island.group.position.y,
-      z: ctx.z,
-      n: 36,
-      color: PALETTE.cloud,
-      speed: 2.2,
-      gravity: -0.35,
-      size: 1.8,
-      life: 1.5,
-    })
-    return
-  }
-  if (ctx.kind === 'campfire') ctx.world.scatterCampfire()
-}
-
 export class Meteor extends Power {
   readonly id = 'meteor' as const
   readonly cooldown = 6
@@ -200,7 +142,7 @@ export class Meteor extends Power {
       .at(0, () => {
         ctx.bus.emit({ type: 'power:anticipate', power: this.id, x: ctx.x, z: ctx.z })
         ctx.world.alarmNear(ctx.x, ctx.z, 7)
-        whistle(1.2)
+        ctx.world.warnNear(ctx.x, ctx.z, 4.5)
       })
       .at(0, () => shadow.start())
       .at(0, () => rock.start())
@@ -225,7 +167,12 @@ export class Meteor extends Power {
         ctx.bus.emit({
           type: 'power:impact', power: this.id, target: ctx.kind, x: ctx.x, z: ctx.z,
         })
-        applyMeteorOutcome(ctx, y0)
+        for (const villager of ctx.world.villagers) {
+          if (villager.alive && Math.hypot(villager.x - ctx.x, villager.z - ctx.z) <= 4.5) {
+            villager.cower()
+          }
+        }
+        applyInteractions(resolveInteraction(this.id, ctx.kind), ctx, y0)
       })
       .at(1.3, () => ctx.world.igniteNear(ctx.x, ctx.z, 3.2, ctx.rng, 0.6))
       .at(1.5, () => dustRing(parent, ctx.x, y0, ctx.z))

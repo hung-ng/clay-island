@@ -1,9 +1,9 @@
 import * as THREE from 'three'
 import { PALETTE, TIMING, TYPE } from '../ui/tokens'
 
-export type EmoteKind = 'alarm' | 'question' | 'water' | 'sleep' | 'fish' | 'sad'
+export type EmoteKind = 'alarm' | 'question' | 'water' | 'sleep' | 'fish' | 'sad' | 'cower'
 
-const KINDS: EmoteKind[] = ['alarm', 'question', 'water', 'sleep', 'fish', 'sad']
+const KINDS: EmoteKind[] = ['alarm', 'question', 'water', 'sleep', 'fish', 'sad', 'cower']
 const GLYPHS: Record<EmoteKind, string> = {
   alarm: '!',
   question: '?',
@@ -11,6 +11,7 @@ const GLYPHS: Record<EmoteKind, string> = {
   sleep: 'z',
   fish: '><>',
   sad: '︵',
+  cower: '⌒',
 }
 
 const CELL = 64

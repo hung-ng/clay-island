@@ -58,6 +58,13 @@ body {
   background: var(--paper);
   box-shadow: 0 4px 0 var(--ink-soft);
   touch-action: none;
+  transition: opacity 320ms ease, transform 320ms ease;
+}
+
+#tray.intro-hidden {
+  transform: translate(-50%, 20px);
+  opacity: 0;
+  pointer-events: none;
 }
 
 #tray button {
@@ -224,6 +231,208 @@ body {
   font-weight: 600;
 }
 
+#journal-btn b.pop {
+  animation: counter-pop 166ms steps(2, end);
+}
+
+@keyframes counter-pop {
+  50% { transform: scale(1.18) rotate(-2deg); }
+}
+
+.moment-toast {
+  position: fixed;
+  top: 22px;
+  left: 50%;
+  display: grid;
+  gap: 2px;
+  min-width: min(330px, calc(100vw - 32px));
+  padding: 10px 14px 11px;
+  transform: translate(-50%, -18px) rotate(-1deg);
+  border: 2px solid var(--ink-soft);
+  border-radius: 8px 5px 9px 6px;
+  background: var(--paper);
+  box-shadow: 0 4px 0 var(--terracotta);
+  opacity: 0;
+  transition: opacity 140ms ease, transform 320ms ease;
+}
+
+.moment-toast.show {
+  transform: translate(-50%, 0) rotate(-1deg);
+  opacity: 1;
+}
+
+.moment-toast strong {
+  font-size: 15px;
+  letter-spacing: var(--ui-track);
+}
+
+.moment-toast span {
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+#journal-layer {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 320ms ease;
+}
+
+#journal-layer[hidden] {
+  display: none;
+}
+
+#journal-layer.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.journal-backdrop {
+  position: absolute;
+  inset: 0;
+}
+
+#journal-dialog {
+  position: relative;
+  width: min(780px, calc(100vw - 32px));
+  height: min(630px, calc(100vh - 54px));
+  min-height: 430px;
+  transform: translateY(20px) scale(0.94) rotate(-0.4deg);
+  transition: transform 320ms ease;
+}
+
+#journal-layer.open #journal-dialog {
+  transform: translateY(0) scale(1) rotate(0);
+}
+
+#journal-heading {
+  position: absolute;
+  top: 4%;
+  left: 50%;
+  z-index: 2;
+  margin: 0;
+  transform: translateX(-50%) rotate(-1deg);
+  font-family: var(--ui-font);
+  font-size: clamp(18px, 3vw, 26px);
+  letter-spacing: var(--ui-track);
+  pointer-events: none;
+}
+
+.journal-progress {
+  position: absolute;
+  top: 10%;
+  left: 50%;
+  z-index: 2;
+  margin: 0;
+  transform: translateX(-50%);
+  color: var(--ink-soft);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+.journal-close {
+  position: absolute;
+  top: 4%;
+  right: 5%;
+  z-index: 3;
+  padding: 7px 9px;
+  border: 1px solid var(--ink-soft);
+  border-radius: 7px 5px 8px 4px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Fixed book-shaped aspect: the camera frames exactly this box, so the tile grid
+   below lands on the clay tiles at any dialog size. Keep in sync with BOOK_EXTENT. */
+#journal-book-viewport {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  aspect-ratio: 7.9 / 5.75;
+  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  transform: translate(-50%, -50%);
+}
+
+.moment-grid {
+  position: absolute;
+  z-index: 2;
+  top: 16.3%;
+  right: 15.6%;
+  bottom: 17%;
+  left: 15.6%;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(4, 1fr);
+  gap: 3.5% 6%;
+}
+
+.moment-tile {
+  appearance: none;
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 13px 9px 12px 8px / 9px 13px 8px 12px;
+  background: transparent;
+  color: transparent;
+  font: inherit;
+  cursor: help;
+}
+
+.moment-tile:focus-visible {
+  outline-offset: 2px;
+}
+
+.journal-hint {
+  position: absolute;
+  right: 15%;
+  bottom: 8%;
+  left: 15%;
+  z-index: 2;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-align: center;
+  pointer-events: none;
+}
+
+#journal-layer.lowfx .journal-backdrop {
+  background: var(--ink);
+  opacity: 0.22;
+}
+
+#journal-layer.lowfx #journal-dialog {
+  border: 3px solid var(--ink-soft);
+  border-radius: 28px 20px 31px 18px / 21px 30px 18px 29px;
+  background: var(--paper);
+  box-shadow: 0 8px 0 var(--ink-soft);
+}
+
+#journal-layer.lowfx .moment-grid {
+  top: 20%;
+}
+
+#journal-layer.lowfx .moment-tile {
+  padding: 5px;
+  border: 2px solid var(--ink-soft);
+  background: var(--ink-soft);
+  color: transparent;
+}
+
+#journal-layer.lowfx .moment-tile.unlocked {
+  background: var(--moment-color);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .target-readout {
   position: fixed;
   left: 50%;
@@ -281,6 +490,28 @@ body {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+
+  .moment-toast {
+    transform: translate(-50%, 0) rotate(-1deg);
+    transition: opacity 140ms ease !important;
+  }
+
+  #journal-layer {
+    transition: opacity 140ms ease !important;
+  }
+
+  #journal-dialog,
+  #journal-layer.open #journal-dialog {
+    transform: none;
+  }
+
+  #tray.intro-hidden {
+    transform: translateX(-50%);
+  }
+
+  #tray {
+    transition: opacity 200ms ease !important;
+  }
 }
 
 @media (max-width: 560px) {
@@ -315,5 +546,10 @@ body {
 
   .target-readout {
     bottom: 96px;
+  }
+
+  #journal-dialog {
+    width: calc(100vw - 16px);
+    height: calc(100vh - 24px);
   }
 }

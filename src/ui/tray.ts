@@ -29,6 +29,9 @@ function clamp01(value: number): number {
 export function createTray(ui: HTMLElement, opts: TrayOptions): {
   setCooldown(id: PowerId, t01: number): void
   setEnabled(id: PowerId, on: boolean): void
+  setJournalCount(n: number): void
+  setMuted(muted: boolean): void
+  onMute(handler: () => void): void
 } {
   const tray = document.createElement('div')
   tray.id = 'tray'
@@ -101,6 +104,9 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
   mute.textContent = 'Sound on'
   tray.appendChild(mute)
 
+  let muteHandler: (() => void) | null = null
+  mute.addEventListener('click', () => muteHandler?.())
+
   function sync(control: PowerControl): void {
     const unavailable = !control.enabled || control.cooldown > 0
     const displayedCooldown = control.cooldown <= 0
@@ -145,5 +151,18 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
       control.enabled = on
       sync(control)
     },
+    setJournalCount(n) {
+      const counter = journal.querySelector('b')
+      if (!counter) return
+      counter.textContent = `${Math.max(0, Math.min(12, n))}/12`
+      counter.classList.remove('pop')
+      void counter.offsetWidth
+      counter.classList.add('pop')
+    },
+    setMuted(muted) {
+      mute.setAttribute('aria-pressed', String(muted))
+      mute.textContent = muted ? 'Sound off' : 'Sound on'
+    },
+    onMute(handler) { muteHandler = handler },
   }
 }

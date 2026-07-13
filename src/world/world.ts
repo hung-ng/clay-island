@@ -41,8 +41,17 @@ export class World {
   villagers: Villager[] = []
   private repopulateTimer: number | null = null
   private fireSystem = new FireSystem()
+  private stepFoley: (() => void) | null = null
 
-  constructor(public island: Island, public bus = new EventBus()) {}
+  constructor(public island: Island, public bus = new EventBus()) {
+    this.bus.on((event) => {
+      if (event.type !== 'villager:died') return
+      for (const villager of this.villagers) villager.huddleAtCampfire()
+    })
+  }
+
+  setStepFoley(handler: (() => void) | null): void { this.stepFoley = handler }
+  playStepFoley(): void { this.stepFoley?.() }
 
   choppableTree(): Tree | null {
     return this.trees.find(tree => tree.state === 'normal') ?? null
@@ -99,6 +108,12 @@ export class World {
   alarmNear(x: number, z: number, radius: number): void {
     for (const villager of this.villagers) {
       if (villager.alive && within(villager, x, z, radius)) villager.panic({ x, z })
+    }
+  }
+
+  warnNear(x: number, z: number, radius: number): void {
+    for (const villager of this.villagers) {
+      if (villager.alive && within(villager, x, z, radius)) villager.lookUp({ x, z })
     }
   }
 

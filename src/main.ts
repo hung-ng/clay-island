@@ -1,14 +1,19 @@
 import type { PowerId } from './core/events'
+import { Sfx } from './audio/sfx'
 import { GameLoop, QuantizedClock } from './core/loop'
 import { RNG } from './core/rng'
+import { Journal } from './discovery/moments'
 import { ParticleBurst } from './fx/particles'
 import { flash, Shake } from './fx/shake'
+import { Intro } from './intro'
 import { DragTargeting } from './powers/drag'
 import { Lightning } from './powers/lightning'
 import { Meteor } from './powers/meteor'
 import { PowerManager } from './powers/power'
 import { Rain } from './powers/rain'
 import { createScene } from './scene'
+import { ClayBook } from './ui/book'
+import { createJournalUI } from './ui/journal'
 import { TIMING } from './ui/tokens'
 import { createTray } from './ui/tray'
 import { spawnVillagers } from './villagers/villager'
@@ -53,6 +58,49 @@ const tray = createTray(ui, {
   }),
 })
 
+let storage: Storage | null = null
+try { storage = localStorage } catch { /* Persistence is optional. */ }
+const sfx = new Sfx({ storage })
+sfx.attach(world.bus)
+world.setStepFoley(() => sfx.step())
+const unlockAudio = (): void => { sfx.unlock() }
+addEventListener('pointerdown', unlockAudio, { capture: true, once: true })
+addEventListener('keydown', unlockAudio, { capture: true, once: true })
+tray.setMuted(sfx.muted)
+tray.onMute(() => {
+  sfx.unlock()
+  sfx.setMuted(!sfx.muted)
+  tray.setMuted(sfx.muted)
+})
+const journal = new Journal(storage)
+const journalUI = createJournalUI(ui, journal, { lowFx })
+const book = new ClayBook(renderer, { lowFx })
+tray.setJournalCount(journal.count())
+book.setUnlocked(journal.unlocked)
+journalUI.onOpenChange((open) => {
+  if (open) book.open()
+  else book.close()
+})
+world.bus.on((event) => {
+  const unlocked = journal.observe(event)
+  if (!unlocked) return
+  journalUI.toast(unlocked)
+  sfx.reward()
+  journalUI.setUnlocked(journal.unlocked)
+  tray.setJournalCount(journal.count())
+  book.setUnlocked(journal.unlocked)
+})
+const trayElement = document.getElementById('tray')!
+const intro = new Intro({ camera, controls, tray: trayElement, world })
+const skipIntro = (event: Event): void => {
+  if (intro.done) return
+  intro.skip()
+  event.preventDefault()
+  event.stopImmediatePropagation()
+}
+addEventListener('pointerdown', skipIntro, { capture: true })
+addEventListener('keydown', skipIntro, { capture: true })
+
 let first = true
 const clock = new QuantizedClock(TIMING.fps)
 const loop = new GameLoop(
@@ -78,10 +126,18 @@ const loop = new GameLoop(
     world.updatePonds(clock.quantizedTime)
     world.updateFireLights(camera.position)
     shake.beginFrame(camera)
+    intro.update(dt)
     controls.update()
     shake.update(dt, camera)
     updateSky(dt)
-    composer.render()
+    if (lowFx) renderer.render(scene, camera)
+    else composer.render()
+    book.setRect(journalUI.rect())
+    book.update(dt, clock.quantizedTime)
+    book.render()
+    if (import.meta.env.DEV) {
+      document.documentElement.dataset.bookDrawCalls = String(book.drawCalls)
+    }
     if (first) {
       first = false
       splash.classList.add('gone')

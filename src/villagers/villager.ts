@@ -68,8 +68,10 @@ export class Villager {
 
   private model = new THREE.Group()
   private arms: THREE.Mesh[] = []
+  private head: THREE.Mesh
   private emoteSprite = new EmoteSprite()
   private visualMaterials: THREE.MeshToonMaterial[] = []
+  private visualColors: THREE.Color[] = []
   private rainLeaf: THREE.Mesh
   private rainTime = 0
   private zapTime = -1
@@ -93,6 +95,10 @@ export class Villager {
   private rebuildingRuin = false
   private spawnFrames: number
   private spawnLastQt = Number.NEGATIVE_INFINITY
+  private performance: 'none' | 'meteor' | 'cower' | 'flinch' = 'none'
+  private performanceTime = 0
+  private performanceFrom: Point = { x: 0, z: 0 }
+  private huddleTime = 0
 
   constructor(
     public id: string,
@@ -119,13 +125,13 @@ export class Villager {
     body.position.y = 0.44
     this.addPart(body, lowFx)
 
-    const head = new THREE.Mesh(
+    this.head = new THREE.Mesh(
       wobble(new THREE.SphereGeometry(0.22, 12, 9), rng, 0.035),
       clayMaterial(PALETTE.skin),
     )
-    head.position.y = 0.94
-    head.scale.set(1, 0.96, 0.94)
-    this.addPart(head, lowFx)
+    this.head.position.y = 0.94
+    this.head.scale.set(1, 0.96, 0.94)
+    this.addPart(this.head, lowFx)
 
     for (const side of [-1, 1]) {
       const arm = new THREE.Mesh(
@@ -194,10 +200,12 @@ export class Villager {
 
   update(dt: number, qt: number, world: World, island: Island): void {
     if (!this.alive) return
+    this.huddleTime = Math.max(0, this.huddleTime - dt)
     if (this.zapTime >= 0) {
       this.updateZap(dt, qt)
       return
     }
+    if (this.updatePerformance(dt, qt, island)) return
     const fire = world.nearestBurning(this.x, this.z, 7)
     if (fire) {
       if (this.rainTime > 0) {
@@ -231,6 +239,7 @@ export class Villager {
     this.model.scale.set(MODEL_SCALE, MODEL_SCALE * (sitting ? 0.8 : 1), MODEL_SCALE)
     this.group.rotation.z = this.arrived ? 0 : frame === 0 ? 0.09 : frame === 2 ? -0.09 : 0
     this.group.position.y += !this.arrived && frame % 2 === 0 ? 0.03 : 0
+    if (!this.arrived && frame % 2 === 0) world.playStepFoley()
     this.emoteSprite.update(qt)
   }
 
@@ -248,12 +257,61 @@ export class Villager {
     this.emoteSprite.show(kind, 2.2)
   }
 
+  lookUp(from: Point): void {
+    if (!this.alive || this.zapTime >= 0) return
+    this.performance = 'meteor'
+    this.performanceTime = 1.2
+    this.performanceFrom = from
+    this.emote('cower')
+  }
+
+  cower(): void {
+    if (!this.alive || this.zapTime >= 0) return
+    this.performance = 'cower'
+    this.performanceTime = 0.85
+    this.emote('cower')
+  }
+
+  flinch(): void {
+    if (!this.alive || this.zapTime >= 0) return
+    this.performance = 'flinch'
+    this.performanceTime = 0.13
+  }
+
+  huddleAtCampfire(): void {
+    if (!this.alive) return
+    this.huddleTime = 10
+    if (this.state !== 'sitAtFire') return
+    const dx = this.tx - this.world.campfire.x
+    const dz = this.tz - this.world.campfire.z
+    const length = Math.hypot(dx, dz) || 1
+    this.setTarget({
+      x: this.world.campfire.x + dx / length * 0.82,
+      z: this.world.campfire.z + dz / length * 0.82,
+    })
+  }
+
+  setIntroWake(progress: number): void {
+    if (!this.alive) return
+    const amount = THREE.MathUtils.clamp(progress, 0, 1)
+    this.model.scale.set(
+      MODEL_SCALE,
+      MODEL_SCALE * THREE.MathUtils.lerp(0.68, 1, amount),
+      MODEL_SCALE,
+    )
+    this.group.rotation.z = THREE.MathUtils.lerp(-0.15, 0, amount)
+    this.arms[0].rotation.z = THREE.MathUtils.lerp(-1.2, this.arms[0].userData.baseRotation, amount)
+    this.arms[1].rotation.z = THREE.MathUtils.lerp(1.2, this.arms[1].userData.baseRotation, amount)
+  }
+
   zap(): void {
     if (!this.alive || this.zapTime >= 0) return
     this.zapTime = 0
     this.zapLastQt = Number.NEGATIVE_INFINITY
     this.rainTime = 0
     this.rainLeaf.visible = false
+    this.performance = 'none'
+    this.performanceTime = 0
     this.resetPose()
     for (const material of this.visualMaterials) material.color.set(PALETTE.scorch)
     this.arms[0].rotation.z = -Math.PI / 2
@@ -287,6 +345,7 @@ export class Villager {
     mesh.castShadow = !lowFx
     if (mesh.material instanceof THREE.MeshToonMaterial) {
       this.visualMaterials.push(mesh.material)
+      this.visualColors.push(mesh.material.color.clone())
     }
     this.model.add(mesh)
   }
@@ -323,7 +382,9 @@ export class Villager {
     this.zapTime = -1
     this.ghost.visible = false
     for (const material of this.ghostMaterials) material.opacity = 1
-    this.die('lightning')
+    this.visualMaterials.forEach((material, index) => material.color.copy(this.visualColors[index]))
+    this.resetPose()
+    this.enter('wander', this.world)
   }
 
   private updateRainReaction(dt: number, qt: number, world: World, island: Island): void {
@@ -338,6 +399,7 @@ export class Villager {
       this.group.rotation.z = frame % 4 === 0 ? 0.08 : frame % 4 === 2 ? -0.08 : 0
       this.rainLeaf.position.y = 1.22 + (frame % 2 === 0 ? 0.035 : 0)
       this.arms[0].rotation.z = -2.25
+      if (!this.arrived && frame % 2 === 0) world.playStepFoley()
       this.emoteSprite.update(qt)
     }
     if (this.rainTime > 0) return
@@ -543,9 +605,10 @@ export class Villager {
       }
       case 'sitAtFire': {
         const angle = this.rng.range(0, Math.PI * 2)
+        const radius = this.huddleTime > 0 ? 0.82 : 1.25
         this.setTarget({
-          x: world.campfire.x + Math.cos(angle) * 1.25,
-          z: world.campfire.z + Math.sin(angle) * 1.25,
+          x: world.campfire.x + Math.cos(angle) * radius,
+          z: world.campfire.z + Math.sin(angle) * radius,
         })
         return
       }
@@ -616,7 +679,46 @@ export class Villager {
   private resetPose(): void {
     this.model.scale.setScalar(MODEL_SCALE)
     this.group.rotation.z = 0
+    this.head.rotation.set(0, 0, 0)
     for (const arm of this.arms) arm.rotation.z = arm.userData.baseRotation
+  }
+
+  private updatePerformance(dt: number, qt: number, island: Island): boolean {
+    if (this.performance === 'none') return false
+    this.performanceTime = Math.max(0, this.performanceTime - dt)
+    if (this.performanceTime <= 0) {
+      this.performance = 'none'
+      this.resetPose()
+      return false
+    }
+    if (qt === this.lastQt) return true
+    this.lastQt = qt
+    this.resetPose()
+    this.group.position.set(this.x, island.sampleHeight(this.x, this.z), this.z)
+
+    if (this.performance === 'flinch') {
+      this.group.rotation.z = 0.2
+      this.model.scale.set(MODEL_SCALE * 1.04, MODEL_SCALE * 0.88, MODEL_SCALE)
+      this.arms[0].rotation.z = -1.45
+      this.arms[1].rotation.z = 1.45
+    } else {
+      this.group.rotation.y = Math.atan2(
+        this.performanceFrom.x - this.x,
+        this.performanceFrom.z - this.z,
+      )
+      const looking = this.performance === 'meteor' && this.performanceTime > 0.85
+      if (looking) {
+        this.head.rotation.x = -0.65
+        this.arms[0].rotation.z = -0.85
+        this.arms[1].rotation.z = 0.85
+      } else {
+        this.model.scale.set(MODEL_SCALE, MODEL_SCALE * 0.7, MODEL_SCALE)
+        this.arms[0].rotation.z = -2.2
+        this.arms[1].rotation.z = 2.2
+      }
+    }
+    this.emoteSprite.update(qt)
+    return true
   }
 
   private updateSpawnScale(qt: number): void {
