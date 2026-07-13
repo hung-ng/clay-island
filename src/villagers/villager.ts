@@ -45,6 +45,22 @@ function clampToIsland(point: Point): Point {
   return { x: point.x * WALK_RADIUS / radius, z: point.z * WALK_RADIUS / radius }
 }
 
+export function fleeTarget(position: Point, danger: Point, rng: RNG): Point {
+  let dx = position.x - danger.x
+  let dz = position.z - danger.z
+  let length = Math.hypot(dx, dz)
+  if (length <= Number.EPSILON) {
+    const angle = rng.range(0, Math.PI * 2)
+    dx = Math.cos(angle)
+    dz = Math.sin(angle)
+    length = 1
+  }
+  return clampToIsland({
+    x: position.x + dx / length * 5,
+    z: position.z + dz / length * 5,
+  })
+}
+
 export class Villager {
   state: VillagerState = 'wander'
   alive = true
@@ -182,6 +198,15 @@ export class Villager {
       this.updateZap(dt, qt)
       return
     }
+    const fire = world.nearestBurning(this.x, this.z, 7)
+    if (fire) {
+      if (this.rainTime > 0) {
+        this.rainTime = 0
+        this.rainLeaf.visible = false
+        this.resetPose()
+      }
+      if (this.state !== 'flee') this.panic(fire)
+    }
     if (this.rainTime > 0) {
       this.updateRainReaction(dt, qt, world, island)
       return
@@ -251,13 +276,10 @@ export class Villager {
   }
 
   panic(from: Point): void {
-    const dx = this.x - from.x
-    const dz = this.z - from.z
-    const length = Math.hypot(dx, dz) || 1
-    const target = clampToIsland({ x: this.x + dx / length * 5, z: this.z + dz / length * 5 })
     this.state = 'flee'
     this.timer = stateDuration('flee', this.rng)
-    this.setTarget(target)
+    this.retargetTimer = 1
+    this.setTarget(fleeTarget(this, from, this.rng))
     this.emote('alarm')
   }
 
@@ -427,6 +449,10 @@ export class Villager {
         return
       }
       case 'sitAtFire': {
+        if (!world.campfire.lit) {
+          this.enter('wander', world)
+          return
+        }
         if (this.targetDistance() < 0.2) {
           if (!this.arrived && this.rng.chance(0.5)) this.emote('sleep')
           this.arrived = true
@@ -456,7 +482,7 @@ export class Villager {
         return
       }
       case 'fish': {
-        if (!this.targetPond) {
+        if (!this.targetPond || !world.ponds.some(pond => pond === this.targetPond)) {
           this.enter('wander', world)
           return
         }
@@ -565,6 +591,7 @@ export class Villager {
       hasSite: world.huts.some(hut => hut.state === 'site' || hut.state === 'building'),
       hasPond: world.ponds.some(isPond),
       hasTree: world.trees.some(tree => tree.state === 'normal'),
+      campfireLit: world.campfire.lit,
       rng: this.rng,
     }
   }

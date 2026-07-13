@@ -3,11 +3,25 @@ import { RNG } from '../core/rng'
 import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
 import { PALETTE, TIMING } from '../ui/tokens'
+import { ISLAND_RADIUS } from './island'
 
 export type TreeState = 'normal' | 'chopped' | 'burning' | 'burnt'
 export type HutState = 'site' | 'building' | 'built' | 'burning' | 'ruin'
 
 const SCORCH = new THREE.Color(PALETTE.scorch)
+
+function disposeObjectResources(object: THREE.Object3D): void {
+  const geometries = new Set<THREE.BufferGeometry>()
+  const materials = new Set<THREE.Material>()
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return
+    geometries.add(child.geometry)
+    const childMaterials = Array.isArray(child.material) ? child.material : [child.material]
+    for (const material of childMaterials) materials.add(material)
+  })
+  for (const geometry of geometries) geometry.dispose()
+  for (const material of materials) material.dispose()
+}
 
 function setShadow(object: THREE.Object3D, lowFx: boolean): void {
   object.castShadow = !lowFx
@@ -332,6 +346,7 @@ export class Tree {
       this.fruitTime -= dt
       if (this.fruitTime <= 0) {
         this.crown.remove(this.fruit)
+        disposeObjectResources(this.fruit)
         this.fruit = null
       }
     }
@@ -510,6 +525,7 @@ export class Hut {
 export class Campfire {
   group = new THREE.Group()
   lit = true
+  scattered = false
   readonly id = 'campfire'
   readonly kind = 'campfire' as const
   burning = false
@@ -517,6 +533,8 @@ export class Campfire {
   burnTime = 0
 
   private flames: THREE.Mesh[] = []
+  private logs: THREE.Mesh[] = []
+  private stones: THREE.InstancedMesh
   private light: THREE.PointLight
   private lightEnabled = true
   private lastQt = Number.NEGATIVE_INFINITY
@@ -531,7 +549,8 @@ export class Campfire {
     lowFx = false,
   ) {
     this.group.position.set(x, y, z)
-    this.group.add(ringMesh(6, 0.7, 0.19, rng, lowFx))
+    this.stones = ringMesh(6, 0.7, 0.19, rng, lowFx)
+    this.group.add(this.stones)
 
     for (let i = 0; i < 2; i++) {
       const log = new THREE.Mesh(
@@ -542,6 +561,7 @@ export class Campfire {
       log.rotation.y = (i === 0 ? 1 : -1) * Math.PI / 4
       log.position.y = 0.22
       setShadow(log, lowFx)
+      this.logs.push(log)
       this.group.add(log)
     }
 
@@ -567,12 +587,14 @@ export class Campfire {
   }
 
   flare(seconds = 1, scale = 1.75): void {
+    if (this.scattered) return
     this.lit = true
     this.flareTime = seconds
     this.flareScale = scale
   }
 
   ignite(): void {
+    if (this.scattered) return
     this.burning = true
     this.burnTime = 0
     this.flare()
@@ -584,6 +606,28 @@ export class Campfire {
     this.burnTime = 0
     this.flareTime = 0
     this.flareScale = 1
+  }
+
+  scatter(): void {
+    this.douse()
+    this.scattered = true
+    const dummy = new THREE.Object3D()
+    for (let i = 0; i < this.stones.count; i++) {
+      const angle = (i / this.stones.count) * Math.PI * 2 + (i % 2 === 0 ? -0.18 : 0.14)
+      const radius = 1.05 + (i % 3) * 0.16
+      dummy.position.set(Math.cos(angle) * radius, 0.12, Math.sin(angle) * radius)
+      dummy.rotation.set(i * 0.17, -angle, i % 2 === 0 ? 0.22 : -0.16)
+      dummy.scale.setScalar(1)
+      dummy.updateMatrix()
+      this.stones.setMatrixAt(i, dummy.matrix)
+    }
+    this.stones.instanceMatrix.needsUpdate = true
+    this.logs.forEach((log, index) => {
+      const side = index === 0 ? -1 : 1
+      log.position.set(side * 0.48, 0.18, side * -0.42)
+      log.rotation.z = Math.PI / 2 + side * 0.2
+      log.rotation.y = side * 0.92
+    })
   }
 
   extinguish(): void {
@@ -670,6 +714,10 @@ export class Pond {
     return true
   }
 
+  dispose(): void {
+    disposeObjectResources(this.group)
+  }
+
   update(qt: number): void {
     if (qt === this.lastQt) return
     const frame = Math.floor(qt * TIMING.fps)
@@ -725,7 +773,7 @@ export class FlowerPatch {
   constructor(
     public x: number,
     public z: number,
-    radius: number,
+    public radius: number,
     sampleHeight: (x: number, z: number) => number,
     rng: RNG,
     lowFx = false,
@@ -738,10 +786,18 @@ export class FlowerPatch {
     flowers.castShadow = !lowFx
     const dummy = new THREE.Object3D()
     for (let i = 0; i < count; i++) {
-      const angle = rng.range(0, Math.PI * 2)
-      const distance = Math.sqrt(rng.next()) * radius
-      const px = x + Math.cos(angle) * distance
-      const pz = z + Math.sin(angle) * distance
+      let px = x
+      let pz = z
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const angle = rng.range(0, Math.PI * 2)
+        const distance = Math.sqrt(rng.next()) * radius
+        const candidateX = x + Math.cos(angle) * distance
+        const candidateZ = z + Math.sin(angle) * distance
+        if (Math.hypot(candidateX, candidateZ) > ISLAND_RADIUS) continue
+        px = candidateX
+        pz = candidateZ
+        break
+      }
       dummy.position.set(px, sampleHeight(px, pz) + rng.range(0.08, 0.16), pz)
       const scale = rng.range(0.7, 1.35)
       dummy.scale.set(scale, scale * rng.range(0.85, 1.35), scale)
@@ -751,5 +807,9 @@ export class FlowerPatch {
     }
     flowers.instanceMatrix.needsUpdate = true
     this.group.add(flowers)
+  }
+
+  dispose(): void {
+    disposeObjectResources(this.group)
   }
 }

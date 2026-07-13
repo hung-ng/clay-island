@@ -4,7 +4,7 @@ import { decideNext, STATES, type FsmCtx } from './fsm'
 
 const base = (o: Partial<FsmCtx> = {}): FsmCtx => ({
   state: 'wander', fireNear: false, freshGrave: false, hasRuin: false,
-  hasSite: false, hasPond: false, hasTree: true, rng: new RNG(3), ...o,
+  hasSite: false, hasPond: false, hasTree: true, campfireLit: true, rng: new RNG(3), ...o,
 })
 
 describe('FSM shape', () => {
@@ -49,6 +49,11 @@ describe('weighted idle selection', () => {
     expect(fished).toBe(true)
     for (let seed = 0; seed < 300; seed++) {
       expect(decideNext(base({ rng: new RNG(seed), hasPond: false }))).not.toBe('fish')
+    }
+  })
+  it('does not gather at a doused campfire', () => {
+    for (let seed = 0; seed < 300; seed++) {
+      expect(decideNext(base({ rng: new RNG(seed), campfireLit: false }))).not.toBe('sitAtFire')
     }
   })
   it('is deterministic for a given seed', () => {

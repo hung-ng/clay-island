@@ -77,6 +77,7 @@ const loop = new GameLoop(
     world.campfire.update(dt, clock.quantizedTime)
     world.updatePonds(clock.quantizedTime)
     world.updateFireLights(camera.position)
+    shake.beginFrame(camera)
     controls.update()
     shake.update(dt, camera)
     updateSky(dt)

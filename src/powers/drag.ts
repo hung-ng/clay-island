@@ -25,12 +25,37 @@ const TARGET_LABELS: Record<TargetKind, string> = {
 function powerButton(target: EventTarget | null): HTMLButtonElement | null {
   if (!(target instanceof Element)) return null
   const button = target.closest<HTMLButtonElement>('button[data-power]')
-  return button?.getAttribute('aria-disabled') === 'true' ? null : button
+  return !button || button.disabled ? null : button
+}
+
+export function cameraRelativeOffset(
+  key: string,
+  forwardX: number,
+  forwardZ: number,
+  step = 2,
+): [number, number] | null {
+  const length = Math.hypot(forwardX, forwardZ)
+  if (length <= Number.EPSILON) return null
+  const fx = forwardX / length
+  const fz = forwardZ / length
+  const rx = -fz
+  const rz = fx
+  const clean = (value: number): number => Math.abs(value) < 1e-12 ? 0 : value
+
+  switch (key) {
+    case 'ArrowUp': return [clean(fx * step), clean(fz * step)]
+    case 'ArrowDown': return [clean(-fx * step), clean(-fz * step)]
+    case 'ArrowRight': return [clean(rx * step), clean(rz * step)]
+    case 'ArrowLeft': return [clean(-rx * step), clean(-rz * step)]
+    default: return null
+  }
 }
 
 export class DragTargeting {
   private readonly raycaster = new THREE.Raycaster()
   private readonly pointer = new THREE.Vector2()
+  private readonly cameraForward = new THREE.Vector3()
+  private readonly islandWorldRotation = new THREE.Quaternion()
   private readonly reticle: THREE.Mesh<THREE.RingGeometry, THREE.MeshToonMaterial>
   private readonly liveRegion: HTMLDivElement
   private activePower: PowerId | null = null
@@ -78,7 +103,9 @@ export class DragTargeting {
   }
 
   arm(id: PowerId): void {
+    const pointerArm = this.pendingPointer?.id === id ? this.pendingPointer : null
     if (this.activePower) this.cancel(false)
+    if (pointerArm) this.pendingPointer = pointerArm
     this.activePower = id
     this.focusOrigin = document.activeElement instanceof HTMLButtonElement
       ? document.activeElement
@@ -87,10 +114,10 @@ export class DragTargeting {
     this.dom.style.cursor = 'crosshair'
     this.liveRegion.classList.add('active')
 
-    if (this.pendingPointer?.id === id) {
+    if (pointerArm) {
       this.keyboardMode = false
-      this.activePointerId = this.pendingPointer.pointerId
-      this.updateFromPointer(this.pendingPointer.clientX, this.pendingPointer.clientY)
+      this.activePointerId = pointerArm.pointerId
+      this.updateFromPointer(pointerArm.clientX, pointerArm.clientY)
       return
     }
 
@@ -169,13 +196,14 @@ export class DragTargeting {
       return
     }
 
-    const offsets: Partial<Record<string, [number, number]>> = {
-      ArrowLeft: [-2, 0],
-      ArrowRight: [2, 0],
-      ArrowUp: [0, -2],
-      ArrowDown: [0, 2],
-    }
-    const offset = offsets[event.key]
+    this.camera.getWorldDirection(this.cameraForward)
+    this.island.group.getWorldQuaternion(this.islandWorldRotation)
+    this.cameraForward.applyQuaternion(this.islandWorldRotation.invert())
+    const offset = cameraRelativeOffset(
+      event.key,
+      this.cameraForward.x,
+      this.cameraForward.z,
+    )
     if (!offset) return
     event.preventDefault()
     const x = this.targetX + offset[0]

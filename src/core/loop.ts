@@ -6,14 +6,19 @@ export class GameLoop {
     private simDt = 1 / 30,
   ) {}
   start(): void {
-    this.running = true; this.last = performance.now()
+    if (this.running) return
+    this.running = true; this.last = performance.now(); this.acc = 0
     const frame = (now: number) => {
       if (!this.running) return
       const dt = Math.min((now - this.last) / 1000, 0.1)
       this.last = now; this.acc += dt
-      while (this.acc >= this.simDt) { this.onSim(this.simDt); this.acc -= this.simDt }
+      while (this.running && this.acc >= this.simDt) {
+        this.onSim(this.simDt)
+        this.acc -= this.simDt
+      }
+      if (!this.running) return
       this.onRender(dt)
-      this.raf = requestAnimationFrame(frame)
+      if (this.running) this.raf = requestAnimationFrame(frame)
     }
     this.raf = requestAnimationFrame(frame)
   }

@@ -133,6 +133,9 @@ function dustRing(parent: THREE.Object3D, x: number, y: number, z: number): void
   })
   const ring = new THREE.Mesh(geometry, material)
   ring.name = 'meteor-dust-ring'
+  // Cleanup is driven by onBeforeRender; keep the ring renderable at edge casts
+  // so a culled ring cannot remain allocated forever.
+  ring.frustumCulled = false
   ring.position.set(x, y + 0.12, z)
   ring.rotation.x = -Math.PI / 2
   ring.scale.setScalar(0.45)
@@ -148,6 +151,39 @@ function dustRing(parent: THREE.Object3D, x: number, y: number, z: number): void
     geometry.dispose()
     material.dispose()
   }
+}
+
+/** Temporary Task 12 outcome dispatch; Task 16 replaces this with the pure matrix. */
+export function applyMeteorOutcome(ctx: CastCtx, y0: number): void {
+  if (ctx.kind === 'tree') {
+    ctx.world.igniteTarget('tree', ctx.x, ctx.z)
+    ctx.world.destroyTarget('tree', ctx.x, ctx.z)
+    return
+  }
+  if (ctx.kind === 'hut') {
+    ctx.world.destroyTarget('hut', ctx.x, ctx.z)
+    return
+  }
+  if (ctx.kind === 'villager') {
+    ctx.world.killVillagerNear(ctx.x, ctx.z, 3, 'meteor')
+    return
+  }
+  if (ctx.kind === 'pond') {
+    if (!ctx.world.emptyPondAt(ctx.x, ctx.z)) return
+    ctx.fx.particles.burst({
+      x: ctx.x,
+      y: y0 + ctx.island.group.position.y,
+      z: ctx.z,
+      n: 36,
+      color: PALETTE.cloud,
+      speed: 2.2,
+      gravity: -0.35,
+      size: 1.8,
+      life: 1.5,
+    })
+    return
+  }
+  if (ctx.kind === 'campfire') ctx.world.scatterCampfire()
 }
 
 export class Meteor extends Power {
@@ -182,11 +218,14 @@ export class Meteor extends Power {
           color: PALETTE.scorch, speed: 5, gravity: 3, life: 2.2,
         })
         ctx.island.addCrater({ x: ctx.x, z: ctx.z, radius: 2.8, depth: 1.3 })
+        ctx.world.clearFlowersNear(ctx.x, ctx.z, 2.8)
+        ctx.world.reground()
         ctx.island.scorch(ctx.x, ctx.z, 3.4)
         ctx.bus.emit({ type: 'crater:created', x: ctx.x, z: ctx.z })
         ctx.bus.emit({
           type: 'power:impact', power: this.id, target: ctx.kind, x: ctx.x, z: ctx.z,
         })
+        applyMeteorOutcome(ctx, y0)
       })
       .at(1.3, () => ctx.world.igniteNear(ctx.x, ctx.z, 3.2, ctx.rng, 0.6))
       .at(1.5, () => dustRing(parent, ctx.x, y0, ctx.z))

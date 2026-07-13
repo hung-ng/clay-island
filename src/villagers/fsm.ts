@@ -14,13 +14,14 @@ export type FsmCtx = {
   hasSite: boolean
   hasPond: boolean
   hasTree: boolean
+  campfireLit: boolean
   rng: RNG
 }
 
 /** Weighted candidates for the idle roll. Preconditions gate availability. */
 const IDLE: { state: VillagerState; weight: number; when: (c: FsmCtx) => boolean }[] = [
   { state: 'wander', weight: 4, when: () => true },
-  { state: 'sitAtFire', weight: 3, when: () => true },
+  { state: 'sitAtFire', weight: 3, when: c => c.campfireLit },
   { state: 'chopTree', weight: 3, when: c => c.hasTree },
   { state: 'buildHut', weight: 3, when: c => c.hasSite },
   { state: 'fish', weight: 4, when: c => c.hasPond },

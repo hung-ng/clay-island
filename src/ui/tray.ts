@@ -8,11 +8,14 @@ type TrayOptions = {
 
 type PowerControl = {
   button: HTMLButtonElement
+  cooldownFill: HTMLSpanElement
   cooldown: number
+  displayedCooldown: number
   enabled: boolean
 }
 
 const POWER_IDS: readonly PowerId[] = ['meteor', 'lightning', 'rain']
+const COOLDOWN_STEPS = 12
 const POWER_LABELS: Record<PowerId, string> = {
   meteor: 'Meteor',
   lightning: 'Lightning',
@@ -36,6 +39,14 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
   const initialCooldowns = opts.cooldowns()
 
   for (const id of POWER_IDS) {
+    const shell = document.createElement('span')
+    shell.className = 'power-shell'
+    shell.dataset.powerShell = id
+
+    const cooldownFill = document.createElement('span')
+    cooldownFill.className = 'power-cooldown'
+    cooldownFill.setAttribute('aria-hidden', 'true')
+
     const button = document.createElement('button')
     button.type = 'button'
     button.className = 'power'
@@ -45,17 +56,20 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
       <span class="power-glyph" data-glyph="${id}" aria-hidden="true"></span>
       <span class="power-label">${POWER_LABELS[id]}</span>
     `
-    tray.appendChild(button)
+    shell.append(cooldownFill, button)
+    tray.appendChild(shell)
 
     const control = {
       button,
+      cooldownFill,
       cooldown: clamp01(initialCooldowns[id]),
+      displayedCooldown: -1,
       enabled: true,
     }
     controls.set(id, control)
 
     button.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0 || button.getAttribute('aria-disabled') === 'true') return
+      if (event.button !== 0 || button.disabled) return
       button.focus({ preventScroll: true })
       event.preventDefault()
       opts.onArm(id)
@@ -63,7 +77,7 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
     button.addEventListener('click', (event) => {
       // Pointer input arms on pointerdown so dragging can begin immediately.
       // Keyboard and assistive-technology clicks have detail 0.
-      if (event.detail !== 0 || button.getAttribute('aria-disabled') === 'true') return
+      if (event.detail !== 0 || button.disabled) return
       opts.onArm(id)
     })
   }
@@ -89,9 +103,14 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
 
   function sync(control: PowerControl): void {
     const unavailable = !control.enabled || control.cooldown > 0
-    control.button.style.setProperty('--cooldown', control.cooldown.toFixed(3))
-    control.button.setAttribute('aria-disabled', String(unavailable))
-    control.button.classList.toggle('cooling', control.cooldown > 0)
+    const displayedCooldown = control.cooldown <= 0
+      ? 0
+      : Math.ceil(control.cooldown * COOLDOWN_STEPS) / COOLDOWN_STEPS
+    if (displayedCooldown !== control.displayedCooldown) {
+      control.displayedCooldown = displayedCooldown
+      control.cooldownFill.style.height = `${(displayedCooldown * 100).toFixed(1)}%`
+    }
+    if (control.button.disabled !== unavailable) control.button.disabled = unavailable
   }
 
   for (const control of controls.values()) sync(control)
@@ -107,7 +126,7 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
     const id = POWER_IDS[index]
     if (!id) return
     const control = controls.get(id)!
-    if (control.button.getAttribute('aria-disabled') === 'true') return
+    if (control.button.disabled) return
     event.preventDefault()
     control.button.focus({ preventScroll: true })
     opts.onArm(id)

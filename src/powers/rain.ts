@@ -3,6 +3,7 @@ import { Timeline } from '../core/timeline'
 import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
 import { PALETTE } from '../ui/tokens'
+import { ISLAND_RADIUS } from '../world/island'
 import { Power, type CastCtx } from './power'
 
 const RAIN_RADIUS = 5
@@ -31,16 +32,34 @@ function rainTone(seconds: number): void {
     gain.gain.exponentialRampToValueAtTime(0.022, start + 0.6)
     gain.gain.setValueAtTime(0.022, start + Math.max(0.7, seconds - 0.8))
     gain.gain.exponentialRampToValueAtTime(0.0001, start + seconds)
-    oscillator.connect(gain).connect(rainAudio.destination)
+    oscillator.connect(gain)
+    gain.connect(rainAudio.destination)
     oscillator.addEventListener('ended', () => {
       oscillator.disconnect()
       gain.disconnect()
-    }, { once: true })
+    })
     oscillator.start(start)
     oscillator.stop(start + seconds)
   } catch {
     // Rain remains complete without WebAudio.
   }
+}
+
+export function rainOffset(
+  centerX: number,
+  centerZ: number,
+  rng: CastCtx['rng'],
+): { x: number; z: number } {
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const angle = rng.range(0, Math.PI * 2)
+    const distance = Math.sqrt(rng.next()) * RAIN_RADIUS * 0.9
+    const x = Math.cos(angle) * distance
+    const z = Math.sin(angle) * distance
+    if (Math.hypot(centerX + x, centerZ + z) <= ISLAND_RADIUS) return { x, z }
+  }
+  // Cast centers come from island ray hits, so the center is always a safe
+  // fallback even for an adversarial RNG sequence at the exact rim.
+  return { x: 0, z: 0 }
 }
 
 function rainField(ctx: CastCtx): RainActor {
@@ -112,10 +131,9 @@ function rainField(ctx: CastCtx): RainActor {
   const dropPhase = new Float32Array(DROP_COUNT)
   const previousCycle = new Float32Array(DROP_COUNT)
   for (let i = 0; i < DROP_COUNT; i++) {
-    const angle = ctx.rng.range(0, Math.PI * 2)
-    const distance = Math.sqrt(ctx.rng.next()) * RAIN_RADIUS * 0.9
-    dropX[i] = Math.cos(angle) * distance
-    dropZ[i] = Math.sin(angle) * distance
+    const offset = rainOffset(ctx.x, ctx.z, ctx.rng)
+    dropX[i] = offset.x
+    dropZ[i] = offset.z
     dropSpeed[i] = ctx.rng.range(0.72, 1.18)
     dropPhase[i] = ctx.rng.next()
     previousCycle[i] = dropPhase[i]

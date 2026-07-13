@@ -25,15 +25,36 @@ function tone(kind: 'rumble' | 'crack', seconds: number): void {
     gain.gain.setValueAtTime(0.0001, start)
     gain.gain.exponentialRampToValueAtTime(kind === 'rumble' ? 0.035 : 0.09, start + 0.015)
     gain.gain.exponentialRampToValueAtTime(0.0001, start + seconds)
-    oscillator.connect(gain).connect(lightningAudio.destination)
+    oscillator.connect(gain)
+    gain.connect(lightningAudio.destination)
     oscillator.addEventListener('ended', () => {
       oscillator.disconnect()
       gain.disconnect()
-    }, { once: true })
+    })
     oscillator.start(start)
     oscillator.stop(start + seconds)
   } catch {
     // Lightning remains fully legible when WebAudio is unavailable.
+  }
+}
+
+function applyLightningOutcome(ctx: CastCtx): void {
+  if (ctx.kind === 'tree' || ctx.kind === 'hut') {
+    ctx.world.igniteTarget(ctx.kind, ctx.x, ctx.z)
+    return
+  }
+  if (ctx.kind === 'villager') {
+    ctx.world.villagerAt(ctx.x, ctx.z, 1.2)?.zap()
+    return
+  }
+  if (ctx.kind === 'pond') {
+    const pond = ctx.world.pondAt(ctx.x, ctx.z)
+    if (pond?.floatFish()) ctx.bus.emit({ type: 'fish:floated' })
+    return
+  }
+  if (ctx.kind === 'campfire') {
+    ctx.world.campfire.flare(2, 3)
+    ctx.bus.emit({ type: 'campfire:flared' })
   }
 }
 
@@ -69,6 +90,7 @@ function gatheringCloud(ctx: CastCtx): Actor {
   let startedAt = Number.POSITIVE_INFINITY
   let removed = false
   const driver = group.children[0]
+  driver.frustumCulled = false
   driver.onBeforeRender = () => {
     if (!Number.isFinite(startedAt)) return
     const progress = Math.min(1, (performance.now() - startedAt) / 900)
@@ -144,26 +166,6 @@ function boltGeometry(ctx: CastCtx, y0: number): Actor {
       for (const geometry of geometries) geometry.dispose()
       material.dispose()
     },
-  }
-}
-
-function applyLightningOutcome(ctx: CastCtx): void {
-  if (ctx.kind === 'tree' || ctx.kind === 'hut') {
-    ctx.world.igniteTarget(ctx.kind, ctx.x, ctx.z)
-    return
-  }
-  if (ctx.kind === 'villager') {
-    ctx.world.villagerAt(ctx.x, ctx.z, 1.2)?.zap()
-    return
-  }
-  if (ctx.kind === 'pond') {
-    const pond = ctx.world.pondAt(ctx.x, ctx.z)
-    if (pond?.floatFish()) ctx.bus.emit({ type: 'fish:floated' })
-    return
-  }
-  if (ctx.kind === 'campfire') {
-    ctx.world.campfire.flare(2, 3)
-    ctx.bus.emit({ type: 'campfire:flared' })
   }
 }
 

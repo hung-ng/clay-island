@@ -25,6 +25,12 @@ function within(a: Position, x: number, z: number, radius: number): boolean {
   return Math.hypot(a.x - x, a.z - z) <= radius
 }
 
+export function repopulationHome(living: number, huts: Hut[]): Hut | null {
+  const built = huts.find(hut => hut.state === 'built')
+  if (built) return built
+  return living === 0 ? huts[0] ?? null : null
+}
+
 export class World {
   trees: Tree[] = []
   huts: Hut[] = []
@@ -65,10 +71,10 @@ export class World {
   }
 
   resolveTarget(x: number, z: number): TargetKind {
-    if (this.villagers.some(villager => hasPosition(villager) && within(villager, x, z, 1))) return 'villager'
+    if (this.villagers.some(villager => villager.alive && within(villager, x, z, 1))) return 'villager'
     if (this.trees.some(tree => within(tree, x, z, 1.2))) return 'tree'
     if (this.huts.some(hut => within(hut, x, z, 1.6))) return 'hut'
-    if (this.campfire && within(this.campfire, x, z, 1.5)) return 'campfire'
+    if (this.campfire && !this.campfire.scattered && within(this.campfire, x, z, 1.5)) return 'campfire'
     if (this.ponds.some(pond => isPondShape(pond) && within(pond, x, z, pond.radius))) return 'pond'
     if (craterAt(x, z, this.island.craters)) return 'crater'
     return 'ground'
@@ -129,6 +135,65 @@ export class World {
     this.alarmNear(object.x, object.z, 7)
   }
 
+  destroyTarget(kind: 'tree' | 'hut', x: number, z: number): boolean {
+    const radius = kind === 'tree' ? 1.3 : 1.8
+    if (kind === 'tree') {
+      const tree = this.trees
+        .filter(candidate => within(candidate, x, z, radius))
+        .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0]
+      if (!tree) return false
+      tree.setBurnt()
+      this.bus.emit({ type: 'burnt', kind: 'tree' })
+      return true
+    }
+
+    const hut = this.huts
+      .filter(candidate => within(candidate, x, z, radius))
+      .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0]
+    if (!hut) return false
+    hut.setRuin()
+    this.bus.emit({ type: 'burnt', kind: 'hut' })
+    return true
+  }
+
+  killVillagerNear(
+    x: number,
+    z: number,
+    radius: number,
+    cause: Parameters<Villager['die']>[0],
+  ): boolean {
+    const villager = this.villagerAt(x, z, radius)
+    if (!villager) return false
+    villager.die(cause)
+    return true
+  }
+
+  emptyPondAt(x: number, z: number): boolean {
+    const pond = this.pondAt(x, z)
+    if (!pond) return false
+    this.ponds.splice(this.ponds.indexOf(pond), 1)
+    this.island.group.remove(pond.group)
+    pond.dispose()
+    this.bus.emit({ type: 'pond:emptied' })
+    return true
+  }
+
+  scatterCampfire(): void {
+    this.campfire.scatter()
+  }
+
+  clearFlowersNear(x: number, z: number, radius: number): number {
+    let removed = 0
+    this.flowerPatches = this.flowerPatches.filter((patch) => {
+      if (!within(patch, x, z, patch.radius + radius)) return true
+      this.island.group.remove(patch.group)
+      patch.dispose()
+      removed++
+      return false
+    })
+    return removed
+  }
+
   addGrave(x: number, z: number, rng: RNG, lowFx = false): Grave {
     const grave = new Grave(x, z, this.island.sampleHeight(x, z), rng, lowFx)
     this.graves.push(grave)
@@ -162,6 +227,10 @@ export class World {
   }
 
   bloomNear(x: number, z: number, radius: number, rng: RNG, lowFx = false): FlowerPatch {
+    const existing = this.flowerPatches.find(patch => (
+      within(patch, x, z, Math.min(patch.radius, radius) * 0.5)
+    ))
+    if (existing) return existing
     const patch = new FlowerPatch(x, z, radius, (px, pz) => this.island.sampleHeight(px, pz), rng, lowFx)
     this.flowerPatches.push(patch)
     this.island.group.add(patch.group)
@@ -178,6 +247,18 @@ export class World {
   sadNear(x: number, z: number, radius: number): void {
     for (const villager of this.villagers) {
       if (villager.alive && within(villager, x, z, radius)) villager.emote('sad')
+    }
+  }
+
+  reground(): void {
+    const standing: Array<Tree | Hut | Grave | Campfire> = [
+      ...this.trees,
+      ...this.huts,
+      ...this.graves,
+    ]
+    if (this.campfire) standing.push(this.campfire)
+    for (const object of standing) {
+      object.group.position.y = this.island.sampleHeight(object.x, object.z)
     }
   }
 
@@ -255,7 +336,7 @@ export class World {
       return
     }
 
-    const hut = this.huts.find(candidate => candidate.state === 'built')
+    const hut = repopulationHome(living, this.huts)
     if (!hut) return
     if (this.repopulateTimer === null) this.repopulateTimer = rng.range(20, 30)
     this.repopulateTimer -= dt
@@ -280,7 +361,7 @@ export class World {
       ...this.trees,
       ...this.huts.filter(hut => hut.state === 'built' || hut.state === 'burning' || hut.state === 'ruin'),
     ]
-    if (this.campfire) items.push(this.campfire)
+    if (this.campfire && !this.campfire.scattered) items.push(this.campfire)
     return items
   }
 

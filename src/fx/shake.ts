@@ -17,9 +17,13 @@ export class Shake {
     this.duration = Math.max(remaining, seconds)
   }
 
-  update(dt: number, camera: Camera): void {
+  beginFrame(camera: Camera): void {
     camera.position.sub(this.previousOffset)
     this.previousOffset.set(0, 0, 0)
+  }
+
+  update(dt: number, camera: Camera): void {
+    this.beginFrame(camera)
 
     if (this.trauma <= 0) return
     this.time += dt

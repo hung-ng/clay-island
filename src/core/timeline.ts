@@ -4,7 +4,11 @@
 export class Timeline {
   private events: { t: number; fn: () => void; fired: boolean }[] = []
   private t = 0
-  at(t: number, fn: () => void): this { this.events.push({ t, fn, fired: false }); return this }
+  at(t: number, fn: () => void): this {
+    this.events.push({ t, fn, fired: false })
+    this.events.sort((a, b) => a.t - b.t)
+    return this
+  }
   update(dt: number): void {
     this.t += dt
     for (const e of this.events) {

@@ -1,9 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { RNG } from './rng'
 import { valueNoise2 } from './noise'
 import { EventBus, type GameEvent } from './events'
-import { QuantizedClock } from './loop'
+import { GameLoop, QuantizedClock } from './loop'
 import { Timeline } from './timeline'
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe('RNG', () => {
   it('is deterministic per seed', () => {
@@ -59,6 +61,63 @@ describe('QuantizedClock', () => {
   })
 })
 
+describe('GameLoop lifecycle', () => {
+  it('does not schedule duplicate frames when start is called twice', () => {
+    vi.stubGlobal('performance', { now: () => 0 })
+    const request = vi.fn(() => 1)
+    vi.stubGlobal('requestAnimationFrame', request)
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const loop = new GameLoop(() => {}, () => {})
+
+    loop.start()
+    loop.start()
+
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  it('does not schedule another frame when stopped during rendering', () => {
+    vi.stubGlobal('performance', { now: () => 0 })
+    let frame: FrameRequestCallback | null = null
+    const request = vi.fn((callback: FrameRequestCallback) => {
+      frame = callback
+      return 1
+    })
+    vi.stubGlobal('requestAnimationFrame', request)
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    let loop: GameLoop
+    loop = new GameLoop(() => {}, () => loop.stop())
+    loop.start()
+
+    const scheduled = frame as FrameRequestCallback | null
+    expect(scheduled).not.toBeNull()
+    scheduled!(1 / 60)
+
+    expect(request).toHaveBeenCalledOnce()
+  })
+
+  it('does not render or reschedule when stopped during simulation', () => {
+    vi.stubGlobal('performance', { now: () => 0 })
+    let frame: FrameRequestCallback | null = null
+    const request = vi.fn((callback: FrameRequestCallback) => {
+      frame = callback
+      return 1
+    })
+    vi.stubGlobal('requestAnimationFrame', request)
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    const render = vi.fn()
+    let loop: GameLoop
+    loop = new GameLoop(() => loop.stop(), render)
+    loop.start()
+
+    const scheduled = frame as FrameRequestCallback | null
+    expect(scheduled).not.toBeNull()
+    scheduled!(100)
+
+    expect(render).not.toHaveBeenCalled()
+    expect(request).toHaveBeenCalledOnce()
+  })
+})
+
 describe('Timeline', () => {
   it('fires callbacks in windows, reports done', () => {
     const hits: number[] = []
@@ -78,6 +137,16 @@ describe('Timeline', () => {
     const t = new Timeline().at(0.1, () => n++)
     t.update(1); t.update(1)
     expect(n).toBe(1)
+  })
+  it('fires scheduled callbacks chronologically even when registered out of order', () => {
+    const hits: string[] = []
+    const timeline = new Timeline()
+      .at(1, () => hits.push('late'))
+      .at(0.5, () => hits.push('early'))
+
+    timeline.update(1)
+
+    expect(hits).toEqual(['early', 'late'])
   })
   it('an empty timeline is never done', () => {
     expect(new Timeline().done).toBe(false)   // guards against `[].every() === true`
