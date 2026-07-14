@@ -1,6 +1,36 @@
 import { PALETTE } from '../ui/tokens'
+import type { SuggestionKind } from '../villagers/fsm'
+import { isBuildable } from '../world/terrain'
 import type { Interaction, InteractionKind } from './matrix'
+import { groundNudge } from './nudge'
 import type { CastCtx } from './power'
+
+function suggestionFor(ctx: CastCtx): SuggestionKind | null {
+  switch (ctx.kind) {
+    case 'tree': return 'chop'
+    case 'pond': return 'fish'
+    case 'hut': return 'build'
+    case 'campfire': return 'gather'
+    case 'ground': {
+      const buildable = isBuildable(
+        ctx.x,
+        ctx.z,
+        ctx.world.groundQuery(),
+        (x, z) => ctx.island.sampleHeight(x, z),
+      )
+      const kind = groundNudge({
+        needsFire: ctx.world.needsFire(),
+        living: ctx.world.living(),
+        capacity: ctx.world.capacity(),
+        huts: ctx.world.huts.filter(hut => hut.state !== 'abandoned').length,
+        buildable,
+      })
+      if (kind === 'build') ctx.world.foundHutAt(ctx.x, ctx.z, ctx.rng, ctx.lowFx)
+      return kind
+    }
+    default: return null
+  }
+}
 
 export const OUTCOME_HANDLERS: Record<
   InteractionKind,
@@ -50,6 +80,13 @@ export const OUTCOME_HANDLERS: Record<
   },
   growFruit: (ctx) => { ctx.world.growFruitNear(ctx.x, ctx.z, 4) },
   grumpy: (ctx) => { ctx.world.grumpNear(ctx.x, ctx.z, 4) },
+  suggest: (ctx) => {
+    const kind = suggestionFor(ctx)
+    if (kind) ctx.world.suggest(ctx.x, ctx.z, kind)
+  },
+  startleVillager: (ctx) => {
+    ctx.world.villagerAt(ctx.x, ctx.z, 1.2)?.emote('question')
+  },
 }
 
 export function applyInteractions(

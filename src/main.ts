@@ -9,11 +9,12 @@ import { Intro } from './intro'
 import { DragTargeting } from './powers/drag'
 import { Lightning } from './powers/lightning'
 import { Meteor } from './powers/meteor'
+import { Nudge } from './powers/nudge'
 import { PowerManager } from './powers/power'
 import { Rain } from './powers/rain'
 import { createScene } from './scene'
 import { createJournalUI } from './ui/journal'
-import { TIMING } from './ui/tokens'
+import { PALETTE, TIMING } from './ui/tokens'
 import { createTray } from './ui/tray'
 import { spawnVillagers } from './villagers/villager'
 import { Island } from './world/island'
@@ -32,10 +33,21 @@ spawnVillagers(world, island, rng, 6, { lowFx })
 scene.add(island.group)
 floaters.push(island.group)
 
-const powerIds: readonly PowerId[] = ['meteor', 'lightning', 'rain']
+const powerIds: readonly PowerId[] = ['meteor', 'lightning', 'rain', 'nudge']
 const particles = new ParticleBurst(scene)
+world.setChipFx((x, z) => particles.burst({
+  x,
+  y: island.sampleHeight(x, z) + island.group.position.y + 0.8,
+  z,
+  n: 8,
+  color: PALETTE.bark,
+  speed: 2.4,
+  gravity: 9,
+  life: 0.5,
+  size: 0.6,
+}))
 const shake = new Shake()
-const powers = new PowerManager([new Meteor(), new Lightning(), new Rain()], {
+const powers = new PowerManager([new Meteor(), new Lightning(), new Rain(), new Nudge()], {
   world,
   island,
   scene,
@@ -54,6 +66,7 @@ const tray = createTray(ui, {
     meteor: powers.cooldown01('meteor'),
     lightning: powers.cooldown01('lightning'),
     rain: powers.cooldown01('rain'),
+    nudge: powers.cooldown01('nudge'),
   }),
 })
 

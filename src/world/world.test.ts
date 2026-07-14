@@ -26,6 +26,18 @@ function addTree(world: World, id: string, x: number, z: number): Tree {
   return tree
 }
 
+function addHut(
+  world: World,
+  id: string,
+  x: number,
+  z: number,
+  state: ConstructorParameters<typeof Hut>[3] = 'built',
+): Hut {
+  const hut = new Hut(id, x, z, state, 0, new RNG(1))
+  world.huts.push(hut)
+  return hut
+}
+
 function advanceTree(tree: Tree, seconds: number, from = 0): number {
   const step = 1 / 12
   let qt = from
@@ -266,6 +278,16 @@ describe('World refloodBasins', () => {
 })
 
 describe('World ponds', () => {
+  it('reports flooded ground as submerged and measures its depth', () => {
+    const world = floodedWorld([{ x: 0, z: 0, radius: 3, depth: 1.5 }])
+    world.fillCratersNear(0, 0, 10, new RNG(1))
+
+    expect(world.submerged(0, 0)).toBe(true)
+    expect(world.waterDepthAt(0, 0)).toBeGreaterThan(0)
+    expect(world.submerged(10, 10)).toBe(false)
+    expect(world.waterDepthAt(10, 10)).toBe(0)
+  })
+
   it('makes one pond from two craters joined below the waterline', () => {
     const world = floodedWorld([
       { x: 0, z: 0, radius: 3, depth: 1.5 },
@@ -597,6 +619,79 @@ describe('population recovery', () => {
     const site = { state: 'site' } as Hut
 
     expect(repopulationHome(0, [abandoned, site])).toBe(site)
+  })
+})
+
+describe('housing caps the population', () => {
+  it('houses two villagers per built hut', () => {
+    const world = makeWorld()
+    addHut(world, 'hut-0', 0, 0)
+    addHut(world, 'hut-1', 3, 0)
+
+    expect(world.capacity()).toBe(4)
+  })
+
+  it('does not count sites, ruins, or abandoned huts', () => {
+    const world = makeWorld()
+    addHut(world, 'hut-0', 0, 0, 'built')
+    addHut(world, 'hut-1', 3, 0, 'ruin')
+    addHut(world, 'hut-2', 6, 0, 'abandoned')
+    addHut(world, 'hut-3', 9, 0, 'site')
+
+    expect(world.capacity()).toBe(2)
+  })
+
+  it('never houses more than twelve', () => {
+    const world = makeWorld()
+    for (let i = 0; i < 8; i++) addHut(world, `hut-${i}`, i * 3, 0)
+
+    expect(world.capacity()).toBe(12)
+  })
+
+  it('keeps an over-capacity population stable and admits nobody new', () => {
+    const world = makeWorld()
+    addHut(world, 'hut-0', 0, 0)
+    world.villagers = [
+      { alive: true }, { alive: true }, { alive: true }, { alive: true },
+    ] as Villager[]
+
+    world.repopulate(60, new RNG(1))
+
+    expect(world.living()).toBe(4)
+    expect(world.villagers).toHaveLength(4)
+  })
+})
+
+describe('World suggestions and village growth', () => {
+  it('suggests to only the two nearest idle villagers', () => {
+    const world = makeWorld()
+    const villagers = [
+      { alive: true, x: 5, z: 0, canBeNudged: () => true, suggest: vi.fn() },
+      { alive: true, x: 1, z: 0, canBeNudged: () => true, suggest: vi.fn() },
+      { alive: true, x: 2, z: 0, canBeNudged: () => true, suggest: vi.fn() },
+      { alive: true, x: 0.5, z: 0, canBeNudged: () => false, suggest: vi.fn() },
+    ]
+    world.villagers = villagers as unknown as Villager[]
+
+    expect(world.suggest(0, 0, 'chop')).toBe(2)
+
+    expect(villagers[1].suggest).toHaveBeenCalledWith({ kind: 'chop', x: 0, z: 0, ttl: 6 })
+    expect(villagers[2].suggest).toHaveBeenCalledWith({ kind: 'chop', x: 0, z: 0, ttl: 6 })
+    expect(villagers[0].suggest).not.toHaveBeenCalled()
+    expect(villagers[3].suggest).not.toHaveBeenCalled()
+  })
+
+  it('founds a buildable hut site and emits village growth', () => {
+    const world = makeWorld()
+    const events: string[] = []
+    world.bus.on(event => events.push(event.type))
+
+    const hut = world.foundHutAt(4, 0, new RNG(1))
+
+    expect(hut?.state).toBe('site')
+    expect(world.huts).toContain(hut)
+    expect(world.island.group.add).toHaveBeenCalledWith(hut?.group)
+    expect(events).toContain('village:grew')
   })
 })
 

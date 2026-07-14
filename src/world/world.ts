@@ -1,5 +1,6 @@
 import { EventBus, type TargetKind } from '../core/events'
 import { RNG } from '../core/rng'
+import type { SuggestionKind } from '../villagers/fsm'
 import { Villager, spawnVillagers } from '../villagers/villager'
 import { craterAt, craterRimY, type Crater } from './craters'
 import { FIRE_CONFIG, FireSystem, type FireEvent, type Flammable } from './fire'
@@ -11,6 +12,8 @@ import {
   BUILD_CLEARANCE,
   groupBasins,
   isBuildable,
+  isSubmerged,
+  waterLevelAt,
   type Basin,
   type GroundQuery,
 } from './terrain'
@@ -60,6 +63,7 @@ export class World {
   private pendingCampfireSite: { source: Campfire | null; site: Campfire } | null = null
   private fireSystem = new FireSystem()
   private stepFoley: (() => void) | null = null
+  private chipFx: ((x: number, z: number) => void) | null = null
 
   constructor(public island: Island, public bus = new EventBus()) {
     this.bus.on((event) => {
@@ -70,9 +74,21 @@ export class World {
 
   setStepFoley(handler: (() => void) | null): void { this.stepFoley = handler }
   playStepFoley(): void { this.stepFoley?.() }
+  setChipFx(handler: ((x: number, z: number) => void) | null): void { this.chipFx = handler }
+  chipsAt(x: number, z: number): void { this.chipFx?.(x, z) }
 
   choppableTree(): Tree | null {
     return this.trees.find(tree => tree.state === 'normal') ?? null
+  }
+
+  /** A normal tree currently carrying fruit, for a harvester to walk to. */
+  fruitingTree(): Tree | null {
+    return this.trees.find(tree => tree.state === 'normal' && tree.hasFruit) ?? null
+  }
+
+  /** The fire exists but is dead, so idle villagers drift toward it. */
+  fireOut(): boolean {
+    return Boolean(this.campfire) && !this.campfire.lit && !this.campfire.scattered
   }
 
   buildSite(): Hut | null {
@@ -178,9 +194,19 @@ export class World {
     }
   }
 
-  warnNear(x: number, z: number, radius: number): void {
+  /** Warn the curious ring only. Villagers inside `inner` are in the blast. */
+  warnNear(x: number, z: number, radius: number, inner = 0): void {
     for (const villager of this.villagers) {
-      if (villager.alive && within(villager, x, z, radius)) villager.lookUp({ x, z })
+      if (!villager.alive || !within(villager, x, z, radius)) continue
+      if (Math.hypot(villager.x - x, villager.z - z) < inner) continue
+      villager.lookUp({ x, z })
+    }
+  }
+
+  /** Startle the blast ring: a glance, then a sprint. */
+  startleNear(x: number, z: number, radius: number): void {
+    for (const villager of this.villagers) {
+      if (villager.alive && within(villager, x, z, radius)) villager.startle({ x, z })
     }
   }
 
@@ -418,6 +444,60 @@ export class World {
     }
   }
 
+  /** Whether this point lies under a pond's surface. Walkers must stay out. */
+  submerged(x: number, z: number): boolean {
+    return isSubmerged(
+      x,
+      z,
+      this.ponds.map(pond => pond.basin),
+      (px, pz) => this.island.sampleHeight(px, pz),
+    )
+  }
+
+  /** How far below the water this point sits; zero on dry land. */
+  waterDepthAt(x: number, z: number): number {
+    const level = waterLevelAt(x, z, this.ponds.map(pond => pond.basin))
+    if (level === null) return 0
+    return Math.max(0, level - this.island.sampleHeight(x, z))
+  }
+
+  /** Tag the nearest idle villagers. Returns how many were reached. */
+  suggest(x: number, z: number, kind: SuggestionKind): number {
+    const idle = this.villagers
+      .filter(villager => villager.alive && villager.canBeNudged())
+      .sort((a, b) => (
+        Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z)
+      ))
+      .slice(0, 2)
+    for (const villager of idle) villager.suggest({ kind, x, z, ttl: 6 })
+    return idle.length
+  }
+
+  /** A nudge founds a genuinely new home; no other path grows the village. */
+  foundHutAt(x: number, z: number, rng: RNG, lowFx = false): Hut | null {
+    if (this.huts.filter(hut => hut.state !== 'abandoned').length >= MAX_HUTS) return null
+    if (!isBuildable(
+      x,
+      z,
+      this.groundQuery(),
+      (px, pz) => this.island.sampleHeight(px, pz),
+    )) return null
+
+    const hut = new Hut(
+      `hut-${this.hutSerial++}`,
+      x,
+      z,
+      'site',
+      this.island.sampleHeight(x, z),
+      rng,
+      lowFx,
+    )
+    this.huts.push(hut)
+    this.island.group.add(hut.group)
+    this.bus.emit({ type: 'village:grew' })
+    return hut
+  }
+
   findBuildSite(rng: RNG, near?: Position): Position | null {
     const query = this.groundQuery()
     const groundY = (x: number, z: number): number => this.island.sampleHeight(x, z)
@@ -583,9 +663,21 @@ export class World {
     if (this.campfire) this.campfire.setFireLightEnabled(enabled.has(this.campfire))
   }
 
+  /** Villagers alive right now. */
+  living(): number {
+    return this.villagers.filter(villager => villager.alive).length
+  }
+
+  /** Two villagers per built hut. Huts are homes, not respawn points. */
+  capacity(): number {
+    const homes = this.huts.filter(hut => hut.state === 'built').length
+    return Math.min(homes, MAX_HUTS) * 2
+  }
+
   repopulate(dt: number, rng: RNG, lowFx = false): void {
-    const living = this.villagers.filter(villager => villager.alive).length
-    if (living >= 6) {
+    const living = this.living()
+    // Crowding is stable. Housing loss pauses arrivals; it never removes people.
+    if (living >= this.capacity() && living > 0) {
       this.repopulateTimer = null
       return
     }

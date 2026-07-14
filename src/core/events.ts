@@ -1,4 +1,4 @@
-export type PowerId = 'meteor' | 'lightning' | 'rain'
+export type PowerId = 'meteor' | 'lightning' | 'rain' | 'nudge'
 export type TargetKind = 'ground' | 'tree' | 'hut' | 'villager' | 'pond' | 'crater' | 'campfire'
 
 // Events carrying `x`/`z` do so because the discovery system (Task 17) needs to
@@ -15,6 +15,9 @@ export type GameEvent =
   | { type: 'villager:died'; cause: 'meteor' | 'lightning' }
   | { type: 'villager:mourned' }
   | { type: 'villager:fished' }
+  | { type: 'villager:ate' }
+  | { type: 'villager:escaped' }
+  | { type: 'village:grew' }
   | { type: 'hut:rebuilt' }
   | { type: 'crater:created'; x: number; z: number }
   | { type: 'pond:created'; x: number; z: number }

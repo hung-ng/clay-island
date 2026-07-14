@@ -14,6 +14,9 @@ export type MomentId =
   | 'homewrecker'
   | 'they-rebuild'
   | 'respects-paid'
+  | 'village-grows'
+  | 'close-call'
+  | 'fed'
 
 export type Moment = { id: MomentId; title: string; hint: string; color: string }
 
@@ -65,6 +68,18 @@ export const MOMENTS: readonly Moment[] = [
   {
     id: 'respects-paid', title: 'Respects Paid',
     hint: 'Someone remembers.', color: PALETTE.stone,
+  },
+  {
+    id: 'village-grows', title: 'The Village Grows',
+    hint: 'A full house needs another.', color: PALETTE.hutClay,
+  },
+  {
+    id: 'close-call', title: 'Close Call',
+    hint: 'They ran. It landed. They lived.', color: PALETTE.smockA,
+  },
+  {
+    id: 'fed', title: 'Fed',
+    hint: 'You made it rain. Someone ate.', color: PALETTE.leafB,
   },
 ] as const
 
@@ -120,6 +135,9 @@ export class Journal {
       case 'villager:fished': return 'gone-fishing'
       case 'hut:rebuilt': return 'they-rebuild'
       case 'villager:mourned': return 'respects-paid'
+      case 'village:grew': return 'village-grows'
+      case 'villager:escaped': return 'close-call'
+      case 'villager:ate': return 'fed'
       case 'burnt': return event.kind === 'hut' ? 'homewrecker' : null
       case 'villager:died':
         this.state.deaths++

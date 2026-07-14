@@ -1,7 +1,20 @@
+import * as THREE from 'three'
 import { describe, expect, it, vi } from 'vitest'
+import { EventBus } from '../core/events'
+import { RNG } from '../core/rng'
 import { resolveInteraction } from './matrix'
+import { Meteor } from './meteor'
 import { applyInteractions } from './outcomes'
 import type { CastCtx } from './power'
+
+vi.mock('../fx/clayMaterial', async () => {
+  const actual = await import('three')
+  return {
+    clayMaterial: vi.fn((color: THREE.ColorRepresentation) => (
+      new actual.MeshToonMaterial({ color })
+    )),
+  }
+})
 
 function context(kind: CastCtx['kind']): CastCtx {
   return {
@@ -77,5 +90,38 @@ describe('Meteor target outcomes', () => {
     expect(ctx.world.killVillagerNear).not.toHaveBeenCalled()
     expect(ctx.world.emptyPondAt).not.toHaveBeenCalled()
     expect(ctx.world.scatterCampfire).not.toHaveBeenCalled()
+  })
+})
+
+describe('Meteor warning rings', () => {
+  it('startles the blast ring and only warns the safe ring', () => {
+    const world = {
+      warnNear: vi.fn(),
+      startleNear: vi.fn(),
+      villagers: [],
+    }
+    const meteor = new Meteor()
+    const timeline = meteor.cast({
+      x: 0,
+      z: 0,
+      kind: 'ground',
+      power: 'meteor',
+      world,
+      island: { sampleHeight: () => 0, group: new THREE.Group() },
+      scene: new THREE.Scene(),
+      fx: {
+        particles: { burst: vi.fn() },
+        shake: { add: vi.fn() },
+        flash: vi.fn(),
+      },
+      bus: new EventBus(),
+      rng: new RNG(1),
+      lowFx: false,
+    } as unknown as CastCtx)
+
+    timeline.update(0)
+
+    expect(world.startleNear).toHaveBeenCalledWith(0, 0, 4.5)
+    expect(world.warnNear).toHaveBeenCalledWith(0, 0, 9, 4.5)
   })
 })

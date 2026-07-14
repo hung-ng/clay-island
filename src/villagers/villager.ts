@@ -8,7 +8,13 @@ import { PALETTE, TIMING } from '../ui/tokens'
 import { WALK_RADIUS, type Island } from '../world/island'
 import type { Campfire, Hut, Pond, Tree } from '../world/objects'
 import type { World } from '../world/world'
-import { decideNext, stateDuration, type FsmCtx, type VillagerState } from './fsm'
+import {
+  decideNext,
+  stateDuration,
+  type FsmCtx,
+  type Suggestion,
+  type VillagerState,
+} from './fsm'
 
 type Point = { x: number; z: number }
 type GraveLike = Point & { fresh: boolean }
@@ -38,7 +44,12 @@ function clampToIsland(point: Point): Point {
   return { x: point.x * WALK_RADIUS / radius, z: point.z * WALK_RADIUS / radius }
 }
 
-export function fleeTarget(position: Point, danger: Point, rng: RNG): Point {
+export function fleeTarget(
+  position: Point,
+  danger: Point,
+  rng: RNG,
+  blocked: (point: Point) => boolean = () => false,
+): Point {
   let dx = position.x - danger.x
   let dz = position.z - danger.z
   let length = Math.hypot(dx, dz)
@@ -48,10 +59,24 @@ export function fleeTarget(position: Point, danger: Point, rng: RNG): Point {
     dz = Math.sin(angle)
     length = 1
   }
-  return clampToIsland({
+  const direct = clampToIsland({
     x: position.x + dx / length * 5,
     z: position.z + dz / length * 5,
   })
+  if (!blocked(direct)) return direct
+
+  const away = Math.atan2(dz, dx)
+  for (let step = 1; step <= 6; step++) {
+    for (const side of [-1, 1]) {
+      const angle = away + side * step * Math.PI / 12
+      const candidate = clampToIsland({
+        x: position.x + Math.cos(angle) * 5,
+        z: position.z + Math.sin(angle) * 5,
+      })
+      if (!blocked(candidate)) return candidate
+    }
+  }
+  return { x: position.x, z: position.z }
 }
 
 export class Villager {
@@ -66,6 +91,8 @@ export class Villager {
   private visualMaterials: THREE.MeshToonMaterial[] = []
   private visualColors: THREE.Color[] = []
   private rainLeaf: THREE.Mesh
+  private rod: THREE.Group
+  private axe: THREE.Group
   private rainTime = 0
   private zapTime = -1
   private zapLastQt = Number.NEGATIVE_INFINITY
@@ -89,10 +116,15 @@ export class Villager {
   private rebuildingRuin = false
   private spawnFrames: number
   private spawnLastQt = Number.NEGATIVE_INFINITY
-  private performance: 'none' | 'meteor' | 'cower' | 'flinch' = 'none'
+  private performance: 'none' | 'meteor' | 'startle' | 'cower' | 'flinch' = 'none'
   private performanceTime = 0
   private performanceFrom: Point = { x: 0, z: 0 }
   private huddleTime = 0
+  private thirst = 0
+  private resumeState: VillagerState | null = null
+  private suggestion: Suggestion | null = null
+  private graveGlance = 0
+  private gatheringBySuggestion = false
 
   constructor(
     public id: string,
@@ -159,6 +191,53 @@ export class Villager {
     this.rainLeaf.visible = false
     this.rainLeaf.castShadow = !lowFx
 
+    this.rod = new THREE.Group()
+    this.rod.name = 'fishing-rig'
+    const rod = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.02, 0.03, 1.3, 5),
+      clayMaterial(PALETTE.bark),
+    )
+    rod.name = 'fishing-rod'
+    rod.position.set(0.3, 0.75, 0.24)
+    rod.rotation.set(-0.6, 0, -0.5)
+    rod.castShadow = !lowFx
+    const line = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.006, 0.006, 0.9, 4),
+      clayMaterial(PALETTE.inkSoft, { flat: true }),
+    )
+    line.name = 'fishing-line'
+    line.position.set(0.62, 0.08, -0.08)
+    line.rotation.z = -0.2
+    line.castShadow = false
+    const float = new THREE.Mesh(
+      new THREE.SphereGeometry(0.045, 6, 4),
+      clayMaterial(PALETTE.smockA, { flat: true }),
+    )
+    float.name = 'fishing-float'
+    float.position.set(0.71, -0.36, -0.08)
+    float.castShadow = false
+    this.rod.add(rod, line, float)
+    this.rod.visible = false
+
+    this.axe = new THREE.Group()
+    this.axe.name = 'villager-axe'
+    const handle = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.025, 0.03, 0.62, 5),
+      clayMaterial(PALETTE.bark),
+    )
+    const head = new THREE.Mesh(
+      new THREE.BoxGeometry(0.24, 0.12, 0.07),
+      clayMaterial(PALETTE.stone),
+    )
+    head.position.y = 0.3
+    handle.castShadow = !lowFx
+    head.castShadow = !lowFx
+    this.axe.add(handle, head)
+    this.axe.position.set(-0.27, 0.62, 0.05)
+    this.axe.rotation.z = -0.7
+    this.axe.visible = false
+    this.model.add(this.axe)
+
     const ghostMaterial = clayMaterial(PALETTE.ghost)
     ghostMaterial.transparent = true
     const ghostBody = new THREE.Mesh(
@@ -187,7 +266,7 @@ export class Villager {
     this.ghostMaterials.push(ghostMaterial, faceMaterial, armMaterial)
     island.group.add(this.ghost)
 
-    this.group.add(this.model, this.emoteSprite.sprite, this.rainLeaf)
+    this.group.add(this.model, this.emoteSprite.sprite, this.rainLeaf, this.rod)
     if (lowFx) this.addBlobShadow()
     this.enter('wander', world)
   }
@@ -195,6 +274,10 @@ export class Villager {
   update(dt: number, qt: number, world: World, island: Island): void {
     if (!this.alive) return
     this.huddleTime = Math.max(0, this.huddleTime - dt)
+    if (this.suggestion) {
+      this.suggestion.ttl -= dt
+      if (this.suggestion.ttl <= 0) this.suggestion = null
+    }
     if (this.zapTime >= 0) {
       this.updateZap(dt, qt)
       return
@@ -218,6 +301,17 @@ export class Villager {
     this.updateFleeTarget(dt, world)
     if (!this.arrived) this.steer(dt, world)
     this.timer -= dt
+    if (this.state === 'drink' && !this.arrived) this.timer = Math.max(this.timer, 2.1)
+
+    const labouring = this.state === 'chopTree'
+      || this.state === 'buildHut'
+      || this.state === 'rebuild'
+    if (labouring) this.thirst += dt
+    if (this.thirst >= 25 && this.arrived && world.ponds.length > 0) {
+      this.thirst = 0
+      this.resumeState = this.state
+      this.enter('drink', world)
+    }
     this.performActivity(dt, ticked, world)
 
     if (this.timer <= 0) this.enter(decideNext(this.context(world)), world)
@@ -227,9 +321,17 @@ export class Villager {
     this.updateSpawnScale(qt)
     this.group.position.set(this.x, island.sampleHeight(this.x, this.z), this.z)
     this.group.rotation.y = Math.atan2(this.tx - this.x, this.tz - this.z)
+    if (this.arrived && this.targetPond
+      && (this.state === 'fish' || this.state === 'drink')) {
+      this.group.rotation.y = Math.atan2(
+        this.targetPond.x - this.x,
+        this.targetPond.z - this.z,
+      )
+    }
 
     const frame = Math.floor(qt * TIMING.fps) % 4
-    const sitting = this.arrived && (this.state === 'sitAtFire' || this.state === 'fish')
+    const sitting = this.arrived
+      && (this.state === 'sitAtFire' || this.state === 'fish' || this.state === 'drink')
     this.model.scale.set(MODEL_SCALE, MODEL_SCALE * (sitting ? 0.8 : 1), MODEL_SCALE)
     this.group.rotation.z = this.arrived ? 0 : frame === 0 ? 0.09 : frame === 2 ? -0.09 : 0
     this.group.position.y += !this.arrived && frame % 2 === 0 ? 0.03 : 0
@@ -257,6 +359,21 @@ export class Villager {
     this.performanceTime = 1.2
     this.performanceFrom = from
     this.emote('cower')
+  }
+
+  /** A blast-radius glance that yields to the sprint instead of replacing it. */
+  startle(from: Point): void {
+    if (!this.alive || this.zapTime >= 0) return
+    if (this.state === 'flee' || this.state === 'mourn') return
+    if (this.rainTime > 0) {
+      this.rainTime = 0
+      this.rainLeaf.visible = false
+      this.resetPose()
+    }
+    this.performance = 'startle'
+    this.performanceTime = 0.25
+    this.performanceFrom = from
+    this.emote('alarm')
   }
 
   cower(): void {
@@ -318,21 +435,41 @@ export class Villager {
     this.rainTime = 2.6
     this.state = 'wander'
     this.resetPose()
-    this.rainLeaf.visible = true
-    this.arms[0].rotation.z = -2.25
-    this.emote('water')
     const hut = world.huts
       .filter(candidate => candidate.state === 'built')
-      .sort((a, b) => distance(this, a) - distance(this, b))[0]
-    this.setTarget(hut ?? this.randomWalkPoint())
+      .sort((a, b) => distance(this, a) - distance(this, b))[0] ?? null
+    const tree = world.trees
+      .filter(candidate => candidate.state === 'normal')
+      .sort((a, b) => distance(this, a) - distance(this, b))[0] ?? null
+    const treeIsNearer = tree !== null
+      && (hut === null || distance(this, tree) < distance(this, hut))
+
+    this.rainLeaf.visible = !treeIsNearer
+    if (!treeIsNearer) this.arms[0].rotation.z = -2.25
+    this.emote('water')
+    this.setTarget(tree && treeIsNearer ? tree : hut ?? this.randomWalkPoint(world))
   }
 
   panic(from: Point): void {
     this.state = 'flee'
     this.timer = stateDuration('flee', this.rng)
     this.retargetTimer = 1
-    this.setTarget(fleeTarget(this, from, this.rng))
+    this.setTarget(fleeTarget(this, from, this.rng, point => this.world.submerged(point.x, point.z)))
     this.emote('alarm')
+  }
+
+  /** Busy, frightened, grieving or dead villagers do not take suggestions. */
+  canBeNudged(): boolean {
+    if (!this.alive || this.zapTime >= 0) return false
+    if (this.performance !== 'none') return false
+    return this.state === 'wander' || this.state === 'sitAtFire' || this.state === 'gather'
+  }
+
+  suggest(suggestion: Suggestion): void {
+    if (!this.canBeNudged()) return
+    this.suggestion = suggestion
+    this.emote('question')
+    this.timer = Math.min(this.timer, 0.4)
   }
 
   private addPart(mesh: THREE.Mesh, lowFx: boolean): void {
@@ -392,7 +529,7 @@ export class Villager {
       const frame = Math.floor(qt * TIMING.fps)
       this.group.rotation.z = frame % 4 === 0 ? 0.08 : frame % 4 === 2 ? -0.08 : 0
       this.rainLeaf.position.y = 1.22 + (frame % 2 === 0 ? 0.035 : 0)
-      this.arms[0].rotation.z = -2.25
+      if (this.rainLeaf.visible) this.arms[0].rotation.z = -2.25
       if (!this.arrived && frame % 2 === 0) world.playStepFoley()
       this.emoteSprite.update(qt)
     }
@@ -437,6 +574,25 @@ export class Villager {
         vz += oz / objectDistance * (1.4 - objectDistance) * 2
       }
     }
+
+    // Water is an obstacle, never a hazard. Four depth samples approximate a
+    // shoreline gradient and steer walkers away without introducing a navmesh.
+    const probe = 0.9
+    for (const [ox, oz] of [[probe, 0], [-probe, 0], [0, probe], [0, -probe]]) {
+      const depth = world.waterDepthAt(this.x + ox, this.z + oz)
+      if (depth <= 0) continue
+      const push = Math.min(1, depth) * 2.6
+      vx -= ox / probe * push
+      vz -= oz / probe * push
+    }
+    const aheadX = this.x + dx / targetDistance * probe
+    const aheadZ = this.z + dz / targetDistance * probe
+    if (world.waterDepthAt(aheadX, aheadZ) > 0) {
+      // A stable tangent breaks the head-on equilibrium at a round shore, so
+      // repulsion guides the villager around instead of leaving them vibrating.
+      vx -= dz / targetDistance * 1.15
+      vz += dx / targetDistance * 1.15
+    }
     this.x += vx * dt
     this.z += vz * dt
 
@@ -454,6 +610,20 @@ export class Villager {
           if (!this.arrived && this.rng.chance(0.22)) this.emote('sleep')
           this.arrived = true
         }
+        if (this.graveGlance <= 0 && !this.arrived) {
+          const grave = world.graves.find(candidate => (
+            isGrave(candidate) && !candidate.fresh && distance(this, candidate) < 1.1
+          ))
+          if (grave) {
+            this.graveGlance = 2.4
+            this.setTarget({ x: this.x, z: this.z })
+            this.emote('sad')
+          }
+        }
+        if (this.graveGlance > 0) {
+          this.graveGlance -= dt
+          if (this.graveGlance <= 0) this.setTarget(this.randomWalkPoint(world))
+        }
         return
       }
       case 'chopTree': {
@@ -466,9 +636,14 @@ export class Villager {
           if (!ticked) return
           this.chopFrames++
           const raised = this.chopFrames % 2 === 1
-          this.arms[0].rotation.z = raised ? -1.35 : this.arms[0].userData.baseRotation
-          this.arms[1].rotation.z = raised ? 1.35 : this.arms[1].userData.baseRotation
-          if (this.chopFrames >= 4) {
+          this.arms[0].rotation.z = raised ? -1.9 : this.arms[0].userData.baseRotation
+          this.arms[1].rotation.z = raised ? 1.9 : this.arms[1].userData.baseRotation
+          this.axe.rotation.z = raised ? -1.2 : -0.35
+          if (!raised) {
+            this.targetTree.shudder()
+            world.chipsAt(this.targetTree.x, this.targetTree.z)
+          }
+          if (this.chopFrames >= 8) {
             this.targetTree.chop()
             this.enter('wander', world)
           }
@@ -543,6 +718,7 @@ export class Villager {
       }
       case 'fish': {
         if (!this.targetPond || !world.ponds.some(pond => pond === this.targetPond)) {
+          this.rod.visible = false
           this.enter('wander', world)
           return
         }
@@ -550,14 +726,69 @@ export class Villager {
           if (!this.arrived) {
             this.arrived = true
             this.actionTimer = 4
+            this.rod.visible = true
             this.emote('fish')
           }
           this.actionTimer -= dt
           if (this.actionTimer <= 0) {
-            if (this.rng.chance(0.05)) this.bus.emit({ type: 'villager:fished' })
+            if (this.rng.chance(0.05) && this.targetPond.floatFish()) {
+              this.bus.emit({ type: 'villager:fished' })
+            }
             this.actionTimer = 4
           }
         }
+        return
+      }
+      case 'drink': {
+        if (!this.targetPond || !world.ponds.includes(this.targetPond)) {
+          this.resumeState = null
+          this.enter('wander', world)
+          return
+        }
+        if (this.targetDistance() < 0.25) {
+          if (!this.arrived) {
+            this.arrived = true
+            this.actionTimer = 2
+            this.emote('water')
+          }
+          this.actionTimer -= dt
+          if (ticked) {
+            this.model.scale.set(MODEL_SCALE, MODEL_SCALE * 0.72, MODEL_SCALE)
+            this.head.rotation.x = 0.5
+          }
+          if (this.actionTimer <= 0) {
+            const resume = this.resumeState
+            this.resumeState = null
+            this.enter(resume ?? 'wander', world)
+          }
+        }
+        return
+      }
+      case 'harvest': {
+        if (!this.targetTree || !this.targetTree.hasFruit) {
+          this.enter('wander', world)
+          return
+        }
+        if (distance(this, this.targetTree) <= 1.2) {
+          if (!this.arrived) {
+            this.arrived = true
+            this.actionTimer = 1.2
+            this.arms[0].rotation.z = -1.5
+          }
+          this.actionTimer -= dt
+          if (this.actionTimer <= 0) {
+            if (this.targetTree.pickFruit()) this.bus.emit({ type: 'villager:ate' })
+            this.enter('wander', world)
+          }
+        }
+        return
+      }
+      case 'gather': {
+        if (!this.gatheringBySuggestion && !world.fireOut()) {
+          this.enter('wander', world)
+          return
+        }
+        if (this.targetDistance() < 0.3) this.arrived = true
         return
       }
       case 'makeFire': {
@@ -623,7 +854,12 @@ export class Villager {
   }
 
   private enter(state: VillagerState, world: World): void {
+    const suggestion = this.suggestion
+    this.suggestion = null
+    if (state !== 'drink') this.resumeState = null
     this.resetPose()
+    this.rod.visible = false
+    this.axe.visible = false
     this.state = state
     this.timer = stateDuration(state, this.rng)
     this.arrived = false
@@ -635,14 +871,23 @@ export class Villager {
     this.targetPond = null
     this.targetCampfire = null
     this.rebuildingRuin = false
+    this.graveGlance = 0
+    this.gatheringBySuggestion = false
 
     switch (state) {
       case 'wander':
-        this.setTarget(this.randomWalkPoint())
+        this.setTarget(this.randomWalkPoint(world))
         return
       case 'chopTree': {
-        this.targetTree = world.choppableTree()
+        const trees = world.trees.filter(tree => tree.state === 'normal')
+        this.targetTree = suggestion?.kind === 'chop'
+          ? trees.sort((a, b) => (
+            Math.hypot(a.x - suggestion.x, a.z - suggestion.z)
+            - Math.hypot(b.x - suggestion.x, b.z - suggestion.z)
+          ))[0] ?? null
+          : world.choppableTree()
         if (!this.targetTree) return this.enter('wander', world)
+        this.axe.visible = true
         this.setTarget(this.targetTree)
         return
       }
@@ -683,7 +928,13 @@ export class Villager {
       }
       case 'fish': {
         const ponds = [...world.ponds]
-        this.targetPond = ponds.sort((a, b) => distance(this, a) - distance(this, b))[0] ?? null
+        this.targetPond = suggestion?.kind === 'fish'
+          ? world.pondAt(suggestion.x, suggestion.z)
+            ?? ponds.sort((a, b) => (
+              Math.hypot(a.x - suggestion.x, a.z - suggestion.z)
+              - Math.hypot(b.x - suggestion.x, b.z - suggestion.z)
+            ))[0] ?? null
+          : ponds.sort((a, b) => distance(this, a) - distance(this, b))[0] ?? null
         if (!this.targetPond) return this.enter('wander', world)
         this.setTarget(this.targetPond.shoreNear(this.x, this.z))
         return
@@ -695,6 +946,33 @@ export class Villager {
         this.setTarget({
           x: this.targetCampfire.x + Math.cos(angle) * 1.1,
           z: this.targetCampfire.z + Math.sin(angle) * 1.1,
+        })
+        return
+      }
+      case 'drink': {
+        const ponds = [...world.ponds]
+        this.targetPond = ponds.sort((a, b) => distance(this, a) - distance(this, b))[0] ?? null
+        if (!this.targetPond) return this.enter('wander', world)
+        this.setTarget(this.targetPond.shoreNear(this.x, this.z))
+        return
+      }
+      case 'harvest': {
+        this.targetTree = world.fruitingTree()
+        if (!this.targetTree) return this.enter('wander', world)
+        this.setTarget(this.targetTree)
+        return
+      }
+      case 'gather': {
+        if (suggestion?.kind === 'gather') {
+          this.gatheringBySuggestion = true
+          this.setTarget(suggestion)
+          return
+        }
+        if (!world.campfire) return this.enter('wander', world)
+        const angle = this.rng.range(0, Math.PI * 2)
+        this.setTarget({
+          x: world.campfire.x + Math.cos(angle) * 1.5,
+          z: world.campfire.z + Math.sin(angle) * 1.5,
         })
         return
       }
@@ -712,14 +990,21 @@ export class Villager {
       hasTree: world.trees.some(tree => tree.state === 'normal'),
       campfireLit: world.campfire?.lit ?? false,
       needsFire: world.needsFire(),
+      hasFruitTree: world.fruitingTree() !== null,
+      fireOut: world.fireOut(),
+      suggestion: this.suggestion,
       rng: this.rng,
     }
   }
 
-  private randomWalkPoint(): Point {
-    const angle = this.rng.range(0, Math.PI * 2)
-    const radius = Math.sqrt(this.rng.next()) * WALK_RADIUS * 0.9
-    return { x: Math.cos(angle) * radius, z: Math.sin(angle) * radius }
+  private randomWalkPoint(world: World): Point {
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const angle = this.rng.range(0, Math.PI * 2)
+      const radius = Math.sqrt(this.rng.next()) * WALK_RADIUS * 0.9
+      const point = { x: Math.cos(angle) * radius, z: Math.sin(angle) * radius }
+      if (!world.submerged(point.x, point.z)) return point
+    }
+    return { x: this.x, z: this.z }
   }
 
   private setTarget(point: Point): void {
@@ -744,8 +1029,10 @@ export class Villager {
     if (this.performance === 'none') return false
     this.performanceTime = Math.max(0, this.performanceTime - dt)
     if (this.performanceTime <= 0) {
+      const wasStartle = this.performance === 'startle'
       this.performance = 'none'
       this.resetPose()
+      if (wasStartle) this.panic(this.performanceFrom)
       return false
     }
     if (qt === this.lastQt) return true
@@ -753,7 +1040,15 @@ export class Villager {
     this.resetPose()
     this.group.position.set(this.x, island.sampleHeight(this.x, this.z), this.z)
 
-    if (this.performance === 'flinch') {
+    if (this.performance === 'startle') {
+      this.group.rotation.y = Math.atan2(
+        this.performanceFrom.x - this.x,
+        this.performanceFrom.z - this.z,
+      )
+      this.head.rotation.x = -0.5
+      this.arms[0].rotation.z = -1.1
+      this.arms[1].rotation.z = 1.1
+    } else if (this.performance === 'flinch') {
       this.group.rotation.z = 0.2
       this.model.scale.set(MODEL_SCALE * 1.04, MODEL_SCALE * 0.88, MODEL_SCALE)
       this.arms[0].rotation.z = -1.45

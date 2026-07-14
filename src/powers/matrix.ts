@@ -12,6 +12,8 @@ export type InteractionKind =
   | 'flare'
   | 'growFruit'
   | 'grumpy'
+  | 'suggest'
+  | 'startleVillager'
 
 export type Interaction = { kind: InteractionKind }
 
@@ -27,6 +29,8 @@ export const INTERACTION_KINDS: readonly InteractionKind[] = [
   'flare',
   'growFruit',
   'grumpy',
+  'suggest',
+  'startleVillager',
 ] as const
 
 const MATRIX: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
@@ -57,6 +61,15 @@ const MATRIX: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
     campfire: [],
     crater: [],
     ground: [],
+  },
+  nudge: {
+    tree: ['suggest'],
+    hut: ['suggest'],
+    villager: ['startleVillager'],
+    pond: ['suggest'],
+    campfire: ['suggest'],
+    crater: [],
+    ground: ['suggest'],
   },
 }
 

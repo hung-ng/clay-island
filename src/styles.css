@@ -119,6 +119,11 @@ body {
   transform: rotate(-1deg);
 }
 
+.power-shell[data-power-shell='nudge'] {
+  border-radius: 55% 45% 49% 51% / 44% 57% 43% 56%;
+  transform: rotate(0.6deg);
+}
+
 .power {
   position: relative;
   z-index: 1;
@@ -219,6 +224,35 @@ body {
   line-height: 16px;
   text-align: center;
   text-shadow: 0 6px 0 var(--water), 0 12px 0 var(--water);
+}
+
+.power-glyph[data-glyph='nudge']::before {
+  position: absolute;
+  right: 5px;
+  bottom: 2px;
+  width: 21px;
+  height: 9px;
+  transform: rotate(-8deg);
+  border: 2px solid var(--ink-soft);
+  border-radius: 65% 46% 52% 58%;
+  background: var(--skin);
+  box-shadow: inset 2px 2px 0 var(--paper);
+  content: '';
+}
+
+.power-glyph[data-glyph='nudge']::after {
+  position: absolute;
+  top: 0;
+  right: 2px;
+  width: 8px;
+  height: 20px;
+  transform: rotate(43deg);
+  transform-origin: bottom center;
+  border: 2px solid var(--ink-soft);
+  border-radius: 55% 55% 46% 48%;
+  background: var(--skin);
+  box-shadow: inset 2px 1px 0 var(--paper), 8px -5px 0 -3px var(--ember);
+  content: '';
 }
 
 #tray .spacer {
@@ -477,7 +511,7 @@ body {
   left: 34px;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  grid-template-rows: repeat(4, 1fr);
+  grid-template-rows: repeat(5, 1fr);
   gap: 14px 16px;
 }
 

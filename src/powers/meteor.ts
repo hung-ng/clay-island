@@ -137,12 +137,18 @@ export class Meteor extends Power {
     const parent = ctx.island.group
     const shadow = growingShadow(parent, ctx.x, y0, ctx.z)
     const rock = fallingMeteor(parent, ctx, y0)
+    const atRisk = new Set<(typeof ctx.world.villagers)[number]>()
 
     return new Timeline()
       .at(0, () => {
+        for (const villager of ctx.world.villagers) {
+          if (villager.alive && Math.hypot(villager.x - ctx.x, villager.z - ctx.z) <= 3) {
+            atRisk.add(villager)
+          }
+        }
         ctx.bus.emit({ type: 'power:anticipate', power: this.id, x: ctx.x, z: ctx.z })
-        ctx.world.alarmNear(ctx.x, ctx.z, 7)
-        ctx.world.warnNear(ctx.x, ctx.z, 4.5)
+        ctx.world.warnNear(ctx.x, ctx.z, 9, 4.5)
+        ctx.world.startleNear(ctx.x, ctx.z, 4.5)
       })
       .at(0, () => shadow.start())
       .at(0, () => rock.start())
@@ -170,12 +176,18 @@ export class Meteor extends Power {
         ctx.bus.emit({
           type: 'power:impact', power: this.id, target: ctx.kind, x: ctx.x, z: ctx.z,
         })
+        applyInteractions(resolveInteraction(this.id, ctx.kind), ctx, y0)
         for (const villager of ctx.world.villagers) {
           if (villager.alive && Math.hypot(villager.x - ctx.x, villager.z - ctx.z) <= 4.5) {
             villager.cower()
           }
         }
-        applyInteractions(resolveInteraction(this.id, ctx.kind), ctx, y0)
+        for (const villager of atRisk) {
+          if (villager.alive && Math.hypot(villager.x - ctx.x, villager.z - ctx.z) > 3) {
+            ctx.bus.emit({ type: 'villager:escaped' })
+            break
+          }
+        }
       })
       .at(1.3, () => ctx.world.igniteNear(ctx.x, ctx.z, 3.2, ctx.rng, 0.6))
       .at(1.5, () => dustRing(parent, ctx.x, y0, ctx.z))

@@ -15,9 +15,9 @@ const lightningPond: GameEvent = {
 }
 
 describe('MOMENTS', () => {
-  it('has exactly 12 moments with unique ids', () => {
-    expect(MOMENTS).toHaveLength(12)
-    expect(new Set(MOMENTS.map(moment => moment.id)).size).toBe(12)
+  it('has exactly 15 moments with unique ids', () => {
+    expect(MOMENTS).toHaveLength(15)
+    expect(new Set(MOMENTS.map(moment => moment.id)).size).toBe(15)
   })
 
   it('every moment has a title and a hint', () => {
@@ -111,6 +111,15 @@ describe('Journal.observe', () => {
   it('burnt tree does not unlock homewrecker', () => {
     const journal = new Journal(memoryStorage())
     expect(journal.observe({ type: 'burnt', kind: 'tree' })).toBeNull()
+  })
+
+  it.each([
+    [{ type: 'village:grew' }, 'village-grows'],
+    [{ type: 'villager:escaped' }, 'close-call'],
+    [{ type: 'villager:ate' }, 'fed'],
+  ] as const)('unlocks %s as %s', (event, id) => {
+    const journal = new Journal(memoryStorage())
+    expect(journal.observe(event)?.id).toBe(id)
   })
 })
 

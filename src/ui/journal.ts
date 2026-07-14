@@ -150,11 +150,12 @@ export function createJournalUI(
       event.preventDefault()
       const row = Math.floor(tileIndex / 3)
       const column = tileIndex % 3
+      const rows = Math.ceil(tiles.length / 3)
       let next = tileIndex
       if (event.key === 'ArrowLeft') next = row * 3 + (column + 2) % 3
       if (event.key === 'ArrowRight') next = row * 3 + (column + 1) % 3
-      if (event.key === 'ArrowUp') next = ((row + 3) % 4) * 3 + column
-      if (event.key === 'ArrowDown') next = ((row + 1) % 4) * 3 + column
+      if (event.key === 'ArrowUp') next = ((row + rows - 1) % rows) * 3 + column
+      if (event.key === 'ArrowDown') next = ((row + 1) % rows) * 3 + column
       tiles[next].focus()
       return
     }

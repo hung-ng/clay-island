@@ -5,14 +5,18 @@ import { decideNext, stateDuration, STATES, type FsmCtx } from './fsm'
 const base = (o: Partial<FsmCtx> = {}): FsmCtx => ({
   state: 'wander', fireNear: false, freshGrave: false, hasRuin: false,
   hasSite: false, hasPond: false, hasTree: true, campfireLit: true,
-  needsFire: false, rng: new RNG(3), ...o,
+  needsFire: false, hasFruitTree: false, fireOut: false, suggestion: null,
+  rng: new RNG(3), ...o,
 })
 
 describe('FSM shape', () => {
-  it('has exactly 9 states', () => {
-    expect(STATES).toHaveLength(9)
+  it('has exactly 12 states', () => {
+    expect(STATES).toHaveLength(12)
     expect([...STATES].sort()).toEqual(
-      ['buildHut', 'chopTree', 'fish', 'flee', 'makeFire', 'mourn', 'rebuild', 'sitAtFire', 'wander'],
+      [
+        'buildHut', 'chopTree', 'drink', 'fish', 'flee', 'gather',
+        'harvest', 'makeFire', 'mourn', 'rebuild', 'sitAtFire', 'wander',
+      ],
     )
   })
 })
@@ -57,8 +61,66 @@ describe('weighted idle selection', () => {
       expect(decideNext(base({ rng: new RNG(seed), campfireLit: false }))).not.toBe('sitAtFire')
     }
   })
+  it('harvests only when a tree is fruiting', () => {
+    let harvested = false
+    for (let seed = 0; seed < 300; seed++) {
+      if (decideNext(base({ rng: new RNG(seed), hasFruitTree: true })) === 'harvest') {
+        harvested = true
+      }
+    }
+    expect(harvested).toBe(true)
+    for (let seed = 0; seed < 300; seed++) {
+      expect(decideNext(base({ rng: new RNG(seed), hasFruitTree: false }))).not.toBe('harvest')
+    }
+  })
+  it('gathers at the dead fire only when the fire is out', () => {
+    let gathered = false
+    for (let seed = 0; seed < 300; seed++) {
+      if (decideNext(base({ rng: new RNG(seed), fireOut: true })) === 'gather') gathered = true
+      expect(decideNext(base({ rng: new RNG(seed), fireOut: false }))).not.toBe('gather')
+    }
+    expect(gathered).toBe(true)
+  })
+  it('never rolls drink from idle', () => {
+    for (let seed = 0; seed < 400; seed++) {
+      expect(decideNext(base({ rng: new RNG(seed), hasPond: true }))).not.toBe('drink')
+    }
+  })
   it('is deterministic for a given seed', () => {
     expect(decideNext(base({ rng: new RNG(11) }))).toBe(decideNext(base({ rng: new RNG(11) })))
+  })
+})
+
+describe('a nudge suggests, it never commands', () => {
+  it('usually takes a suggestion', () => {
+    let taken = 0
+    for (let seed = 0; seed < 300; seed++) {
+      const next = decideNext(base({
+        rng: new RNG(seed),
+        hasTree: true,
+        suggestion: { kind: 'chop', x: 0, z: 0, ttl: 5 },
+      }))
+      if (next === 'chopTree') taken++
+    }
+    expect(taken).toBeGreaterThan(200)
+    expect(taken).toBeLessThan(300)
+  })
+
+  it('is ignored outright by an emergency', () => {
+    expect(decideNext(base({
+      fireNear: true,
+      suggestion: { kind: 'chop', x: 0, z: 0, ttl: 5 },
+    }))).toBe('flee')
+  })
+
+  it('cannot suggest an impossible activity', () => {
+    for (let seed = 0; seed < 200; seed++) {
+      expect(decideNext(base({
+        rng: new RNG(seed),
+        hasTree: false,
+        suggestion: { kind: 'chop', x: 0, z: 0, ttl: 5 },
+      }))).not.toBe('chopTree')
+    }
   })
 })
 

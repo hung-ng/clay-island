@@ -1,4 +1,5 @@
 import type { PowerId } from '../core/events'
+import { MOMENTS } from '../discovery/moments'
 
 type TrayOptions = {
   onArm(id: PowerId): void
@@ -14,12 +15,13 @@ type PowerControl = {
   enabled: boolean
 }
 
-const POWER_IDS: readonly PowerId[] = ['meteor', 'lightning', 'rain']
+const POWER_IDS: readonly PowerId[] = ['meteor', 'lightning', 'rain', 'nudge']
 const COOLDOWN_STEPS = 12
 const POWER_LABELS: Record<PowerId, string> = {
   meteor: 'Meteor',
   lightning: 'Lightning',
   rain: 'Rain',
+  nudge: 'Nudge',
 }
 
 function clamp01(value: number): number {
@@ -94,7 +96,7 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
   journal.type = 'button'
   journal.id = 'journal-btn'
   journal.setAttribute('aria-haspopup', 'dialog')
-  journal.innerHTML = 'Journal <b>0/12</b>'
+  journal.innerHTML = `Journal <b>0/${MOMENTS.length}</b>`
   tray.appendChild(journal)
 
   const mute = document.createElement('button')
@@ -154,7 +156,8 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
     setJournalCount(n) {
       const counter = journal.querySelector('b')
       if (!counter) return
-      counter.textContent = `${Math.max(0, Math.min(12, n))}/12`
+      const total = MOMENTS.length
+      counter.textContent = `${Math.max(0, Math.min(total, n))}/${total}`
       counter.classList.remove('pop')
       void counter.offsetWidth
       counter.classList.add('pop')

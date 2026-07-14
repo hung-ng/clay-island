@@ -3,7 +3,7 @@ import type { PowerId, TargetKind } from '../core/events'
 import { INTERACTION_KINDS, resolveInteraction, type InteractionKind } from './matrix'
 import { OUTCOME_HANDLERS } from './outcomes'
 
-const POWERS: PowerId[] = ['meteor', 'lightning', 'rain']
+const POWERS: PowerId[] = ['meteor', 'lightning', 'rain', 'nudge']
 const TARGETS: TargetKind[] = ['ground', 'tree', 'hut', 'villager', 'pond', 'crater', 'campfire']
 
 const EXPECTED: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
@@ -34,6 +34,15 @@ const EXPECTED: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
     crater: [],
     ground: [],
   },
+  nudge: {
+    tree: ['suggest'],
+    hut: ['suggest'],
+    villager: ['startleVillager'],
+    pond: ['suggest'],
+    campfire: ['suggest'],
+    crater: [],
+    ground: ['suggest'],
+  },
 }
 
 describe('resolveInteraction', () => {
@@ -51,6 +60,10 @@ describe('resolveInteraction', () => {
         expect(Array.isArray(resolveInteraction(power, target))).toBe(true)
       }
     }
+  })
+
+  it('leaves a crater unchanged by a nudge', () => {
+    expect(resolveInteraction('nudge', 'crater')).toEqual([])
   })
 })
 

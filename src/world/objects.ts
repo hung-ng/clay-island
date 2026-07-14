@@ -230,6 +230,7 @@ export class Tree {
   private shadow: BlobShadow
   private fruit: THREE.InstancedMesh | null = null
   private fruitTime = 0
+  private shudderTime = 0
   private fireVisual: BurningVisual
   private fireStarted = false
   private phase = 0
@@ -387,24 +388,60 @@ export class Tree {
     this.fireVisual.setLightEnabled(on)
   }
 
+  /** Struck but not felled: the canopy jolts. */
+  shudder(): void {
+    if (this.state !== 'normal') return
+    this.shudderTime = 0.18
+  }
+
   growFruit(): boolean {
     if (this.state !== 'normal') return false
     if (this.fruit) {
       this.fruitTime = 60
       return false
     }
-    const geometry = wobble(new THREE.SphereGeometry(0.12, 8, 6), new RNG(this.id.length * 97), 0.018)
+    const rng = new RNG(this.id.length * 97)
+    const geometry = wobble(new THREE.SphereGeometry(0.12, 8, 6), rng, 0.018)
     const fruit = new THREE.InstancedMesh(geometry, clayMaterial(PALETTE.smockA), 4)
+    fruit.name = 'tree-fruit'
+    const blobs = this.crown.children.filter(child => child instanceof THREE.Mesh) as THREE.Mesh[]
     const matrix = new THREE.Matrix4()
-    const positions = [
-      [-0.52, 0.02, 0.28],
-      [0.5, 0.12, 0.18],
-      [-0.18, -0.38, 0.5],
-      [0.26, -0.34, -0.44],
-    ]
-    for (let i = 0; i < positions.length; i++) {
-      const [px, py, pz] = positions[i]
-      matrix.makeTranslation(px, py, pz)
+
+    for (let i = 0; i < 4; i++) {
+      const blob = blobs[i % blobs.length]
+      const sphere = blob.geometry as THREE.SphereGeometry
+      const radius = sphere.parameters.radius
+        * Math.max(blob.scale.x, blob.scale.y, blob.scale.z)
+      const yaw = rng.range(0, Math.PI * 2)
+      const pitch = rng.range(-0.9, -0.15)
+      const direction = new THREE.Vector3(
+        Math.cos(pitch) * Math.cos(yaw),
+        Math.sin(pitch),
+        Math.cos(pitch) * Math.sin(yaw),
+      )
+      const position = direction.multiplyScalar(radius * 1.08).add(blob.position)
+
+      // Crowns overlap. Project through every blob so a fruit placed on one
+      // surface cannot remain buried inside its neighbour.
+      for (let pass = 0; pass < blobs.length * 2; pass++) {
+        let moved = false
+        for (const neighbour of blobs) {
+          const neighbourSphere = neighbour.geometry as THREE.SphereGeometry
+          const neighbourRadius = neighbourSphere.parameters.radius
+            * Math.max(neighbour.scale.x, neighbour.scale.y, neighbour.scale.z)
+          const offset = position.clone().sub(neighbour.position)
+          const length = offset.length()
+          if (length >= neighbourRadius * 1.04) continue
+          if (length <= Number.EPSILON) offset.set(1, -0.4, 0)
+          position.copy(neighbour.position).add(
+            offset.normalize().multiplyScalar(neighbourRadius * 1.04),
+          )
+          moved = true
+        }
+        if (!moved) break
+      }
+
+      matrix.makeTranslation(position.x, position.y, position.z)
       fruit.setMatrixAt(i, matrix)
     }
     fruit.instanceMatrix.needsUpdate = true
@@ -419,9 +456,27 @@ export class Tree {
     return this.fruit !== null
   }
 
+  /** A villager takes the fruit. Returns false when there was none to take. */
+  pickFruit(): boolean {
+    if (!this.fruit) return false
+    this.crown.remove(this.fruit)
+    disposeObjectResources(this.fruit)
+    this.fruit = null
+    this.fruitTime = 0
+    return true
+  }
+
   update(dt: number, qt: number): void {
     if (this.expiredValue) return
     this.phase += dt
+
+    if (this.shudderTime > 0 && this.state === 'normal') {
+      this.shudderTime = Math.max(0, this.shudderTime - dt)
+      const amount = this.shudderTime / 0.18
+      this.crown.rotation.z = Math.sin(this.shudderTime * 60) * 0.06 * amount
+    } else if (this.state === 'normal' && this.crown.rotation.z !== 0) {
+      this.crown.rotation.z = 0
+    }
 
     if (this.burning) {
       this.charring.set(Math.min(1, this.charring.amount + dt * 0.65))

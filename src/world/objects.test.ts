@@ -217,6 +217,56 @@ describe('Tree lifecycle', () => {
     run(sapling, 2, afterRain)
     expect(sapling.state).toBe('normal')
   })
+
+  it('shudders when struck, then settles', () => {
+    const subject = tree()
+    const crown = subject.group.getObjectByName('tree-crown')!
+
+    subject.shudder()
+    subject.update(1 / 60, 1 / 60)
+    expect(crown.rotation.z).not.toBe(0)
+
+    run(subject, 1, 1 / 60)
+    expect(crown.rotation.z).toBe(0)
+  })
+})
+
+describe('Tree fruit', () => {
+  it('hangs every fruit on the crown surface instead of inside a blob', () => {
+    const subject = new Tree('tree-1', 0, 0, 0, new RNG(5))
+    subject.growFruit()
+
+    const crown = subject.group.getObjectByName('tree-crown') as THREE.Group
+    const fruit = crown.getObjectByName('tree-fruit') as THREE.InstancedMesh
+    const blobs = crown.children.filter(child => (
+      child instanceof THREE.Mesh && child !== fruit
+    )) as THREE.Mesh[]
+    const matrix = new THREE.Matrix4()
+    const position = new THREE.Vector3()
+
+    for (let i = 0; i < fruit.count; i++) {
+      fruit.getMatrixAt(i, matrix)
+      position.setFromMatrixPosition(matrix)
+      const buried = blobs.some((blob) => {
+        const geometry = blob.geometry as THREE.SphereGeometry
+        const radius = geometry.parameters.radius
+          * Math.max(blob.scale.x, blob.scale.y, blob.scale.z)
+        return position.distanceTo(blob.position) < radius * 0.92
+      })
+      expect(buried).toBe(false)
+    }
+  })
+
+  it('picking takes the fruit off the tree', () => {
+    const subject = new Tree('tree-1', 0, 0, 0, new RNG(5))
+    subject.growFruit()
+    expect(subject.hasFruit).toBe(true)
+
+    expect(subject.pickFruit()).toBe(true)
+
+    expect(subject.hasFruit).toBe(false)
+    expect(subject.pickFruit()).toBe(false)
+  })
 })
 
 function colorOf(hut: Hut, name: string): number {
