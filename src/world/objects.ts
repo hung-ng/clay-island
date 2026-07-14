@@ -229,6 +229,8 @@ export class Tree {
   private charring: Charring
   private shadow: BlobShadow
   private fruit: THREE.InstancedMesh | null = null
+  /** Local positions of the four fruit slots; `null` once picked. */
+  private fruitSlots: (THREE.Vector3 | null)[] = []
   private fruitTime = 0
   private shudderTime = 0
   private fireVisual: BurningVisual
@@ -405,6 +407,7 @@ export class Tree {
     const fruit = new THREE.InstancedMesh(geometry, clayMaterial(PALETTE.smockA), 4)
     fruit.name = 'tree-fruit'
     const blobs = this.crown.children.filter(child => child instanceof THREE.Mesh) as THREE.Mesh[]
+    this.fruitSlots = []
     const matrix = new THREE.Matrix4()
 
     for (let i = 0; i < 4; i++) {
@@ -412,7 +415,9 @@ export class Tree {
       const sphere = blob.geometry as THREE.SphereGeometry
       const radius = sphere.parameters.radius
         * Math.max(blob.scale.x, blob.scale.y, blob.scale.z)
-      const yaw = rng.range(0, Math.PI * 2)
+      // One fruit per quadrant. A free yaw let two fruit share a bearing, and
+      // the burial-projection pass below then shoved both into the same pocket.
+      const yaw = (i * Math.PI) / 2 + rng.range(-0.5, 0.5)
       const pitch = rng.range(-0.9, -0.15)
       const direction = new THREE.Vector3(
         Math.cos(pitch) * Math.cos(yaw),
@@ -441,6 +446,7 @@ export class Tree {
         if (!moved) break
       }
 
+      this.fruitSlots[i] = position.clone()
       matrix.makeTranslation(position.x, position.y, position.z)
       fruit.setMatrixAt(i, matrix)
     }
@@ -453,16 +459,56 @@ export class Tree {
   }
 
   get hasFruit(): boolean {
-    return this.fruit !== null
+    return this.fruitCount > 0
   }
 
-  /** A villager takes the fruit. Returns false when there was none to take. */
-  pickFruit(): boolean {
-    if (!this.fruit) return false
-    this.crown.remove(this.fruit)
-    disposeObjectResources(this.fruit)
-    this.fruit = null
-    this.fruitTime = 0
+  /** How many fruit are still hanging. */
+  get fruitCount(): number {
+    return this.fruitSlots.filter(slot => slot !== null).length
+  }
+
+  /**
+   * A villager takes the one fruit nearest them. Returns false when the tree is
+   * bare. The mesh is kept and the taken instance is scaled to nothing, so the
+   * remaining fruit stay exactly where they hung.
+   */
+  pickFruit(x: number, z: number): boolean {
+    if (!this.fruit || this.fruitCount === 0) return false
+
+    // Convert the picker from world space into the rotated crown's local frame.
+    this.crown.updateWorldMatrix(true, false)
+    const local = this.crown.worldToLocal(new THREE.Vector3(
+      x,
+      this.group.position.y + this.crown.position.y,
+      z,
+    ))
+
+    let nearest = -1
+    let best = Number.POSITIVE_INFINITY
+    for (let i = 0; i < this.fruitSlots.length; i++) {
+      const slot = this.fruitSlots[i]
+      if (!slot) continue
+      const gap = Math.hypot(slot.x - local.x, slot.z - local.z)
+      if (gap < best) {
+        best = gap
+        nearest = i
+      }
+    }
+    if (nearest < 0) return false
+
+    this.fruitSlots[nearest] = null
+    const matrix = new THREE.Matrix4()
+    matrix.makeScale(0, 0, 0)
+    this.fruit.setMatrixAt(nearest, matrix)
+    this.fruit.instanceMatrix.needsUpdate = true
+
+    // The last fruit takes the mesh with it.
+    if (this.fruitCount === 0) {
+      this.crown.remove(this.fruit)
+      disposeObjectResources(this.fruit)
+      this.fruit = null
+      this.fruitTime = 0
+    }
     return true
   }
 
@@ -553,6 +599,7 @@ export class Tree {
         this.crown.remove(this.fruit)
         disposeObjectResources(this.fruit)
         this.fruit = null
+        this.fruitSlots = []
       }
     }
     this.fireVisual.update(qt)
@@ -1160,7 +1207,7 @@ export class Pond {
     this.group.add(this.water)
 
     const fishGeometry = wobble(new THREE.SphereGeometry(0.19, 8, 6), rng, 0.025)
-    const fishMaterial = clayMaterial(PALETTE.ghost)
+    const fishMaterial = clayMaterial(PALETTE.fish)
     for (let i = 0; i < 3; i++) {
       const fish = new THREE.Mesh(fishGeometry, fishMaterial)
       fish.name = 'floating-fish'

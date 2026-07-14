@@ -257,15 +257,69 @@ describe('Tree fruit', () => {
     }
   })
 
-  it('picking takes the fruit off the tree', () => {
+  it('scatters the fruit around the crown rather than clumping them', () => {
     const subject = new Tree('tree-1', 0, 0, 0, new RNG(5))
     subject.growFruit()
+
+    const crown = subject.group.getObjectByName('tree-crown') as THREE.Group
+    const fruit = crown.getObjectByName('tree-fruit') as THREE.InstancedMesh
+    const matrix = new THREE.Matrix4()
+    const position = new THREE.Vector3()
+    const angles: number[] = []
+    for (let i = 0; i < fruit.count; i++) {
+      fruit.getMatrixAt(i, matrix)
+      position.setFromMatrixPosition(matrix)
+      angles.push(Math.atan2(position.z, position.x))
+    }
+
+    for (let i = 0; i < angles.length; i++) {
+      for (let j = i + 1; j < angles.length; j++) {
+        const delta = Math.abs(angles[i] - angles[j])
+        const separation = Math.min(delta, Math.PI * 2 - delta)
+        expect(separation).toBeGreaterThan(0.5)
+      }
+    }
+  })
+
+  it('takes only the nearest fruit, and leaves the rest hanging', () => {
+    const subject = new Tree('tree-1', 0, 0, 0, new RNG(5))
+    subject.growFruit()
+    expect(subject.fruitCount).toBe(4)
+
+    expect(subject.pickFruit(0, 0)).toBe(true)
+
+    expect(subject.fruitCount).toBe(3)
     expect(subject.hasFruit).toBe(true)
+  })
 
-    expect(subject.pickFruit()).toBe(true)
+  it('empties the tree only after the fourth pick', () => {
+    const subject = new Tree('tree-1', 0, 0, 0, new RNG(5))
+    subject.growFruit()
 
+    for (let i = 0; i < 4; i++) expect(subject.pickFruit(0, 0)).toBe(true)
+
+    expect(subject.fruitCount).toBe(0)
     expect(subject.hasFruit).toBe(false)
-    expect(subject.pickFruit()).toBe(false)
+    expect(subject.pickFruit(0, 0)).toBe(false)
+  })
+
+  it('takes the fruit nearest the picker', () => {
+    const subject = new Tree('tree-1', 0, 0, 0, new RNG(5))
+    subject.growFruit()
+
+    const crown = subject.group.getObjectByName('tree-crown') as THREE.Group
+    const fruit = crown.getObjectByName('tree-fruit') as THREE.InstancedMesh
+    const matrix = new THREE.Matrix4()
+    const position = new THREE.Vector3()
+    fruit.getMatrixAt(0, matrix)
+    position.setFromMatrixPosition(matrix)
+
+    subject.group.updateMatrixWorld(true)
+    const worldPosition = crown.localToWorld(position.clone())
+    subject.pickFruit(worldPosition.x, worldPosition.z)
+
+    fruit.getMatrixAt(0, matrix)
+    expect(new THREE.Vector3().setFromMatrixScale(matrix).x).toBeLessThan(0.01)
   })
 })
 

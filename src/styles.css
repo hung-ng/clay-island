@@ -228,30 +228,28 @@ body {
 
 .power-glyph[data-glyph='nudge']::before {
   position: absolute;
-  right: 5px;
-  bottom: 2px;
-  width: 21px;
+  top: 50%;
+  left: 50%;
+  width: 9px;
   height: 9px;
-  transform: rotate(-8deg);
+  transform: translate(-50%, -50%);
   border: 2px solid var(--ink-soft);
-  border-radius: 65% 46% 52% 58%;
-  background: var(--skin);
+  border-radius: 52% 48% 46% 54%;
+  background: var(--yellow);
   box-shadow: inset 2px 2px 0 var(--paper);
   content: '';
 }
 
 .power-glyph[data-glyph='nudge']::after {
   position: absolute;
-  top: 0;
-  right: 2px;
-  width: 8px;
-  height: 20px;
-  transform: rotate(43deg);
-  transform-origin: bottom center;
-  border: 2px solid var(--ink-soft);
-  border-radius: 55% 55% 46% 48%;
-  background: var(--skin);
-  box-shadow: inset 2px 1px 0 var(--paper), 8px -5px 0 -3px var(--ember);
+  top: 50%;
+  left: 50%;
+  width: 22px;
+  height: 22px;
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--yellow);
+  border-radius: 49% 51% 53% 47%;
+  opacity: 0.55;
   content: '';
 }
 

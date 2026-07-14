@@ -22,6 +22,8 @@ type Position = { x: number; z: number }
 
 /** The village can grow to this many active huts. */
 export const MAX_HUTS = 6
+/** A nudge is a poke, not a proclamation. Villagers past this never hear it. */
+const NUDGE_EARSHOT = 18
 
 function hasPosition(value: unknown): value is Position {
   if (typeof value !== 'object' || value === null) return false
@@ -293,6 +295,23 @@ export class World {
     return !this.campfire || this.campfire.scattered || !this.campfire.lit
   }
 
+  /** Trees a villager could actually chop, within `radius` of a point. */
+  treesNear(x: number, z: number, radius: number): number {
+    return this.trees.filter(tree => (
+      tree.state === 'normal' && Math.hypot(tree.x - x, tree.z - z) <= radius
+    )).length
+  }
+
+  /** Whether any pond lies within `radius` of a point. */
+  pondNear(x: number, z: number, radius: number): boolean {
+    return this.ponds.some(pond => Math.hypot(pond.x - x, pond.z - z) <= radius)
+  }
+
+  /** A hut founded but not yet finished. The village builds one at a time. */
+  pendingSite(): boolean {
+    return this.huts.some(hut => hut.state === 'site' || hut.state === 'building')
+  }
+
   claimCampfireSite(rng: RNG, lowFx = false): Campfire | null {
     const current = this.campfire
     if (current && !current.scattered) return current
@@ -461,20 +480,32 @@ export class World {
     return Math.max(0, level - this.island.sampleHeight(x, z))
   }
 
-  /** Tag the nearest idle villagers. Returns how many were reached. */
+  /**
+   * Tag the nearest idle villagers. Returns how many were reached.
+   *
+   * Four, not two: a nudge that half the village never hears reads as a weak
+   * power, and the fix is reach rather than weight — raising SUGGESTION_WEIGHT
+   * would only walk the roll toward coercion.
+   */
   suggest(x: number, z: number, kind: SuggestionKind): number {
     const idle = this.villagers
-      .filter(villager => villager.alive && villager.canBeNudged())
+      .filter(villager => (
+        villager.alive
+        && villager.canBeNudged()
+        && Math.hypot(villager.x - x, villager.z - z) <= NUDGE_EARSHOT
+      ))
       .sort((a, b) => (
         Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z)
       ))
-      .slice(0, 2)
+      .slice(0, 4)
     for (const villager of idle) villager.suggest({ kind, x, z, ttl: 6 })
     return idle.length
   }
 
   /** A nudge founds a genuinely new home; no other path grows the village. */
   foundHutAt(x: number, z: number, rng: RNG, lowFx = false): Hut | null {
+    // One site at a time: a second nudge must not strand an unbuilt shell.
+    if (this.pendingSite()) return null
     if (this.huts.filter(hut => hut.state !== 'abandoned').length >= MAX_HUTS) return null
     if (!isBuildable(
       x,

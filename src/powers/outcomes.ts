@@ -5,6 +5,9 @@ import type { Interaction, InteractionKind } from './matrix'
 import { groundNudge } from './nudge'
 import type { CastCtx } from './power'
 
+/** How far a ground nudge "sees" when deciding what the place is for. */
+const NUDGE_SENSE_RADIUS = 5
+
 function suggestionFor(ctx: CastCtx): SuggestionKind | null {
   switch (ctx.kind) {
     case 'tree': return 'chop'
@@ -24,7 +27,12 @@ function suggestionFor(ctx: CastCtx): SuggestionKind | null {
         capacity: ctx.world.capacity(),
         huts: ctx.world.huts.filter(hut => hut.state !== 'abandoned').length,
         buildable,
+        pendingSite: ctx.world.pendingSite(),
+        treesNear: ctx.world.treesNear(ctx.x, ctx.z, NUDGE_SENSE_RADIUS),
+        pondNear: ctx.world.pondNear(ctx.x, ctx.z, NUDGE_SENSE_RADIUS),
+        rng: ctx.rng,
       })
+      // A ground nudge that resolves to `build` must create the site to build on.
       if (kind === 'build') ctx.world.foundHutAt(ctx.x, ctx.z, ctx.rng, ctx.lowFx)
       return kind
     }

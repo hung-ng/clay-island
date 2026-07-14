@@ -6,7 +6,7 @@ export type MomentId =
   | 'flash-fry'
   | 'first-bloom'
   | 'ghost-story'
-  | 'full-harvest'
+  | 'drained'
   | 'new-pond'
   | 'gone-fishing'
   | 'wildfire'
@@ -38,8 +38,8 @@ export const MOMENTS: readonly Moment[] = [
     hint: 'They keep coming back. Sort of.', color: PALETTE.ghost,
   },
   {
-    id: 'full-harvest', title: 'Full Harvest',
-    hint: 'Rain on an orchard.', color: PALETTE.leafA,
+    id: 'drained', title: 'Drained',
+    hint: 'You made it. You can unmake it.', color: PALETTE.stone,
   },
   {
     id: 'new-pond', title: 'Watering Hole',
@@ -51,7 +51,7 @@ export const MOMENTS: readonly Moment[] = [
   },
   {
     id: 'wildfire', title: 'Wildfire',
-    hint: 'It got away from you.', color: PALETTE.ember,
+    hint: "You lit one. It didn't stop at one.", color: PALETTE.ember,
   },
   {
     id: 'firefighter', title: 'Firefighter',
@@ -71,7 +71,8 @@ export const MOMENTS: readonly Moment[] = [
   },
   {
     id: 'village-grows', title: 'The Village Grows',
-    hint: 'A full house needs another.', color: PALETTE.hutClay,
+    hint: 'Nudge open ground when there is nowhere left to sleep.',
+    color: PALETTE.hutClay,
   },
   {
     id: 'close-call', title: 'Close Call',
@@ -79,7 +80,7 @@ export const MOMENTS: readonly Moment[] = [
   },
   {
     id: 'fed', title: 'Fed',
-    hint: 'You made it rain. Someone ate.', color: PALETTE.leafB,
+    hint: 'Rain, a tree, and someone hungry.', color: PALETTE.leafB,
   },
 ] as const
 
@@ -94,13 +95,12 @@ export interface JournalStorage {
 
 type MomentState = {
   deaths: number
-  fruitTrees: Set<string>
   craters: { x: number; z: number }[]
 }
 
 export class Journal {
   private readonly unlockedSet = new Set<MomentId>()
-  private readonly state: MomentState = { deaths: 0, fruitTrees: new Set(), craters: [] }
+  private readonly state: MomentState = { deaths: 0, craters: [] }
 
   constructor(private readonly storage: JournalStorage | null = null) {
     this.load()
@@ -121,7 +121,6 @@ export class Journal {
   reset(): void {
     this.unlockedSet.clear()
     this.state.deaths = 0
-    this.state.fruitTrees.clear()
     this.state.craters.length = 0
     this.save()
   }
@@ -142,11 +141,11 @@ export class Journal {
       case 'villager:died':
         this.state.deaths++
         return this.state.deaths >= 3 ? 'ghost-story' : null
-      case 'fruit:grown':
-        this.state.fruitTrees.add(event.treeId)
-        return this.state.fruitTrees.size >= 4 ? 'full-harvest' : null
-      case 'fire:ignited': return event.burning >= 5 ? 'wildfire' : null
+      // `bySpread` is the lesson: fire jumps from tree to tree on its own.
+      // The old `burning >= 5` was a body count, and taught nothing.
+      case 'fire:ignited': return event.bySpread ? 'wildfire' : null
       case 'fire:doused': return event.burning >= 3 ? 'firefighter' : null
+      case 'pond:emptied': return 'drained'
       case 'crater:created':
         this.state.craters.push({ x: event.x, z: event.z })
         return null

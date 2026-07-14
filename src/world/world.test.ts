@@ -38,6 +38,12 @@ function addHut(
   return hut
 }
 
+const idleVillagerAt = (x: number, z: number): Partial<Villager> => ({
+  x, z, alive: true,
+  canBeNudged: () => true,
+  suggest: vi.fn(),
+})
+
 function advanceTree(tree: Tree, seconds: number, from = 0): number {
   const step = 1 / 12
   let qt = from
@@ -593,6 +599,41 @@ describe('World campfire recovery', () => {
   })
 })
 
+describe('the ground around a nudge', () => {
+  it('counts only normal trees within the radius', () => {
+    const world = makeWorld()
+    addTree(world, 'tree-0', 0, 0)
+    addTree(world, 'tree-1', 1.5, 0)
+    addTree(world, 'tree-2', 1.5, 0).state = 'burning'
+    addTree(world, 'tree-3', 40, 0)
+
+    expect(world.treesNear(0, 0, 4)).toBe(2)
+  })
+
+  it('sees a pond within the radius', () => {
+    const world = floodedWorld([{ x: 0, z: 0, radius: 3, depth: 1.5 }])
+    world.ponds.push({ x: 0, z: 0 } as Pond)
+
+    expect(world.pondNear(2, 0, 4)).toBe(true)
+    expect(world.pondNear(40, 40, 4)).toBe(false)
+  })
+
+  it('reports a founded-but-unbuilt site as pending', () => {
+    const world = makeWorld()
+    expect(world.pendingSite()).toBe(false)
+
+    addHut(world, 'hut-9', 6, 0, 'site')
+
+    expect(world.pendingSite()).toBe(true)
+  })
+
+  it('a finished hut is no longer pending', () => {
+    const world = makeWorld()
+    addHut(world, 'hut-9', 6, 0, 'built')
+    expect(world.pendingSite()).toBe(false)
+  })
+})
+
 describe('population recovery', () => {
   const built = { state: 'built' } as Hut
   const ruin = { state: 'ruin' } as Hut
@@ -663,22 +704,21 @@ describe('housing caps the population', () => {
 })
 
 describe('World suggestions and village growth', () => {
-  it('suggests to only the two nearest idle villagers', () => {
+  it('reaches the four nearest idle villagers, not two', () => {
     const world = makeWorld()
-    const villagers = [
-      { alive: true, x: 5, z: 0, canBeNudged: () => true, suggest: vi.fn() },
-      { alive: true, x: 1, z: 0, canBeNudged: () => true, suggest: vi.fn() },
-      { alive: true, x: 2, z: 0, canBeNudged: () => true, suggest: vi.fn() },
-      { alive: true, x: 0.5, z: 0, canBeNudged: () => false, suggest: vi.fn() },
-    ]
-    world.villagers = villagers as unknown as Villager[]
+    world.villagers = [
+      idleVillagerAt(0, 0), idleVillagerAt(1, 0), idleVillagerAt(2, 0),
+      idleVillagerAt(3, 0), idleVillagerAt(30, 30),
+    ] as Villager[]
 
-    expect(world.suggest(0, 0, 'chop')).toBe(2)
+    expect(world.suggest(0, 0, 'chop')).toBe(4)
+  })
 
-    expect(villagers[1].suggest).toHaveBeenCalledWith({ kind: 'chop', x: 0, z: 0, ttl: 6 })
-    expect(villagers[2].suggest).toHaveBeenCalledWith({ kind: 'chop', x: 0, z: 0, ttl: 6 })
-    expect(villagers[0].suggest).not.toHaveBeenCalled()
-    expect(villagers[3].suggest).not.toHaveBeenCalled()
+  it('reaches nobody who is out of earshot', () => {
+    const world = makeWorld()
+    world.villagers = [idleVillagerAt(40, 40)] as Villager[]
+
+    expect(world.suggest(0, 0, 'chop')).toBe(0)
   })
 
   it('founds a buildable hut site and emits village growth', () => {
@@ -692,6 +732,21 @@ describe('World suggestions and village growth', () => {
     expect(world.huts).toContain(hut)
     expect(world.island.group.add).toHaveBeenCalledWith(hut?.group)
     expect(events).toContain('village:grew')
+  })
+
+  it('founds only one hut at a time — a second nudge strands no empty site', () => {
+    const world = makeWorld()
+
+    expect(world.foundHutAt(6, 0, new RNG(1))).not.toBeNull()
+    expect(world.foundHutAt(9, 0, new RNG(1))).toBeNull()
+  })
+
+  it('founds again once the first site is finished', () => {
+    const world = makeWorld()
+    const hut = world.foundHutAt(6, 0, new RNG(1))!
+    hut.state = 'built'
+
+    expect(world.foundHutAt(9, 0, new RNG(1))).not.toBeNull()
   })
 })
 

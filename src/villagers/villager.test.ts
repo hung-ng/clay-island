@@ -1,9 +1,67 @@
+import * as THREE from 'three'
 import { describe, expect, it, vi } from 'vitest'
+import type { EventBus } from '../core/events'
 import { RNG } from '../core/rng'
 import { WALK_RADIUS } from '../world/island'
 import type { Campfire, Hut, Pond, Tree } from '../world/objects'
 import type { World } from '../world/world'
-import { fleeTarget, Villager } from './villager'
+import { DRINK_TIME, fleeTarget, MODEL_SCALE, THIRST_LIMIT, Villager } from './villager'
+
+type ActivityHarness = {
+  state: 'sitAtFire' | 'fish' | 'harvest' | 'drink'
+  targetPond: Pond | null
+  targetTree: Tree | null
+  rod: { visible: boolean }
+  heldFruit: { visible: boolean; position: THREE.Vector3 }
+  eating: number
+  arrived: boolean
+  actionTimer: number
+  thirst: number
+  resumeState: string | null
+  x: number
+  z: number
+  bus: EventBus
+  model: THREE.Object3D
+  head: THREE.Object3D
+  arms: THREE.Object3D[]
+  group: THREE.Object3D
+  emote: ReturnType<typeof vi.fn>
+  enter: ReturnType<typeof vi.fn>
+  targetDistance(): number
+  performActivity(dt: number, ticked: boolean, world: World): void
+}
+
+function activityHarness(
+  state: ActivityHarness['state'],
+  targetPond: Pond | null = null,
+): ActivityHarness {
+  const villager = Object.create(Villager.prototype) as ActivityHarness
+  const bone = (): THREE.Object3D => new THREE.Object3D()
+  villager.state = state
+  villager.targetPond = targetPond
+  villager.targetTree = null
+  villager.rod = { visible: false }
+  villager.eating = 0
+  villager.arrived = false
+  villager.actionTimer = 0
+  villager.thirst = 0
+  villager.resumeState = null
+  villager.x = 0
+  villager.z = 0
+  villager.model = bone()
+  villager.head = bone()
+  villager.arms = [bone(), bone()]
+  villager.group = bone()
+  villager.emote = vi.fn()
+  villager.enter = vi.fn()
+  const heldFruit = bone()
+  heldFruit.name = 'held-fruit'
+  heldFruit.visible = false
+  villager.heldFruit = heldFruit as unknown as ActivityHarness['heldFruit']
+  villager.group.add(heldFruit)
+  villager.targetDistance = () => 0
+  return villager
+}
 
 describe('villager fleeing', () => {
   it('moves directly away from a nearby danger', () => {
@@ -125,25 +183,8 @@ describe('villagers keep out of the water', () => {
 })
 
 describe('villager persistent activities', () => {
-  type ActivityHarness = {
-    state: 'sitAtFire' | 'fish'
-    targetPond: Pond | null
-    rod: { visible: boolean }
-    enter: ReturnType<typeof vi.fn>
-    performActivity(dt: number, ticked: boolean, world: World): void
-  }
-
-  function harness(state: ActivityHarness['state'], targetPond: Pond | null = null): ActivityHarness {
-    const villager = Object.create(Villager.prototype) as ActivityHarness
-    villager.state = state
-    villager.targetPond = targetPond
-    villager.rod = { visible: false }
-    villager.enter = vi.fn()
-    return villager
-  }
-
   it('leaves the campfire when it is no longer lit', () => {
-    const villager = harness('sitAtFire')
+    const villager = activityHarness('sitAtFire')
     const world = { campfire: { lit: false } } as World
 
     villager.performActivity(1 / 30, false, world)
@@ -153,7 +194,7 @@ describe('villager persistent activities', () => {
 
   it('stops fishing when its pond has been emptied', () => {
     const pond = {} as Pond
-    const villager = harness('fish', pond)
+    const villager = activityHarness('fish', pond)
     const world = { ponds: [] } as unknown as World
 
     villager.performActivity(1 / 30, false, world)
@@ -163,38 +204,98 @@ describe('villager persistent activities', () => {
 })
 
 describe('villager needs', () => {
-  it('resumes interrupted labour after drinking', () => {
-    const pond = {} as Pond
+  it('reserves enough state time to finish drinking after the walk', () => {
     const villager = Object.create(Villager.prototype) as unknown as {
-      state: 'drink'
-      targetPond: Pond
+      alive: boolean
+      huddleTime: number
+      suggestion: null
+      zapTime: number
+      rainTime: number
+      lastQt: number
       arrived: boolean
-      actionTimer: number
-      resumeState: 'buildHut'
-      model: { scale: { set: ReturnType<typeof vi.fn> } }
-      head: { rotation: { x: number } }
-      emote: ReturnType<typeof vi.fn>
-      enter: ReturnType<typeof vi.fn>
-      targetDistance(): number
-      performActivity(dt: number, ticked: boolean, world: World): void
+      timer: number
+      state: 'drink'
+      thirst: number
+      updatePerformance: ReturnType<typeof vi.fn>
+      updateFleeTarget: ReturnType<typeof vi.fn>
+      steer: ReturnType<typeof vi.fn>
+      performActivity: ReturnType<typeof vi.fn>
+      update(dt: number, qt: number, world: World, island: never): void
     }
     Object.assign(villager, {
-      state: 'drink',
-      targetPond: pond,
+      alive: true,
+      huddleTime: 0,
+      suggestion: null,
+      zapTime: -1,
+      rainTime: 0,
+      lastQt: 0,
       arrived: false,
-      actionTimer: 0,
-      resumeState: 'buildHut',
-      model: { scale: { set: vi.fn() } },
-      head: { rotation: { x: 0 } },
-      emote: vi.fn(),
-      enter: vi.fn(),
-      targetDistance: () => 0,
+      timer: 0,
+      state: 'drink',
+      thirst: 0,
+      updatePerformance: vi.fn(() => false),
+      updateFleeTarget: vi.fn(),
+      steer: vi.fn(),
+      performActivity: vi.fn(),
     })
+    const world = { nearestBurning: () => null, ponds: [] } as unknown as World
+
+    villager.update(1 / 30, 0, world, {} as never)
+
+    expect(villager.timer).toBeGreaterThan(DRINK_TIME)
+  })
+
+  it('resumes interrupted labour after drinking', () => {
+    const pond = { x: 0, z: 0 } as Pond
+    const villager = activityHarness('drink', pond)
+    villager.resumeState = 'buildHut'
     const world = { ponds: [pond] } as unknown as World
 
-    villager.performActivity(2.1, true, world)
+    villager.performActivity(DRINK_TIME + 0.1, true, world)
 
     expect(villager.enter).toHaveBeenCalledWith('buildHut', world)
+  })
+
+  it('gets thirsty enough to actually stop working', () => {
+    expect(THIRST_LIMIT).toBeLessThan(20)
+  })
+})
+
+describe('harvesting', () => {
+  it('carries the fruit before it eats it, and only then is anyone fed', () => {
+    const emit = vi.fn()
+    const tree = { x: 0, z: 0, state: 'normal', hasFruit: true, pickFruit: vi.fn(() => true) }
+    const villager = activityHarness('harvest')
+    villager.bus = { emit } as unknown as EventBus
+    villager.targetTree = tree as unknown as Tree
+    const world = { ponds: [], trees: [tree] } as unknown as World
+
+    villager.performActivity(1.3, true, world)
+
+    expect(tree.pickFruit).toHaveBeenCalledWith(villager.x, villager.z)
+    expect(villager.group.getObjectByName('held-fruit')!.visible).toBe(true)
+    expect(emit).not.toHaveBeenCalledWith({ type: 'villager:ate' })
+
+    villager.performActivity(1.6, true, world)
+
+    expect(emit).toHaveBeenCalledWith({ type: 'villager:ate' })
+    expect(villager.group.getObjectByName('held-fruit')!.visible).toBe(false)
+  })
+})
+
+describe('drinking', () => {
+  it('kneels and dips every frame, not only on the animation tick', () => {
+    const pond = { x: 0, z: 0, shoreNear: () => ({ x: 0, z: 0 }) }
+    const villager = activityHarness('drink', pond as unknown as Pond)
+    const world = { ponds: [pond] } as unknown as World
+
+    villager.performActivity(0.1, true, world)
+    expect(villager.model.scale.y).toBeLessThan(MODEL_SCALE)
+
+    villager.model.scale.setScalar(MODEL_SCALE)
+    villager.performActivity(0.1, false, world)
+
+    expect(villager.model.scale.y).toBeLessThan(MODEL_SCALE)
   })
 })
 

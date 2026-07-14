@@ -14,6 +14,7 @@ export const PALETTE = {
   leafB: '#588157',
   hutClay: '#d4a373',
   stone: '#8d8078',
+  fish: '#d98452', // salmon; reads as a fish against the blue water
   // life & fire
   skin: '#e8b087',
   smockA: '#c96f4a', // terracotta

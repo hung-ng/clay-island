@@ -26,7 +26,11 @@ type SpawnOptions = {
   animateIn?: boolean
 }
 
-const MODEL_SCALE = 0.75
+export const MODEL_SCALE = 0.75
+/** Seconds of unbroken labour before a villager wants a drink. */
+export const THIRST_LIMIT = 16
+/** How long they kneel at the water. Long enough to read as an action. */
+export const DRINK_TIME = 2.6
 
 function isGrave(value: unknown): value is GraveLike {
   if (typeof value !== 'object' || value === null) return false
@@ -92,6 +96,7 @@ export class Villager {
   private visualColors: THREE.Color[] = []
   private rainLeaf: THREE.Mesh
   private rod: THREE.Group
+  private heldFruit: THREE.Mesh
   private axe: THREE.Group
   private rainTime = 0
   private zapTime = -1
@@ -121,6 +126,7 @@ export class Villager {
   private performanceFrom: Point = { x: 0, z: 0 }
   private huddleTime = 0
   private thirst = 0
+  private eating = 0
   private resumeState: VillagerState | null = null
   private suggestion: Suggestion | null = null
   private graveGlance = 0
@@ -198,26 +204,38 @@ export class Villager {
       clayMaterial(PALETTE.bark),
     )
     rod.name = 'fishing-rod'
-    rod.position.set(0.3, 0.75, 0.24)
-    rod.rotation.set(-0.6, 0, -0.5)
+    // The cylinder is Y-up: its tip is +y. Pitch it forward (+z) so the tip
+    // leads out over the water, and the butt sits back at the hip.
+    rod.position.set(0.3, 0.92, 0.42)
+    rod.rotation.set(1.05, 0, -0.18)
     rod.castShadow = !lowFx
     const line = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.006, 0.006, 0.9, 4),
+      new THREE.CylinderGeometry(0.006, 0.006, 0.62, 4),
       clayMaterial(PALETTE.inkSoft, { flat: true }),
     )
     line.name = 'fishing-line'
-    line.position.set(0.62, 0.08, -0.08)
-    line.rotation.z = -0.2
+    // Hangs straight down from the rod tip.
+    line.position.set(0.4, 0.86, 0.98)
     line.castShadow = false
     const float = new THREE.Mesh(
       new THREE.SphereGeometry(0.045, 6, 4),
       clayMaterial(PALETTE.smockA, { flat: true }),
     )
     float.name = 'fishing-float'
-    float.position.set(0.71, -0.36, -0.08)
+    // At the waterline, directly below the line.
+    float.position.set(0.4, 0.55, 0.98)
     float.castShadow = false
     this.rod.add(rod, line, float)
     this.rod.visible = false
+
+    this.heldFruit = new THREE.Mesh(
+      new THREE.SphereGeometry(0.11, 7, 5),
+      clayMaterial(PALETTE.smockA),
+    )
+    this.heldFruit.name = 'held-fruit'
+    this.heldFruit.position.set(0.34, 0.78, 0.1)
+    this.heldFruit.visible = false
+    this.heldFruit.castShadow = !lowFx
 
     this.axe = new THREE.Group()
     this.axe.name = 'villager-axe'
@@ -266,7 +284,7 @@ export class Villager {
     this.ghostMaterials.push(ghostMaterial, faceMaterial, armMaterial)
     island.group.add(this.ghost)
 
-    this.group.add(this.model, this.emoteSprite.sprite, this.rainLeaf, this.rod)
+    this.group.add(this.model, this.emoteSprite.sprite, this.rainLeaf, this.rod, this.heldFruit)
     if (lowFx) this.addBlobShadow()
     this.enter('wander', world)
   }
@@ -301,13 +319,15 @@ export class Villager {
     this.updateFleeTarget(dt, world)
     if (!this.arrived) this.steer(dt, world)
     this.timer -= dt
-    if (this.state === 'drink' && !this.arrived) this.timer = Math.max(this.timer, 2.1)
+    if (this.state === 'drink' && !this.arrived) {
+      this.timer = Math.max(this.timer, DRINK_TIME + 0.1)
+    }
 
     const labouring = this.state === 'chopTree'
       || this.state === 'buildHut'
       || this.state === 'rebuild'
     if (labouring) this.thirst += dt
-    if (this.thirst >= 25 && this.arrived && world.ponds.length > 0) {
+    if (this.thirst >= THIRST_LIMIT && world.ponds.length > 0) {
       this.thirst = 0
       this.resumeState = this.state
       this.enter('drink', world)
@@ -332,7 +352,9 @@ export class Villager {
     const frame = Math.floor(qt * TIMING.fps) % 4
     const sitting = this.arrived
       && (this.state === 'sitAtFire' || this.state === 'fish' || this.state === 'drink')
-    this.model.scale.set(MODEL_SCALE, MODEL_SCALE * (sitting ? 0.8 : 1), MODEL_SCALE)
+    if (this.state !== 'drink') {
+      this.model.scale.set(MODEL_SCALE, MODEL_SCALE * (sitting ? 0.8 : 1), MODEL_SCALE)
+    }
     this.group.rotation.z = this.arrived ? 0 : frame === 0 ? 0.09 : frame === 2 ? -0.09 : 0
     this.group.position.y += !this.arrived && frame % 2 === 0 ? 0.03 : 0
     if (!this.arrived && frame % 2 === 0) world.playStepFoley()
@@ -748,14 +770,29 @@ export class Villager {
         if (this.targetDistance() < 0.25) {
           if (!this.arrived) {
             this.arrived = true
-            this.actionTimer = 2
+            this.actionTimer = DRINK_TIME
             this.emote('water')
           }
           this.actionTimer -= dt
-          if (ticked) {
-            this.model.scale.set(MODEL_SCALE, MODEL_SCALE * 0.72, MODEL_SCALE)
-            this.head.rotation.x = 0.5
-          }
+
+          // Every frame, not only on `ticked`: `enter()` calls resetPose(), and a
+          // pose written once per animation tick is erased in between.
+          this.group.rotation.y = Math.atan2(
+            this.targetPond.x - this.x,
+            this.targetPond.z - this.z,
+          )
+          // Dip and rise: down to the water, back up to swallow, twice over.
+          const progress = 1 - this.actionTimer / DRINK_TIME
+          const dip = (Math.sin(progress * Math.PI * 4 - Math.PI / 2) + 1) / 2
+          this.model.scale.set(
+            MODEL_SCALE,
+            MODEL_SCALE * (1 - 0.3 * dip),
+            MODEL_SCALE,
+          )
+          this.head.rotation.x = 0.28 + 0.5 * dip
+          this.arms[0].rotation.z = -0.5 - 0.5 * dip
+          this.arms[1].rotation.z = 0.5 + 0.5 * dip
+
           if (this.actionTimer <= 0) {
             const resume = this.resumeState
             this.resumeState = null
@@ -765,6 +802,25 @@ export class Villager {
         return
       }
       case 'harvest': {
+        // Once the fruit is in hand the tree no longer matters — eat it even if
+        // the tree burns down mid-chew.
+        if (this.eating > 0) {
+          this.eating -= dt
+          if (ticked) {
+            // Raise it to the mouth and lean into the bite.
+            this.arms[0].rotation.z = -2.1
+            this.heldFruit.position.set(0.16, 1.06, 0.14)
+            this.head.rotation.x = -0.12
+          }
+          if (this.eating <= 0) {
+            this.heldFruit.visible = false
+            // `EmoteKind` has no 'happy'; the satisfied-sigh glyph is 'sleep'.
+            this.emote('sleep')
+            this.bus.emit({ type: 'villager:ate' })
+            this.enter('wander', world)
+          }
+          return
+        }
         if (!this.targetTree || !this.targetTree.hasFruit) {
           this.enter('wander', world)
           return
@@ -777,8 +833,13 @@ export class Villager {
           }
           this.actionTimer -= dt
           if (this.actionTimer <= 0) {
-            if (this.targetTree.pickFruit()) this.bus.emit({ type: 'villager:ate' })
-            this.enter('wander', world)
+            if (this.targetTree.pickFruit(this.x, this.z)) {
+              this.heldFruit.visible = true
+              this.heldFruit.position.set(0.34, 0.78, 0.1)
+              this.eating = 1.6
+            } else {
+              this.enter('wander', world)
+            }
           }
         }
         return
@@ -788,7 +849,22 @@ export class Villager {
           this.enter('wander', world)
           return
         }
-        if (this.targetDistance() < 0.3) this.arrived = true
+        if (this.targetDistance() < 0.3) {
+          if (!this.arrived) {
+            this.arrived = true
+            this.emote('question')
+          }
+          if (ticked && world.campfire) {
+            // Face the ashes and stoop over them.
+            this.group.rotation.y = Math.atan2(
+              world.campfire.x - this.x,
+              world.campfire.z - this.z,
+            )
+            const poke = Math.floor(this.timer * TIMING.fps) % 2 === 0
+            this.arms[0].rotation.z = poke ? -1.2 : -0.7
+            this.head.rotation.x = 0.24
+          }
+        }
         return
       }
       case 'makeFire': {
@@ -859,6 +935,8 @@ export class Villager {
     if (state !== 'drink') this.resumeState = null
     this.resetPose()
     this.rod.visible = false
+    this.eating = 0
+    this.heldFruit.visible = false
     this.axe.visible = false
     this.state = state
     this.timer = stateDuration(state, this.rng)

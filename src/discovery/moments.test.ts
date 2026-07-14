@@ -60,23 +60,29 @@ describe('Journal.observe', () => {
     expect(journal.observe(died)?.id).toBe('ghost-story')
   })
 
-  it('full-harvest needs four distinct trees', () => {
-    const journal = new Journal(memoryStorage())
-    for (let i = 0; i < 4; i++) {
-      expect(journal.observe({ type: 'fruit:grown', treeId: 'tree-1' })).toBeNull()
-    }
-    expect(journal.observe({ type: 'fruit:grown', treeId: 'tree-2' })).toBeNull()
-    expect(journal.observe({ type: 'fruit:grown', treeId: 'tree-3' })).toBeNull()
-    expect(journal.observe({ type: 'fruit:grown', treeId: 'tree-4' })?.id).toBe('full-harvest')
+  it('no longer carries Full Harvest, which only ever duplicated Fed', () => {
+    expect(MOMENTS.map(moment => moment.id)).not.toContain('full-harvest')
   })
 
-  it('wildfire needs five burning at once', () => {
+  it('unlocks Wildfire when fire jumps, not when a body count is hit', () => {
     const journal = new Journal(memoryStorage())
-    const ignite = (burning: number): GameEvent => (
-      { type: 'fire:ignited', kind: 'tree', bySpread: true, burning }
-    )
-    expect(journal.observe(ignite(4))).toBeNull()
-    expect(journal.observe(ignite(5))?.id).toBe('wildfire')
+
+    expect(journal.observe({
+      type: 'fire:ignited', kind: 'tree', bySpread: false, burning: 9,
+    })).toBeNull()
+    expect(journal.observe({
+      type: 'fire:ignited', kind: 'tree', bySpread: true, burning: 2,
+    })?.id).toBe('wildfire')
+  })
+
+  it('unlocks Drained when a pond is emptied', () => {
+    const journal = new Journal(memoryStorage())
+    expect(journal.observe({ type: 'pond:emptied' })?.id).toBe('drained')
+  })
+
+  it('unlocks Fed when a villager eats', () => {
+    const journal = new Journal(memoryStorage())
+    expect(journal.observe({ type: 'villager:ate' })?.id).toBe('fed')
   })
 
   it('firefighter needs a douse while three or more were burning', () => {
@@ -146,7 +152,7 @@ describe('Journal persistence', () => {
 
   it('ignores unknown ids in storage', () => {
     const journal = new Journal(memoryStorage({
-      'tinygod.moments': '["fishing-hole","not-a-moment"]',
+      'tinygod.moments': '["fishing-hole","full-harvest","not-a-moment"]',
     }))
     expect(journal.count()).toBe(1)
     expect(journal.has('fishing-hole')).toBe(true)

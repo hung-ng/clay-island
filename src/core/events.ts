@@ -3,9 +3,9 @@ export type TargetKind = 'ground' | 'tree' | 'hut' | 'villager' | 'pond' | 'crat
 
 // Events carrying `x`/`z` do so because the discovery system (Task 17) needs to
 // correlate them in SPACE, not just in time — e.g. "Watering Hole" = a pond created
-// where a crater was created. `burning` counts ride along for the "Wildfire" (5+ at
-// once) and "Firefighter" (doused while 3+ burning) Moments. Add the field when a
-// Moment needs it; don't speculatively attach data to every event.
+// where a crater was created. `bySpread` teaches the Wildfire interaction, while
+// `burning` still supports Firefighter (doused while 3+ burning). Add a field when
+// a Moment needs it; don't speculatively attach data to every event.
 export type GameEvent =
   | { type: 'power:anticipate'; power: PowerId; x: number; z: number }
   | { type: 'power:impact'; power: PowerId; target: TargetKind; x: number; z: number }
@@ -24,7 +24,7 @@ export type GameEvent =
   | { type: 'pond:emptied' }
   | { type: 'fish:floated' }
   | { type: 'flower:bloomed' }
-  | { type: 'fruit:grown'; treeId: string }   // "Full Harvest" = 4+ DISTINCT trees
+  | { type: 'fruit:grown'; treeId: string }
   | { type: 'campfire:flared' }
 
 export class EventBus {
