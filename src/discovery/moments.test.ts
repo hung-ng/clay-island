@@ -140,19 +140,19 @@ describe('Journal persistence', () => {
   })
 
   it('survives a corrupt stored value without throwing', () => {
-    const journal = new Journal(memoryStorage({ 'tinygod.moments': '{{{not json' }))
+    const journal = new Journal(memoryStorage({ 'clayisland.moments': '{{{not json' }))
     expect(journal.count()).toBe(0)
     expect(() => journal.observe(lightningPond)).not.toThrow()
   })
 
   it('survives a stored value of the wrong shape', () => {
-    const journal = new Journal(memoryStorage({ 'tinygod.moments': '{"nope":true}' }))
+    const journal = new Journal(memoryStorage({ 'clayisland.moments': '{"nope":true}' }))
     expect(journal.count()).toBe(0)
   })
 
   it('ignores unknown ids in storage', () => {
     const journal = new Journal(memoryStorage({
-      'tinygod.moments': '["fishing-hole","full-harvest","not-a-moment"]',
+      'clayisland.moments': '["fishing-hole","full-harvest","not-a-moment"]',
     }))
     expect(journal.count()).toBe(1)
     expect(journal.has('fishing-hole')).toBe(true)

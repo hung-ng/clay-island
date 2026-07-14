@@ -1,4 +1,4 @@
-# Tiny God Game
+# Clay Island
 
 A hand-molded clay island floats in a soft sky. Six tiny villagers live there. You get Meteor, Lightning, and Rain—and a journal of twelve odd little Moments to discover.
 

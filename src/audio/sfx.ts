@@ -4,7 +4,7 @@ import { RNG } from '../core/rng'
 type SfxStorage = Pick<Storage, 'getItem' | 'setItem'>
 type Voice = { sources: AudioScheduledSourceNode[]; nodes: AudioNode[]; stop(): void }
 
-const MUTE_KEY = 'tinygod.muted'
+const MUTE_KEY = 'clayisland.muted'
 const MAX_VOICES = 6
 
 export class Sfx {

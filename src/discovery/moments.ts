@@ -84,7 +84,7 @@ export const MOMENTS: readonly Moment[] = [
   },
 ] as const
 
-const STORAGE_KEY = 'tinygod.moments'
+const STORAGE_KEY = 'clayisland.moments'
 const MOMENT_IDS = new Set<string>(MOMENTS.map(moment => moment.id))
 const CRATER_MATCH_RADIUS = 2.5
 
