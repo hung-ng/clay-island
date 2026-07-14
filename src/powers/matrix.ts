@@ -8,7 +8,7 @@ export type InteractionKind =
   | 'scatter'
   | 'emptyPond'
   | 'steam'
-  | 'floatFish'
+  | 'stunFish'
   | 'flare'
   | 'growFruit'
   | 'grumpy'
@@ -25,7 +25,7 @@ export const INTERACTION_KINDS: readonly InteractionKind[] = [
   'scatter',
   'emptyPond',
   'steam',
-  'floatFish',
+  'stunFish',
   'flare',
   'growFruit',
   'grumpy',
@@ -48,7 +48,7 @@ const MATRIX: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
     tree: ['ignite'],
     hut: ['ignite'],
     villager: ['zap'],
-    pond: ['floatFish'],
+    pond: ['stunFish'],
     campfire: ['flare'],
     crater: [],
     ground: [],

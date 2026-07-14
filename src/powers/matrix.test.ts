@@ -20,7 +20,7 @@ const EXPECTED: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
     tree: ['ignite'],
     hut: ['ignite'],
     villager: ['zap'],
-    pond: ['floatFish'],
+    pond: ['stunFish'],
     campfire: ['flare'],
     crater: [],
     ground: [],

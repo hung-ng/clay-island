@@ -6,8 +6,15 @@ export const STATES = [
 ] as const
 
 export type VillagerState = (typeof STATES)[number]
-export type SuggestionKind = 'chop' | 'fish' | 'build' | 'makeFire' | 'gather'
-export type Suggestion = { kind: SuggestionKind; x: number; z: number; ttl: number }
+export type SuggestionKind =
+  | 'chop'
+  | 'fish'
+  | 'drink'
+  | 'harvest'
+  | 'build'
+  | 'makeFire'
+  | 'gather'
+export type Suggestion = { kind: SuggestionKind; x: number; z: number }
 
 export type FsmCtx = {
   state: VillagerState
@@ -16,6 +23,7 @@ export type FsmCtx = {
   hasRuin: boolean
   hasSite: boolean
   hasPond: boolean
+  hasFishPond: boolean
   hasTree: boolean
   campfireLit: boolean
   needsFire: boolean
@@ -31,7 +39,12 @@ const IDLE: { state: VillagerState; weight: number; when: (c: FsmCtx) => boolean
   { state: 'sitAtFire', weight: 3, when: c => c.campfireLit },
   { state: 'chopTree', weight: 3, when: c => c.hasTree },
   { state: 'buildHut', weight: 3, when: c => c.hasSite },
-  { state: 'fish', weight: 4, when: c => c.hasPond },
+  { state: 'fish', weight: 4, when: c => c.hasFishPond },
+  {
+    state: 'drink',
+    weight: 0,
+    when: c => c.hasPond && c.suggestion?.kind === 'drink',
+  },
   { state: 'makeFire', weight: 5, when: c => c.needsFire },
   { state: 'harvest', weight: 5, when: c => c.hasFruitTree },
   { state: 'gather', weight: 3, when: c => c.fireOut || c.suggestion?.kind === 'gather' },
@@ -40,9 +53,15 @@ const IDLE: { state: VillagerState; weight: number; when: (c: FsmCtx) => boolean
 const SUGGESTED: Record<SuggestionKind, VillagerState> = {
   chop: 'chopTree',
   fish: 'fish',
+  drink: 'drink',
+  harvest: 'harvest',
   build: 'buildHut',
   makeFire: 'makeFire',
   gather: 'gather',
+}
+
+export function stateForSuggestion(kind: SuggestionKind): VillagerState {
+  return SUGGESTED[kind]
 }
 
 /** A suggestion outweighs the idle roll, but never silences it. */

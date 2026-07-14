@@ -21,8 +21,12 @@ export type GroundNudgeCtx = {
   buildable: boolean
   /** A founded site nobody has finished yet. One at a time. */
   pendingSite: boolean
+  /** Normal trees without fruit, available to chop. */
   treesNear: number
+  /** Normal trees carrying fruit, available to harvest. */
+  fruitTreesNear: number
   pondNear: boolean
+  stockedPondNear: boolean
   rng: RNG
 }
 
@@ -51,10 +55,17 @@ export function groundNudge(ctx: GroundNudgeCtx): SuggestionKind {
     && ctx.huts < MAX_HUTS
     && !ctx.pendingSite
   if (pressed) options.push({ kind: 'build', weight: 5 })
+  if (ctx.fruitTreesNear > 0) {
+    options.push({ kind: 'harvest', weight: Math.min(3, ctx.fruitTreesNear) + 1 })
+  }
   if (ctx.treesNear > 0) {
     options.push({ kind: 'chop', weight: Math.min(3, ctx.treesNear) + 1 })
   }
-  if (ctx.pondNear) options.push({ kind: 'fish', weight: 3 })
+  if (ctx.stockedPondNear) {
+    options.push({ kind: 'fish', weight: 3 })
+  } else if (ctx.pondNear) {
+    options.push({ kind: 'drink', weight: 3 })
+  }
 
   const total = options.reduce((sum, option) => sum + option.weight, 0)
   let roll = ctx.rng.next() * total

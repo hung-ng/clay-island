@@ -10,8 +10,14 @@ const NUDGE_SENSE_RADIUS = 5
 
 function suggestionFor(ctx: CastCtx): SuggestionKind | null {
   switch (ctx.kind) {
-    case 'tree': return 'chop'
-    case 'pond': return 'fish'
+    case 'tree': {
+      const tree = ctx.world.treeAt(ctx.x, ctx.z)
+      return tree ? (tree.hasFruit ? 'harvest' : 'chop') : null
+    }
+    case 'pond': {
+      const pond = ctx.world.pondAt(ctx.x, ctx.z)
+      return pond ? (pond.hasFish ? 'fish' : 'drink') : null
+    }
     case 'hut': return 'build'
     case 'campfire': return 'gather'
     case 'ground': {
@@ -29,7 +35,13 @@ function suggestionFor(ctx: CastCtx): SuggestionKind | null {
         buildable,
         pendingSite: ctx.world.pendingSite(),
         treesNear: ctx.world.treesNear(ctx.x, ctx.z, NUDGE_SENSE_RADIUS),
+        fruitTreesNear: ctx.world.fruitTreesNear(ctx.x, ctx.z, NUDGE_SENSE_RADIUS),
         pondNear: ctx.world.pondNear(ctx.x, ctx.z, NUDGE_SENSE_RADIUS),
+        stockedPondNear: ctx.world.stockedPondNear(
+          ctx.x,
+          ctx.z,
+          NUDGE_SENSE_RADIUS,
+        ),
         rng: ctx.rng,
       })
       // A ground nudge that resolves to `build` must create the site to build on.
@@ -78,9 +90,9 @@ export const OUTCOME_HANDLERS: Record<
       life: 1.5,
     })
   },
-  floatFish: (ctx) => {
+  stunFish: (ctx) => {
     const pond = ctx.world.pondAt(ctx.x, ctx.z)
-    if (pond?.floatFish()) ctx.bus.emit({ type: 'fish:floated' })
+    if (pond?.stunFish()) ctx.bus.emit({ type: 'fish:floated' })
   },
   flare: (ctx) => {
     ctx.world.campfire.flare(2, 3)

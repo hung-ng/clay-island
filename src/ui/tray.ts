@@ -24,6 +24,24 @@ const POWER_LABELS: Record<PowerId, string> = {
   nudge: 'Nudge',
 }
 
+export function powerGlyphMarkup(id: PowerId): string {
+  if (id !== 'nudge') {
+    return `<span class="power-glyph" data-glyph="${id}" aria-hidden="true"></span>`
+  }
+
+  return `
+    <span class="power-glyph" data-glyph="nudge" aria-hidden="true">
+      <span class="nudge-hand">
+        <span class="nudge-wrist"></span>
+        <span class="nudge-palm"></span>
+        <span class="nudge-folded-fingers"></span>
+        <span class="nudge-thumb"></span>
+        <span class="nudge-index"></span>
+      </span>
+    </span>
+  `
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
 }
@@ -58,7 +76,7 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
     button.dataset.power = id
     button.setAttribute('aria-keyshortcuts', String(POWER_IDS.indexOf(id) + 1))
     button.innerHTML = `
-      <span class="power-glyph" data-glyph="${id}" aria-hidden="true"></span>
+      ${powerGlyphMarkup(id)}
       <span class="power-label">${POWER_LABELS[id]}</span>
     `
     shell.append(cooldownFill, button)

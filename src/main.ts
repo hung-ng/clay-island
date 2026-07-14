@@ -130,7 +130,7 @@ const loop = new GameLoop(
     world.updateTrees(dt, clock.quantizedTime)
     for (const hut of world.huts) hut.update(dt, clock.quantizedTime)
     world.campfire.update(dt, clock.quantizedTime)
-    world.updatePonds(clock.quantizedTime)
+    world.updatePonds(dt, clock.quantizedTime)
     world.updateFireLights(camera.position)
     shake.beginFrame(camera)
     intro.update(dt)

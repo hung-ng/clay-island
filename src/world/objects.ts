@@ -1156,10 +1156,20 @@ function waterBody(
   return { top: build(topPositions), bed: build(bedPositions), shoreline }
 }
 
+export const MAX_POND_FISH = 3
+
+type PondFish = {
+  mesh: THREE.Mesh
+  anchorX: number
+  anchorZ: number
+  radius: number
+  phase: number
+  direction: -1 | 1
+}
+
 /** One terrain-clipped water surface for a connected crater basin. */
 export class Pond {
   readonly group = new THREE.Group()
-  hasFish = true
   readonly x: number
   readonly z: number
   readonly radius: number
@@ -1167,7 +1177,10 @@ export class Pond {
   private readonly water: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>
   private readonly bed: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>
   private readonly shoreline: { x: number; z: number }[]
-  private readonly floatingFish = new THREE.Group()
+  private readonly fishSchool = new THREE.Group()
+  private readonly fish: PondFish[] = []
+  private fishPopulation: number
+  private fishStunTime = 0
   private lastQt = Number.NEGATIVE_INFINITY
 
   constructor(
@@ -1175,7 +1188,12 @@ export class Pond {
     private readonly groundY: (x: number, z: number) => number,
     rng: RNG,
     lowFx = false,
+    initialFishCount = MAX_POND_FISH,
   ) {
+    this.fishPopulation = Math.max(
+      0,
+      Math.min(MAX_POND_FISH, Math.floor(initialFishCount)),
+    )
     this.x = basin.x
     this.z = basin.z
     this.radius = basin.radius
@@ -1206,24 +1224,33 @@ export class Pond {
     this.water.receiveShadow = !lowFx
     this.group.add(this.water)
 
+    this.fishSchool.name = 'pond-fish'
     const fishGeometry = wobble(new THREE.SphereGeometry(0.19, 8, 6), rng, 0.025)
     const fishMaterial = clayMaterial(PALETTE.fish)
-    for (let i = 0; i < 3; i++) {
-      const fish = new THREE.Mesh(fishGeometry, fishMaterial)
-      fish.name = 'floating-fish'
-      const angle = (i / 3) * Math.PI * 2 + rng.range(-0.25, 0.25)
-      fish.position.set(
-        Math.cos(angle) * basin.radius * 0.3,
-        0.1,
-        Math.sin(angle) * basin.radius * 0.3,
-      )
-      fish.scale.set(1.35, 0.45, 0.72)
-      fish.rotation.y = angle + Math.PI / 2
-      fish.castShadow = !lowFx
-      this.floatingFish.add(fish)
+    for (let i = 0; i < MAX_POND_FISH; i++) {
+      const crater = basin.craters[i % basin.craters.length]
+      const mesh = new THREE.Mesh(fishGeometry, fishMaterial)
+      mesh.name = `pond-fish-${i}`
+      mesh.scale.set(1.35, 0.45, 0.72)
+      mesh.castShadow = !lowFx
+      mesh.visible = i < this.fishPopulation
+      const anchorX = crater.x - basin.x
+      const anchorZ = crater.z - basin.z
+      this.fish.push({
+        mesh,
+        anchorX,
+        anchorZ,
+        radius: this.containedSwimRadius(
+          anchorX,
+          anchorZ,
+          Math.min(0.42, crater.radius * 0.14),
+        ),
+        phase: (i / MAX_POND_FISH) * Math.PI * 2 + rng.range(-0.2, 0.2),
+        direction: i % 2 === 0 ? 1 : -1,
+      })
+      this.fishSchool.add(mesh)
     }
-    this.floatingFish.visible = false
-    this.group.add(this.floatingFish)
+    this.group.add(this.fishSchool)
   }
 
   contains(x: number, z: number): boolean {
@@ -1252,10 +1279,61 @@ export class Pond {
     return nearest ?? fallback ?? { x, z }
   }
 
-  floatFish(): boolean {
+  private containedSwimRadius(anchorX: number, anchorZ: number, requested: number): number {
+    let radius = requested
+    for (let attempt = 0; attempt < 10; attempt++) {
+      let fits = true
+      for (let sample = 0; sample < 32; sample++) {
+        const angle = sample / 32 * Math.PI * 2
+        const localX = anchorX + Math.cos(angle) * radius
+        const localZ = anchorZ + Math.sin(angle) * radius * 0.68
+        const worldX = this.x + localX
+        const worldZ = this.z + localZ
+        const depth = this.basin.waterLevel - this.groundY(worldX, worldZ)
+        if (depth < 0.2 || !this.contains(worldX, worldZ)) {
+          fits = false
+          break
+        }
+      }
+      if (fits) return radius
+      radius *= 0.65
+    }
+    return 0
+  }
+
+  get fishCount(): number {
+    return this.fishPopulation
+  }
+
+  get hasFish(): boolean {
+    return this.fishPopulation > 0
+  }
+
+  get fishStunned(): boolean {
+    return this.fishStunTime > 0
+  }
+
+  catchFish(): boolean {
+    if (this.fishPopulation <= 0) return false
+    this.fishPopulation--
+    this.fish[this.fishPopulation].mesh.visible = false
+    if (this.fishPopulation === 0) this.fishStunTime = 0
+    return true
+  }
+
+  restoreFish(): boolean {
+    const changed = this.fishPopulation !== MAX_POND_FISH
+    this.fishPopulation = MAX_POND_FISH
+    this.fishStunTime = 0
+    this.lastQt = Number.NEGATIVE_INFINITY
+    for (const fish of this.fish) fish.mesh.visible = true
+    return changed
+  }
+
+  stunFish(): boolean {
     if (!this.hasFish) return false
-    this.hasFish = false
-    this.floatingFish.visible = true
+    this.fishStunTime = 2
+    this.lastQt = Number.NEGATIVE_INFINITY
     return true
   }
 
@@ -1263,13 +1341,33 @@ export class Pond {
     disposeObjectResources(this.group)
   }
 
-  update(qt: number): void {
-    if (qt === this.lastQt) return
+  update(dt: number, qt: number): void {
+    const wasStunned = this.fishStunned
+    this.fishStunTime = Math.max(0, this.fishStunTime - dt)
+    const stunEnded = wasStunned && !this.fishStunned
+    if (qt === this.lastQt && !stunEnded) return
     const frame = Math.floor(qt * TIMING.fps)
     this.water.material.opacity = 0.69 + Math.sin(frame * 0.32) * 0.035
-    if (this.floatingFish.visible) {
-      this.floatingFish.position.y = 0.035 + (frame % 4 < 2 ? 0.025 : 0)
-      this.floatingFish.rotation.y = Math.sin(frame * 0.2) * 0.035
+
+    for (let i = 0; i < this.fish.length; i++) {
+      const fish = this.fish[i]
+      if (!fish.mesh.visible) continue
+      const angle = fish.phase + frame * 0.035 * fish.direction
+      const localX = fish.anchorX + Math.cos(angle) * fish.radius
+      const localZ = fish.anchorZ + Math.sin(angle) * fish.radius * 0.68
+      const depth = Math.max(
+        0,
+        this.basin.waterLevel - this.groundY(this.x + localX, this.z + localZ),
+      )
+
+      fish.mesh.position.x = localX
+      fish.mesh.position.z = localZ
+      const tangentX = -Math.sin(angle) * fish.direction
+      const tangentZ = Math.cos(angle) * 0.68 * fish.direction
+      fish.mesh.rotation.y = Math.atan2(-tangentZ, tangentX)
+      fish.mesh.position.y = this.fishStunned
+        ? 0.035 + ((frame + i) % 4 < 2 ? 0.025 : 0)
+        : -Math.min(0.28, Math.max(0.1, depth * 0.45), Math.max(0.08, depth - 0.12))
     }
     this.lastQt = qt
   }
@@ -1318,6 +1416,7 @@ export class FlowerPatch {
     public z: number,
     public radius: number,
     sampleHeight: (x: number, z: number) => number,
+    canPlace: (x: number, z: number) => boolean,
     rng: RNG,
     lowFx = false,
   ) {
@@ -1328,26 +1427,33 @@ export class FlowerPatch {
     flowers.name = 'flower-patch'
     flowers.castShadow = !lowFx
     const dummy = new THREE.Object3D()
+    let placed = 0
     for (let i = 0; i < count; i++) {
-      let px = x
-      let pz = z
+      let px = 0
+      let pz = 0
+      let found = false
       for (let attempt = 0; attempt < 40; attempt++) {
         const angle = rng.range(0, Math.PI * 2)
         const distance = Math.sqrt(rng.next()) * radius
         const candidateX = x + Math.cos(angle) * distance
         const candidateZ = z + Math.sin(angle) * distance
         if (Math.hypot(candidateX, candidateZ) > ISLAND_RADIUS) continue
+        if (!canPlace(candidateX, candidateZ)) continue
         px = candidateX
         pz = candidateZ
+        found = true
         break
       }
+      if (!found) continue
       dummy.position.set(px, sampleHeight(px, pz) + rng.range(0.08, 0.16), pz)
       const scale = rng.range(0.7, 1.35)
       dummy.scale.set(scale, scale * rng.range(0.85, 1.35), scale)
       dummy.rotation.set(rng.range(-0.25, 0.25), rng.range(0, Math.PI * 2), rng.range(-0.25, 0.25))
       dummy.updateMatrix()
-      flowers.setMatrixAt(i, dummy.matrix)
+      flowers.setMatrixAt(placed, dummy.matrix)
+      placed++
     }
+    flowers.count = placed
     flowers.instanceMatrix.needsUpdate = true
     this.group.add(flowers)
   }

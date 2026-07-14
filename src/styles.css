@@ -226,31 +226,96 @@ body {
   text-shadow: 0 6px 0 var(--water), 0 12px 0 var(--water);
 }
 
-.power-glyph[data-glyph='nudge']::before {
+.power-glyph[data-glyph='nudge'] {
+  transform: translate(1px, -1px) scale(1.12);
+  transform-origin: center;
+}
+
+.nudge-hand,
+.nudge-hand > span {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 9px;
-  height: 9px;
-  transform: translate(-50%, -50%);
-  border: 2px solid var(--ink-soft);
-  border-radius: 52% 48% 46% 54%;
-  background: var(--yellow);
-  box-shadow: inset 2px 2px 0 var(--paper);
+  display: block;
+  box-sizing: border-box;
+}
+
+.nudge-hand {
+  inset: 0;
+  filter:
+    drop-shadow(0 0 0.8px var(--ink-soft))
+    drop-shadow(0 0 0.8px var(--ink-soft));
+}
+
+.nudge-wrist,
+.nudge-palm,
+.nudge-folded-fingers,
+.nudge-thumb,
+.nudge-index {
+  background: var(--skin);
+}
+
+.nudge-wrist {
+  top: 11px;
+  left: 0;
+  z-index: 1;
+  width: 10px;
+  height: 8px;
+  transform: rotate(-5deg);
+  border-radius: 42% 58% 50% 50% / 52% 44% 56% 48%;
+}
+
+.nudge-palm {
+  top: 8px;
+  left: 6px;
+  z-index: 2;
+  width: 13px;
+  height: 12px;
+  transform: rotate(2deg);
+  border-radius: 47% 53% 45% 55% / 42% 56% 44% 58%;
+  box-shadow: inset 1px 1px 0 var(--paper);
+}
+
+.nudge-folded-fingers {
+  top: 15px;
+  left: 8px;
+  z-index: 3;
+  width: 11px;
+  height: 7px;
+  transform: rotate(3deg);
+  border-radius: 42% 58% 49% 51% / 58% 45% 55% 42%;
+}
+
+.nudge-folded-fingers::after {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  left: 3px;
+  height: 1px;
+  border-radius: 50%;
+  background: var(--ink-soft);
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--ink-soft) 72%, transparent);
   content: '';
 }
 
-.power-glyph[data-glyph='nudge']::after {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 22px;
-  height: 22px;
-  transform: translate(-50%, -50%);
-  border: 2px solid var(--yellow);
-  border-radius: 49% 51% 53% 47%;
-  opacity: 0.55;
-  content: '';
+.nudge-thumb {
+  top: 5px;
+  left: 8px;
+  z-index: 3;
+  width: 10px;
+  height: 6px;
+  transform: rotate(-25deg);
+  transform-origin: 20% 75%;
+  border-radius: 56% 44% 54% 46% / 49% 57% 43% 51%;
+}
+
+.nudge-index {
+  top: 8px;
+  left: 14px;
+  z-index: 4;
+  width: 12px;
+  height: 6px;
+  transform: rotate(1deg);
+  transform-origin: 10% 50%;
+  border-radius: 42% 58% 51% 49% / 48% 55% 45% 52%;
 }
 
 #tray .spacer {

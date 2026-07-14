@@ -6,7 +6,7 @@ import { craterAt, craterRimY, type Crater } from './craters'
 import { FIRE_CONFIG, FireSystem, type FireEvent, type Flammable } from './fire'
 import { MAX_TREES, seedSite, type Seedling } from './forest'
 import { Island, WALK_RADIUS, islandSurfaceY } from './island'
-import { Campfire, FlowerPatch, Grave, Hut, Pond, Tree } from './objects'
+import { Campfire, FlowerPatch, Grave, Hut, MAX_POND_FISH, Pond, Tree } from './objects'
 import { placeSites } from './scatter'
 import {
   BUILD_CLEARANCE,
@@ -80,7 +80,7 @@ export class World {
   chipsAt(x: number, z: number): void { this.chipFx?.(x, z) }
 
   choppableTree(): Tree | null {
-    return this.trees.find(tree => tree.state === 'normal') ?? null
+    return this.trees.find(tree => tree.state === 'normal' && !tree.hasFruit) ?? null
   }
 
   /** A normal tree currently carrying fruit, for a harvester to walk to. */
@@ -166,7 +166,7 @@ export class World {
 
   resolveTarget(x: number, z: number): TargetKind {
     if (this.villagers.some(villager => villager.alive && within(villager, x, z, 1))) return 'villager'
-    if (this.trees.some(tree => within(tree, x, z, 1.2))) return 'tree'
+    if (this.treeAt(x, z)) return 'tree'
     if (this.huts.some(hut => within(hut, x, z, 1.6))) return 'hut'
     if (this.campfire && !this.campfire.scattered && within(this.campfire, x, z, 1.5)) return 'campfire'
     if (this.ponds.some(pond => pond.contains(x, z))) return 'pond'
@@ -178,6 +178,13 @@ export class World {
     return this.villagers
       .filter(villager => villager.alive && within(villager, x, z, radius))
       .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0] ?? null
+  }
+
+  treeAt(x: number, z: number, radius = 1.2): Tree | null {
+    return this.trees
+      .filter(tree => within(tree, x, z, radius))
+      .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0]
+      ?? null
   }
 
   pondAt(x: number, z: number): Pond | null {
@@ -295,16 +302,44 @@ export class World {
     return !this.campfire || this.campfire.scattered || !this.campfire.lit
   }
 
-  /** Trees a villager could actually chop, within `radius` of a point. */
+  /** Bare trees a villager could actually chop, within `radius` of a point. */
   treesNear(x: number, z: number, radius: number): number {
     return this.trees.filter(tree => (
-      tree.state === 'normal' && Math.hypot(tree.x - x, tree.z - z) <= radius
+      tree.state === 'normal'
+      && !tree.hasFruit
+      && Math.hypot(tree.x - x, tree.z - z) <= radius
+    )).length
+  }
+
+  /** Fruiting trees a villager could harvest, within `radius` of a point. */
+  fruitTreesNear(x: number, z: number, radius: number): number {
+    return this.trees.filter(tree => (
+      tree.state === 'normal'
+      && tree.hasFruit
+      && Math.hypot(tree.x - x, tree.z - z) <= radius
     )).length
   }
 
   /** Whether any pond lies within `radius` of a point. */
   pondNear(x: number, z: number, radius: number): boolean {
     return this.ponds.some(pond => Math.hypot(pond.x - x, pond.z - z) <= radius)
+  }
+
+  /** Whether a pond with at least one fish lies within `radius` of a point. */
+  stockedPondNear(x: number, z: number, radius: number): boolean {
+    return this.ponds.some(pond => (
+      pond.hasFish && Math.hypot(pond.x - x, pond.z - z) <= radius
+    ))
+  }
+
+  /** Restore each pond whose basin radius intersects the reached area. */
+  restoreFishNear(x: number, z: number, radius: number): number {
+    let restored = 0
+    for (const pond of this.ponds) {
+      const reached = Math.hypot(pond.x - x, pond.z - z) - pond.radius <= radius
+      if (reached && pond.restoreFish()) restored++
+    }
+    return restored
   }
 
   /** A hut founded but not yet finished. The village builds one at a time. */
@@ -430,7 +465,12 @@ export class World {
       const absorbed = this.ponds.filter(pond => (
         pond.basin.craters.some(crater => basin.craters.includes(crater))
       ))
-      const keepsFish = absorbed.length === 0 || absorbed.some(pond => pond.hasFish)
+      const fishCount = absorbed.length === 0
+        ? MAX_POND_FISH
+        : Math.min(
+            MAX_POND_FISH,
+            absorbed.reduce((sum, pond) => sum + pond.fishCount, 0),
+          )
       for (const pond of absorbed) this.removePond(pond)
 
       const pond = new Pond(
@@ -438,8 +478,8 @@ export class World {
         (px, pz) => this.island.sampleHeight(px, pz),
         rng,
         lowFx,
+        fishCount,
       )
-      pond.hasFish = keepsFish
       this.ponds.push(pond)
       this.island.group.add(pond.group)
       this.bus.emit({ type: 'pond:created', x: basin.x, z: basin.z })
@@ -498,7 +538,7 @@ export class World {
         Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z)
       ))
       .slice(0, 4)
-    for (const villager of idle) villager.suggest({ kind, x, z, ttl: 6 })
+    for (const villager of idle) villager.suggest({ kind, x, z })
     return idle.length
   }
 
@@ -589,7 +629,15 @@ export class World {
       within(patch, x, z, Math.min(patch.radius, radius) * 0.5)
     ))
     if (existing) return existing
-    const patch = new FlowerPatch(x, z, radius, (px, pz) => this.island.sampleHeight(px, pz), rng, lowFx)
+    const patch = new FlowerPatch(
+      x,
+      z,
+      radius,
+      (px, pz) => this.island.sampleHeight(px, pz),
+      (px, pz) => !this.submerged(px, pz),
+      rng,
+      lowFx,
+    )
     this.flowerPatches.push(patch)
     this.island.group.add(patch.group)
     this.bus.emit({ type: 'flower:bloomed' })
@@ -624,8 +672,8 @@ export class World {
     for (const grave of this.graves) grave.update(dt)
   }
 
-  updatePonds(qt: number): void {
-    for (const pond of this.ponds) pond.update(qt)
+  updatePonds(dt: number, qt: number): void {
+    for (const pond of this.ponds) pond.update(dt, qt)
   }
 
   updateTrees(dt: number, qt: number): void {

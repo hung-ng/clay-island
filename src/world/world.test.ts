@@ -1,3 +1,4 @@
+import * as THREE from 'three'
 import { describe, expect, it, vi } from 'vitest'
 import { RNG } from '../core/rng'
 import type { Villager } from '../villagers/villager'
@@ -54,6 +55,19 @@ function advanceTree(tree: Tree, seconds: number, from = 0): number {
   return qt
 }
 
+function flowerPositions(patch: FlowerPatch): Array<{ x: number; z: number }> {
+  const flowers = patch.group.getObjectByName('flower-patch') as THREE.InstancedMesh
+  const matrix = new THREE.Matrix4()
+  const position = new THREE.Vector3()
+  const positions: Array<{ x: number; z: number }> = []
+  for (let i = 0; i < flowers.count; i++) {
+    flowers.getMatrixAt(i, matrix)
+    position.setFromMatrixPosition(matrix)
+    positions.push({ x: position.x, z: position.z })
+  }
+  return positions
+}
+
 function floodedWorld(
   craters: { x: number; z: number; radius: number; depth: number }[],
 ): World {
@@ -91,6 +105,16 @@ describe('World targeting', () => {
     world.ponds.push({ x: 2, z: 3, radius: 2, contains: vi.fn(() => true) } as unknown as Pond)
 
     expect(world.resolveTarget(2, 3)).toBe('pond')
+  })
+
+  it('returns the nearest tree at a direct interaction point', () => {
+    const world = makeWorld()
+    const farther = addTree(world, 'tree-farther', 0.8, 0)
+    const nearer = addTree(world, 'tree-nearer', 0.2, 0)
+
+    expect(world.treeAt(0, 0)).toBe(nearer)
+    expect(world.treeAt(4, 0)).toBeNull()
+    expect(farther).not.toBe(nearer)
   })
 })
 
@@ -224,6 +248,26 @@ describe('World restorative consequences', () => {
     expect(world.flowerPatches).toHaveLength(1)
     expect(events).not.toContain('flower:bloomed')
   })
+
+  it('places flowers on dry ground around a pond, never under its water', () => {
+    const world = floodedWorld([{ x: 0, z: 0, radius: 3, depth: 1.5 }])
+    world.fillCratersNear(0, 0, 10, new RNG(1))
+
+    const positions = flowerPositions(world.bloomNear(0, 0, 4, new RNG(2)))
+
+    expect(positions.length).toBeGreaterThan(0)
+    expect(positions.every(({ x, z }) => !world.submerged(x, z))).toBe(true)
+  })
+
+  it('allows flowers on a dry crater bed when no pond exists', () => {
+    const world = floodedWorld([{ x: 0, z: 0, radius: 3, depth: 1.5 }])
+
+    const positions = flowerPositions(world.bloomNear(0, 0, 0.5, new RNG(3)))
+
+    expect(positions).toHaveLength(36)
+    expect(positions.every(({ x, z }) => Math.hypot(x, z) < 3)).toBe(true)
+    expect(positions.every(({ x, z }) => !world.submerged(x, z))).toBe(true)
+  })
 })
 
 describe('World refloodBasins', () => {
@@ -280,6 +324,89 @@ describe('World refloodBasins', () => {
 
     // Same pond object: unchanged basins are left alone, so fish are not reset.
     expect(world.ponds[0]).toBe(original)
+  })
+})
+
+describe('World pond fish', () => {
+  it('combines surviving fish when two lakes merge and caps the result at three', () => {
+    const craters = [
+      { x: 0, z: 0, radius: 2.5, depth: 1.5 },
+      { x: 6, z: 0, radius: 2.5, depth: 1.5 },
+    ]
+    const world = floodedWorld(craters)
+    world.fillCratersNear(3, 0, 20, new RNG(1))
+    world.ponds[0].catchFish()
+    world.ponds[1].catchFish()
+
+    craters.push({ x: 3, z: 0, radius: 2.5, depth: 1.5 })
+    world.refloodBasins(new RNG(2))
+
+    expect(world.ponds).toHaveLength(1)
+    expect(world.ponds[0].fishCount).toBe(3)
+  })
+
+  it('preserves a below-cap population when lakes merge', () => {
+    const craters = [
+      { x: 0, z: 0, radius: 2.5, depth: 1.5 },
+      { x: 6, z: 0, radius: 2.5, depth: 1.5 },
+    ]
+    const world = floodedWorld(craters)
+    world.fillCratersNear(3, 0, 20, new RNG(1))
+    world.ponds[0].catchFish()
+    world.ponds[0].catchFish()
+    world.ponds[1].catchFish()
+    world.ponds[1].catchFish()
+
+    craters.push({ x: 3, z: 0, radius: 2.5, depth: 1.5 })
+    world.refloodBasins(new RNG(2))
+
+    expect(world.ponds).toHaveLength(1)
+    expect(world.ponds[0].fishCount).toBe(2)
+  })
+
+  it('does not resurrect an empty lake when a new crater expands its basin', () => {
+    const craters = [{ x: 0, z: 0, radius: 3, depth: 1.5 }]
+    const world = floodedWorld(craters)
+    world.fillCratersNear(0, 0, 10, new RNG(1))
+    while (world.ponds[0].catchFish()) {
+      expect(world.ponds[0].fishCount).toBeGreaterThanOrEqual(0)
+    }
+
+    craters.push({ x: 3, z: 0, radius: 3, depth: 1.5 })
+    world.refloodBasins(new RNG(2))
+
+    expect(world.ponds[0].fishCount).toBe(0)
+  })
+
+  it('restores only ponds whose basin radius intersects the rain radius', () => {
+    const world = floodedWorld([
+      { x: 0, z: 0, radius: 2, depth: 1.5 },
+      { x: 9, z: 0, radius: 2, depth: 1.5 },
+    ])
+    world.fillCratersNear(4.5, 0, 20, new RNG(1))
+    for (const pond of world.ponds) {
+      while (pond.catchFish()) {
+        expect(pond.fishCount).toBeGreaterThanOrEqual(0)
+      }
+    }
+
+    expect(world.restoreFishNear(-3, 0, 1.1)).toBe(1)
+    expect(world.ponds.find(pond => pond.x < 4)!.fishCount).toBe(3)
+    expect(world.ponds.find(pond => pond.x > 4)!.fishCount).toBe(0)
+  })
+
+  it('distinguishes nearby water from nearby stocked water', () => {
+    const world = floodedWorld([{ x: 0, z: 0, radius: 3, depth: 1.5 }])
+    world.fillCratersNear(0, 0, 10, new RNG(1))
+    expect(world.pondNear(0, 0, 5)).toBe(true)
+    expect(world.stockedPondNear(0, 0, 5)).toBe(true)
+
+    while (world.ponds[0].catchFish()) {
+      expect(world.ponds[0].fishCount).toBeGreaterThanOrEqual(0)
+    }
+
+    expect(world.pondNear(0, 0, 5)).toBe(true)
+    expect(world.stockedPondNear(0, 0, 5)).toBe(false)
   })
 })
 
@@ -610,6 +737,18 @@ describe('the ground around a nudge', () => {
     expect(world.treesNear(0, 0, 4)).toBe(2)
   })
 
+  it('keeps fruiting trees available to harvest but out of chopping candidates', () => {
+    const world = makeWorld()
+    const fruiting = addTree(world, 'tree-fruiting', 0, 0)
+    const bare = addTree(world, 'tree-bare', 1.5, 0)
+    fruiting.growFruit()
+
+    expect(world.choppableTree()).toBe(bare)
+    expect(world.fruitingTree()).toBe(fruiting)
+    expect(world.treesNear(0, 0, 4)).toBe(1)
+    expect(world.fruitTreesNear(0, 0, 4)).toBe(1)
+  })
+
   it('sees a pond within the radius', () => {
     const world = floodedWorld([{ x: 0, z: 0, radius: 3, depth: 1.5 }])
     world.ponds.push({ x: 0, z: 0 } as Pond)
@@ -712,6 +851,20 @@ describe('World suggestions and village growth', () => {
     ] as Villager[]
 
     expect(world.suggest(0, 0, 'chop')).toBe(4)
+  })
+
+  it('sends a completion-based suggestion without a wall-clock TTL', () => {
+    const world = makeWorld()
+    const villager = idleVillagerAt(0, 0)
+    world.villagers = [villager] as Villager[]
+
+    world.suggest(0, 0, 'chop')
+
+    expect(villager.suggest).toHaveBeenCalledWith({
+      kind: 'chop',
+      x: 0,
+      z: 0,
+    })
   })
 
   it('reaches nobody who is out of earshot', () => {

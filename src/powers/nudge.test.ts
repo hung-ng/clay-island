@@ -10,7 +10,9 @@ const ctx = (o: Partial<GroundNudgeCtx> = {}): GroundNudgeCtx => ({
   buildable: true,
   pendingSite: false,
   treesNear: 0,
+  fruitTreesNear: 0,
   pondNear: false,
+  stockedPondNear: false,
   rng: new RNG(1),
   ...o,
 })
@@ -58,16 +60,29 @@ describe('ground nudge resolves from the village needs', () => {
     expect(kinds({ treesNear: 3 })).toContain('chop')
   })
 
+  it('keeps fruiting and bare trees as distinct nearby suggestions', () => {
+    const seen = kinds({ treesNear: 2, fruitTreesNear: 1 })
+    expect(seen).toContain('harvest')
+    expect(seen).toContain('chop')
+  })
+
   it('never suggests chopping where there are no trees', () => {
     expect(kinds({ treesNear: 0 })).not.toContain('chop')
   })
 
-  it('suggests fishing when the nudge lands by the water', () => {
-    expect(kinds({ pondNear: true })).toContain('fish')
+  it('suggests fishing beside stocked water', () => {
+    expect(kinds({ pondNear: true, stockedPondNear: true })).toContain('fish')
+    expect(kinds({ pondNear: true, stockedPondNear: true })).not.toContain('drink')
   })
 
-  it('never suggests fishing away from the water', () => {
-    expect(kinds({ pondNear: false })).not.toContain('fish')
+  it('suggests drinking beside water only when every nearby pond is empty', () => {
+    expect(kinds({ pondNear: true, stockedPondNear: false })).toContain('drink')
+    expect(kinds({ pondNear: true, stockedPondNear: false })).not.toContain('fish')
+  })
+
+  it('suggests neither fishing nor drinking away from water', () => {
+    expect(kinds({ pondNear: false, stockedPondNear: false })).not.toContain('fish')
+    expect(kinds({ pondNear: false, stockedPondNear: false })).not.toContain('drink')
   })
 
   it('always falls back to gathering when nothing else is eligible', () => {

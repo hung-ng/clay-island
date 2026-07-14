@@ -11,6 +11,7 @@ import type { World } from '../world/world'
 import {
   decideNext,
   stateDuration,
+  stateForSuggestion,
   type FsmCtx,
   type Suggestion,
   type VillagerState,
@@ -31,6 +32,10 @@ export const MODEL_SCALE = 0.75
 export const THIRST_LIMIT = 16
 /** How long they kneel at the water. Long enough to read as an action. */
 export const DRINK_TIME = 2.6
+/** One complete cast always resolves after this many seconds at the bank. */
+export const FISH_CAST_TIME = 4
+/** Time spent visibly tending a Nudge location after arriving there. */
+const SUGGESTED_GATHER_TIME = 2.5
 
 function isGrave(value: unknown): value is GraveLike {
   if (typeof value !== 'object' || value === null) return false
@@ -96,6 +101,7 @@ export class Villager {
   private visualColors: THREE.Color[] = []
   private rainLeaf: THREE.Mesh
   private rod: THREE.Group
+  private rodTip = new THREE.Vector3()
   private heldFruit: THREE.Mesh
   private axe: THREE.Group
   private rainTime = 0
@@ -206,11 +212,11 @@ export class Villager {
     rod.name = 'fishing-rod'
     // The cylinder is Y-up: its tip is +y. Pitch it forward (+z) so the tip
     // leads out over the water, and the butt sits back at the hip.
-    rod.position.set(0.3, 0.92, 0.42)
+    rod.position.set(0.3, 0.8, 0.42)
     rod.rotation.set(1.05, 0, -0.18)
     rod.castShadow = !lowFx
     const line = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.006, 0.006, 0.62, 4),
+      new THREE.CylinderGeometry(0.006, 0.006, 1, 4),
       clayMaterial(PALETTE.inkSoft, { flat: true }),
     )
     line.name = 'fishing-line'
@@ -229,13 +235,14 @@ export class Villager {
     this.rod.visible = false
 
     this.heldFruit = new THREE.Mesh(
-      new THREE.SphereGeometry(0.11, 7, 5),
+      new THREE.SphereGeometry(0.14, 7, 5),
       clayMaterial(PALETTE.smockA),
     )
     this.heldFruit.name = 'held-fruit'
-    this.heldFruit.position.set(0.34, 0.78, 0.1)
+    this.heldFruit.position.set(0, -0.18, 0.06)
     this.heldFruit.visible = false
     this.heldFruit.castShadow = !lowFx
+    this.arms[0].add(this.heldFruit)
 
     this.axe = new THREE.Group()
     this.axe.name = 'villager-axe'
@@ -284,18 +291,18 @@ export class Villager {
     this.ghostMaterials.push(ghostMaterial, faceMaterial, armMaterial)
     island.group.add(this.ghost)
 
-    this.group.add(this.model, this.emoteSprite.sprite, this.rainLeaf, this.rod, this.heldFruit)
+    this.group.add(this.model, this.emoteSprite.sprite, this.rainLeaf, this.rod)
     if (lowFx) this.addBlobShadow()
     this.enter('wander', world)
   }
 
   update(dt: number, qt: number, world: World, island: Island): void {
     if (!this.alive) return
+    this.normalizeSuggestion(world)
     this.huddleTime = Math.max(0, this.huddleTime - dt)
-    if (this.suggestion) {
-      this.suggestion.ttl -= dt
-      if (this.suggestion.ttl <= 0) this.suggestion = null
-    }
+    const ticked = qt !== this.lastQt
+    const swallowed = this.updateHeldFruit(dt, ticked)
+    if (swallowed && this.state === 'harvest') this.enter('wander', world)
     if (this.zapTime >= 0) {
       this.updateZap(dt, qt)
       return
@@ -314,7 +321,17 @@ export class Villager {
       this.updateRainReaction(dt, qt, world, island)
       return
     }
-    const ticked = qt !== this.lastQt
+
+    // Narrative work is a live priority, not something that waits for the
+    // current state's watchdog to expire. Danger and Rain have already had
+    // their higher-priority opportunities above.
+    if (this.state !== 'flee') {
+      const priorityState = this.narrativePriority(world)
+      if (priorityState && this.state !== priorityState) {
+        this.enter(priorityState, world)
+        return
+      }
+    }
 
     this.updateFleeTarget(dt, world)
     if (!this.arrived) this.steer(dt, world)
@@ -334,7 +351,17 @@ export class Villager {
     }
     this.performActivity(dt, ticked, world)
 
-    if (this.timer <= 0) this.enter(decideNext(this.context(world)), world)
+    if (this.timer <= 0) {
+      const context = this.context(world)
+      const priorityOverride = context.fireNear || context.freshGrave || context.hasRuin
+      const finishingCast = this.state === 'fish' && this.arrived && this.actionTimer > 0
+      const finishingFruit = this.state === 'harvest' && this.eating > 0
+      if ((this.suggestionForState(this.state) || finishingCast || finishingFruit)
+        && !priorityOverride) {
+        this.timer = 0.25
+      }
+      else this.enter(decideNext(context), world)
+    }
     if (!ticked) return
     this.lastQt = qt
 
@@ -484,6 +511,7 @@ export class Villager {
   canBeNudged(): boolean {
     if (!this.alive || this.zapTime >= 0) return false
     if (this.performance !== 'none') return false
+    if (this.suggestion) return false
     return this.state === 'wander' || this.state === 'sitAtFire' || this.state === 'gather'
   }
 
@@ -491,7 +519,116 @@ export class Villager {
     if (!this.canBeNudged()) return
     this.suggestion = suggestion
     this.emote('question')
+    if (this.state === 'gather' && suggestion.kind === 'gather') {
+      this.enter('gather', this.world)
+      return
+    }
     this.timer = Math.min(this.timer, 0.4)
+  }
+
+  private suggestionForState(state: VillagerState): Suggestion | null {
+    const suggestion = this.suggestion
+    return suggestion && stateForSuggestion(suggestion.kind) === state
+      ? suggestion
+      : null
+  }
+
+  private completeSuggestionFor(state: VillagerState): void {
+    if (this.suggestionForState(state)) this.suggestion = null
+  }
+
+  private cancelSuggestionFor(state: VillagerState): void {
+    if (this.suggestionForState(state)) this.suggestion = null
+  }
+
+  private convertFishingSuggestionToDrink(): void {
+    if (this.suggestion?.kind !== 'fish') return
+    this.suggestion = { ...this.suggestion, kind: 'drink' }
+  }
+
+  private convertChopSuggestionToHarvest(): void {
+    if (this.suggestion?.kind !== 'chop') return
+    this.suggestion = { ...this.suggestion, kind: 'harvest' }
+  }
+
+  private normalizeSuggestion(world: World): void {
+    const suggestion = this.suggestion
+    if (!suggestion) return
+
+    switch (suggestion.kind) {
+      case 'chop':
+        if (this.targetTree) {
+          if (!world.trees.includes(this.targetTree) || this.targetTree.state !== 'normal') {
+            this.suggestion = null
+          } else if (this.targetTree.hasFruit) {
+            this.convertChopSuggestionToHarvest()
+          }
+        } else {
+          const intended = world.trees
+            .filter(tree => distance(tree, suggestion) <= 1.2)
+            .sort((a, b) => distance(a, suggestion) - distance(b, suggestion))[0]
+          if (intended?.state === 'normal' && intended.hasFruit) {
+            this.convertChopSuggestionToHarvest()
+          } else if (!world.trees.some(tree => tree.state === 'normal' && !tree.hasFruit)) {
+            this.suggestion = null
+          }
+        }
+        return
+      case 'harvest': {
+        // Once picked, completing the suggestion means swallowing the fruit;
+        // the source tree may already be bare or disappear during an override.
+        if (this.eating > 0) return
+        if (this.targetTree) {
+          if (!world.trees.includes(this.targetTree)
+            || this.targetTree.state !== 'normal'
+            || (!this.targetTree.hasFruit && this.eating <= 0)) {
+            this.suggestion = null
+          }
+          return
+        }
+        const intended = world.trees
+          .filter(tree => distance(tree, suggestion) <= 1.2)
+          .sort((a, b) => distance(a, suggestion) - distance(b, suggestion))[0]
+        if ((intended && (intended.state !== 'normal' || !intended.hasFruit))
+          || !world.trees.some(tree => tree.state === 'normal' && tree.hasFruit)) {
+          this.suggestion = null
+        }
+        return
+      }
+      case 'fish': {
+        if (this.targetPond) {
+          if (!world.ponds.includes(this.targetPond)) this.suggestion = null
+          else if (!this.targetPond.hasFish) this.convertFishingSuggestionToDrink()
+          return
+        }
+        if (world.ponds.length === 0) {
+          this.suggestion = null
+          return
+        }
+        const intended = world.pondAt(suggestion.x, suggestion.z)
+        if (intended) {
+          if (!intended.hasFish) this.convertFishingSuggestionToDrink()
+          return
+        }
+        if (!world.ponds.some(pond => pond.hasFish)) this.convertFishingSuggestionToDrink()
+        return
+      }
+      case 'drink':
+        if (this.targetPond && !world.ponds.includes(this.targetPond)) {
+          this.suggestion = null
+        } else if (!this.targetPond && world.ponds.length === 0) {
+          this.suggestion = null
+        }
+        return
+      case 'build':
+        if (!world.hasHutWork()) this.suggestion = null
+        return
+      case 'makeFire':
+        if (!world.needsFire()) this.suggestion = null
+        return
+      case 'gather':
+        return
+    }
   }
 
   private addPart(mesh: THREE.Mesh, lowFx: boolean): void {
@@ -650,7 +787,13 @@ export class Villager {
       }
       case 'chopTree': {
         if (!this.targetTree || this.targetTree.state !== 'normal') {
+          this.cancelSuggestionFor('chopTree')
           this.enter('wander', world)
+          return
+        }
+        if (this.targetTree.hasFruit) {
+          this.convertChopSuggestionToHarvest()
+          this.enter('harvest', world, null, this.targetTree)
           return
         }
         if (distance(this, this.targetTree) <= 1.15) {
@@ -667,6 +810,7 @@ export class Villager {
           }
           if (this.chopFrames >= 8) {
             this.targetTree.chop()
+            this.completeSuggestionFor('chopTree')
             this.enter('wander', world)
           }
         }
@@ -675,11 +819,13 @@ export class Villager {
       case 'buildHut':
       case 'rebuild': {
         if (!this.targetHut || (this.targetHut.state !== 'site' && this.targetHut.state !== 'building' && this.targetHut.state !== 'ruin')) {
+          if (this.state === 'buildHut') this.cancelSuggestionFor('buildHut')
           this.enter('wander', world)
           return
         }
         if (distance(this, this.targetHut) <= 1.55) {
           if (!world.huts.includes(this.targetHut) && !world.commitBuildSite(this.targetHut)) {
+            if (this.state === 'buildHut') this.cancelSuggestionFor('buildHut')
             this.enter('wander', world)
             return
           }
@@ -694,6 +840,7 @@ export class Villager {
                 this.bus.emit({ type: 'hut:rebuilt' })
                 delete this.targetHut.group.userData.rebuildingRuin
               }
+              if (this.state === 'buildHut') this.completeSuggestionFor('buildHut')
               this.enter('wander', world)
             }
           }
@@ -739,30 +886,45 @@ export class Villager {
         return
       }
       case 'fish': {
-        if (!this.targetPond || !world.ponds.some(pond => pond === this.targetPond)) {
+        if (!this.targetPond || !world.ponds.includes(this.targetPond)) {
+          this.cancelSuggestionFor('fish')
           this.rod.visible = false
           this.enter('wander', world)
+          return
+        }
+        if (!this.targetPond.hasFish) {
+          const pond = this.targetPond
+          this.convertFishingSuggestionToDrink()
+          this.rod.visible = false
+          this.enter('drink', world, pond)
           return
         }
         if (this.targetDistance() < 0.25) {
           if (!this.arrived) {
             this.arrived = true
-            this.actionTimer = 4
+            this.actionTimer = FISH_CAST_TIME
             this.rod.visible = true
             this.emote('fish')
           }
+          this.alignFishingRig(this.targetPond)
           this.actionTimer -= dt
           if (this.actionTimer <= 0) {
-            if (this.rng.chance(0.05) && this.targetPond.floatFish()) {
+            if (this.targetPond.catchFish()) {
               this.bus.emit({ type: 'villager:fished' })
+              this.completeSuggestionFor('fish')
+              this.enter('wander', world)
+            } else {
+              const pond = this.targetPond
+              this.convertFishingSuggestionToDrink()
+              this.enter('drink', world, pond)
             }
-            this.actionTimer = 4
           }
         }
         return
       }
       case 'drink': {
         if (!this.targetPond || !world.ponds.includes(this.targetPond)) {
+          this.cancelSuggestionFor('drink')
           this.resumeState = null
           this.enter('wander', world)
           return
@@ -796,6 +958,7 @@ export class Villager {
           if (this.actionTimer <= 0) {
             const resume = this.resumeState
             this.resumeState = null
+            this.completeSuggestionFor('drink')
             this.enter(resume ?? 'wander', world)
           }
         }
@@ -804,24 +967,9 @@ export class Villager {
       case 'harvest': {
         // Once the fruit is in hand the tree no longer matters — eat it even if
         // the tree burns down mid-chew.
-        if (this.eating > 0) {
-          this.eating -= dt
-          if (ticked) {
-            // Raise it to the mouth and lean into the bite.
-            this.arms[0].rotation.z = -2.1
-            this.heldFruit.position.set(0.16, 1.06, 0.14)
-            this.head.rotation.x = -0.12
-          }
-          if (this.eating <= 0) {
-            this.heldFruit.visible = false
-            // `EmoteKind` has no 'happy'; the satisfied-sigh glyph is 'sleep'.
-            this.emote('sleep')
-            this.bus.emit({ type: 'villager:ate' })
-            this.enter('wander', world)
-          }
-          return
-        }
+        if (this.eating > 0) return
         if (!this.targetTree || !this.targetTree.hasFruit) {
+          this.cancelSuggestionFor('harvest')
           this.enter('wander', world)
           return
         }
@@ -835,9 +983,9 @@ export class Villager {
           if (this.actionTimer <= 0) {
             if (this.targetTree.pickFruit(this.x, this.z)) {
               this.heldFruit.visible = true
-              this.heldFruit.position.set(0.34, 0.78, 0.1)
               this.eating = 1.6
             } else {
+              this.cancelSuggestionFor('harvest')
               this.enter('wander', world)
             }
           }
@@ -852,7 +1000,16 @@ export class Villager {
         if (this.targetDistance() < 0.3) {
           if (!this.arrived) {
             this.arrived = true
+            if (this.gatheringBySuggestion) this.actionTimer = SUGGESTED_GATHER_TIME
             this.emote('question')
+          }
+          if (this.gatheringBySuggestion) {
+            this.actionTimer -= dt
+            if (this.actionTimer <= 0) {
+              this.completeSuggestionFor('gather')
+              this.enter('wander', world)
+              return
+            }
           }
           if (ticked && world.campfire) {
             // Face the ashes and stoop over them.
@@ -869,20 +1026,24 @@ export class Villager {
       }
       case 'makeFire': {
         if (!this.targetCampfire || !world.isCampfireBuildTarget(this.targetCampfire)) {
+          this.cancelSuggestionFor('makeFire')
           this.enter('wander', world)
           return
         }
         if (this.targetCampfire.lit) {
+          this.cancelSuggestionFor('makeFire')
           this.enter('sitAtFire', world)
           return
         }
         if (this.targetCampfire.scattered || !world.needsFire()) {
+          this.cancelSuggestionFor('makeFire')
           this.enter('wander', world)
           return
         }
         if (distance(this, this.targetCampfire) <= 1.25) {
           if (world.campfire !== this.targetCampfire
             && !world.commitCampfireSite(this.targetCampfire)) {
+            this.cancelSuggestionFor('makeFire')
             this.enter('wander', world)
             return
           }
@@ -898,7 +1059,10 @@ export class Villager {
           }
           if (this.targetCampfire.state === 'site' || this.targetCampfire.state === 'building') {
             this.targetCampfire.buildTick(dt / 2.5)
-            if (this.targetCampfire.lit) this.enter('sitAtFire', world)
+            if (this.targetCampfire.lit) {
+              this.completeSuggestionFor('makeFire')
+              this.enter('sitAtFire', world)
+            }
             return
           }
           if (this.actionTimer <= 0 && this.targetCampfire.state === 'doused') {
@@ -909,9 +1073,11 @@ export class Villager {
               this.lowFx,
             )
             if (!rebuilt) {
+              this.cancelSuggestionFor('makeFire')
               this.enter('wander', world)
               return
             }
+            this.completeSuggestionFor('makeFire')
             this.enter('sitAtFire', world)
           }
         }
@@ -929,17 +1095,114 @@ export class Villager {
     if (fire) this.panic(fire)
   }
 
-  private enter(state: VillagerState, world: World): void {
-    const suggestion = this.suggestion
-    this.suggestion = null
+  private alignFishingRig(pond: Pond): void {
+    const pole = this.rod.getObjectByName('fishing-rod')
+    const line = this.rod.getObjectByName('fishing-line')
+    const fishingFloat = this.rod.getObjectByName('fishing-float')
+    if (!pole || !line || !fishingFloat) return
+
+    this.rodTip.set(0, 0.65, 0)
+      .applyQuaternion(pole.quaternion)
+      .add(pole.position)
+    const waterY = pond.group.position.y - this.group.position.y + 0.02
+    fishingFloat.position.set(this.rodTip.x, waterY, this.rodTip.z)
+    line.position.set(
+      this.rodTip.x,
+      (this.rodTip.y + waterY) / 2,
+      this.rodTip.z,
+    )
+    line.scale.y = Math.max(0.05, this.rodTip.y - waterY)
+  }
+
+  private updateHeldFruit(dt: number, ticked: boolean): boolean {
+    if (!(this.eating > 0)) return false
+    this.heldFruit.visible = true
+    this.eating = Math.max(0, this.eating - dt)
+    if (ticked && this.state === 'harvest') {
+      // arms[0] is the villager's left arm; positive Z rotation brings its
+      // capsule tip inward toward the mouth.
+      this.arms[0].rotation.z = 2.1
+      this.head.rotation.x = -0.12
+    }
+    if (this.eating > 0) return false
+
+    this.heldFruit.visible = false
+    // `EmoteKind` has no 'happy'; the satisfied-sigh glyph is 'sleep'.
+    this.emote('sleep')
+    this.bus.emit({ type: 'villager:ate' })
+    this.completeSuggestionFor('harvest')
+    return true
+  }
+
+  private suggestedGatherTarget(suggestion: Suggestion, world: World): Point {
+    const fire = world.campfire
+    if (!fire || distance(fire, suggestion) > 1.5) {
+      return suggestion
+    }
+
+    let dx = this.x - fire.x
+    let dz = this.z - fire.z
+    let length = Math.hypot(dx, dz)
+    if (length <= Number.EPSILON) {
+      const angle = this.rng.range(0, Math.PI * 2)
+      dx = Math.cos(angle)
+      dz = Math.sin(angle)
+      length = 1
+    }
+    return {
+      x: fire.x + dx / length * 1.5,
+      z: fire.z + dz / length * 1.5,
+    }
+  }
+
+  private selectPond(
+    kind: 'fish' | 'drink',
+    world: World,
+    preferred: Pond | null = null,
+  ): Pond | null {
+    const ponds = kind === 'fish'
+      ? world.ponds.filter(pond => pond.hasFish)
+      : [...world.ponds]
+    if (preferred && ponds.includes(preferred)) return preferred
+
+    const suggestion = this.suggestion?.kind === kind ? this.suggestion : null
+    const direct = suggestion ? world.pondAt(suggestion.x, suggestion.z) : null
+    if (direct && ponds.includes(direct)) return direct
+
+    const origin = suggestion ?? this
+    return ponds.sort((a, b) => distance(origin, a) - distance(origin, b))[0] ?? null
+  }
+
+  private selectHarvestTree(world: World, preferred: Tree | null = null): Tree | null {
+    const trees = world.trees.filter(tree => tree.state === 'normal' && tree.hasFruit)
+    if (preferred && trees.includes(preferred)) return preferred
+    const origin = this.suggestion?.kind === 'harvest' ? this.suggestion : this
+    return trees.sort((a, b) => distance(origin, a) - distance(origin, b))[0] ?? null
+  }
+
+  private selectChopTree(world: World): Tree | null {
+    const trees = world.trees.filter(tree => tree.state === 'normal' && !tree.hasFruit)
+    const origin = this.suggestion?.kind === 'chop' ? this.suggestion : this
+    return trees.sort((a, b) => distance(origin, a) - distance(origin, b))[0] ?? null
+  }
+
+  private enter(
+    state: VillagerState,
+    world: World,
+    preferredPond: Pond | null = null,
+    preferredTree: Tree | null = null,
+  ): void {
+    const suggestion = this.suggestionForState(state)
     if (state !== 'drink') this.resumeState = null
     this.resetPose()
     this.rod.visible = false
-    this.eating = 0
-    this.heldFruit.visible = false
+    if (this.eating <= 0) this.heldFruit.visible = false
     this.axe.visible = false
     this.state = state
     this.timer = stateDuration(state, this.rng)
+    if (state === 'wander' && this.suggestion) {
+      this.timer = Math.min(this.timer, 0.4)
+    }
     this.arrived = false
     this.actionTimer = 0
     this.chopFrames = 0
@@ -957,21 +1220,21 @@ export class Villager {
         this.setTarget(this.randomWalkPoint(world))
         return
       case 'chopTree': {
-        const trees = world.trees.filter(tree => tree.state === 'normal')
-        this.targetTree = suggestion?.kind === 'chop'
-          ? trees.sort((a, b) => (
-            Math.hypot(a.x - suggestion.x, a.z - suggestion.z)
-            - Math.hypot(b.x - suggestion.x, b.z - suggestion.z)
-          ))[0] ?? null
-          : world.choppableTree()
-        if (!this.targetTree) return this.enter('wander', world)
+        this.targetTree = this.selectChopTree(world)
+        if (!this.targetTree) {
+          this.cancelSuggestionFor('chopTree')
+          return this.enter('wander', world)
+        }
         this.axe.visible = true
         this.setTarget(this.targetTree)
         return
       }
       case 'buildHut': {
         this.targetHut = world.claimBuildSite(this.rng, this.lowFx)
-        if (!this.targetHut) return this.enter('wander', world)
+        if (!this.targetHut) {
+          this.cancelSuggestionFor('buildHut')
+          return this.enter('wander', world)
+        }
         this.setTarget(this.targetHut)
         return
       }
@@ -1005,21 +1268,20 @@ export class Villager {
         return
       }
       case 'fish': {
-        const ponds = [...world.ponds]
-        this.targetPond = suggestion?.kind === 'fish'
-          ? world.pondAt(suggestion.x, suggestion.z)
-            ?? ponds.sort((a, b) => (
-              Math.hypot(a.x - suggestion.x, a.z - suggestion.z)
-              - Math.hypot(b.x - suggestion.x, b.z - suggestion.z)
-            ))[0] ?? null
-          : ponds.sort((a, b) => distance(this, a) - distance(this, b))[0] ?? null
-        if (!this.targetPond) return this.enter('wander', world)
+        this.targetPond = this.selectPond('fish', world)
+        if (!this.targetPond) {
+          this.cancelSuggestionFor('fish')
+          return this.enter('wander', world)
+        }
         this.setTarget(this.targetPond.shoreNear(this.x, this.z))
         return
       }
       case 'makeFire': {
         this.targetCampfire = world.claimCampfireSite(this.rng, this.lowFx)
-        if (!this.targetCampfire || this.targetCampfire.lit) return this.enter('wander', world)
+        if (!this.targetCampfire || this.targetCampfire.lit) {
+          this.cancelSuggestionFor('makeFire')
+          return this.enter('wander', world)
+        }
         const angle = this.rng.range(0, Math.PI * 2)
         this.setTarget({
           x: this.targetCampfire.x + Math.cos(angle) * 1.1,
@@ -1028,22 +1290,27 @@ export class Villager {
         return
       }
       case 'drink': {
-        const ponds = [...world.ponds]
-        this.targetPond = ponds.sort((a, b) => distance(this, a) - distance(this, b))[0] ?? null
-        if (!this.targetPond) return this.enter('wander', world)
+        this.targetPond = this.selectPond('drink', world, preferredPond)
+        if (!this.targetPond) {
+          this.cancelSuggestionFor('drink')
+          return this.enter('wander', world)
+        }
         this.setTarget(this.targetPond.shoreNear(this.x, this.z))
         return
       }
       case 'harvest': {
-        this.targetTree = world.fruitingTree()
-        if (!this.targetTree) return this.enter('wander', world)
+        this.targetTree = this.selectHarvestTree(world, preferredTree)
+        if (!this.targetTree) {
+          this.cancelSuggestionFor('harvest')
+          return this.enter('wander', world)
+        }
         this.setTarget(this.targetTree)
         return
       }
       case 'gather': {
         if (suggestion?.kind === 'gather') {
           this.gatheringBySuggestion = true
-          this.setTarget(suggestion)
+          this.setTarget(this.suggestedGatherTarget(suggestion, world))
           return
         }
         if (!world.campfire) return this.enter('wander', world)
@@ -1065,7 +1332,8 @@ export class Villager {
       hasRuin: world.huts.some(hut => hut.state === 'ruin'),
       hasSite: world.hasHutWork(),
       hasPond: world.ponds.length > 0,
-      hasTree: world.trees.some(tree => tree.state === 'normal'),
+      hasFishPond: world.ponds.some(pond => pond.hasFish),
+      hasTree: world.trees.some(tree => tree.state === 'normal' && !tree.hasFruit),
       campfireLit: world.campfire?.lit ?? false,
       needsFire: world.needsFire(),
       hasFruitTree: world.fruitingTree() !== null,
@@ -1073,6 +1341,12 @@ export class Villager {
       suggestion: this.suggestion,
       rng: this.rng,
     }
+  }
+
+  private narrativePriority(world: World): 'mourn' | 'rebuild' | null {
+    if (world.graves.some(grave => isGrave(grave) && grave.fresh)) return 'mourn'
+    if (world.huts.some(hut => hut.state === 'ruin')) return 'rebuild'
+    return null
   }
 
   private randomWalkPoint(world: World): Point {

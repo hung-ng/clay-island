@@ -216,11 +216,16 @@ export class Rain extends Power {
     const actor = rainField(ctx)
     const y0 = ctx.island.sampleHeight(ctx.x, ctx.z)
     let bloomed = false
+    let fishRestored = false
     const effectTick = (): void => {
       const campfireWasLit = ctx.world.campfire.lit
         && Math.hypot(ctx.world.campfire.x - ctx.x, ctx.world.campfire.z - ctx.z) <= RAIN_RADIUS
       ctx.world.douseNear(ctx.x, ctx.z, RAIN_RADIUS, true)
       ctx.world.fillCratersNear(ctx.x, ctx.z, RAIN_RADIUS, ctx.rng, ctx.lowFx)
+      if (!fishRestored) {
+        ctx.world.restoreFishNear(ctx.x, ctx.z, RAIN_RADIUS)
+        fishRestored = true
+      }
       ctx.world.growFruitNear(ctx.x, ctx.z, RAIN_RADIUS)
       if (!bloomed) {
         ctx.world.bloomNear(ctx.x, ctx.z, RAIN_RADIUS * 0.82, ctx.rng, ctx.lowFx)

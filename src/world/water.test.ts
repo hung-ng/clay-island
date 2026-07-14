@@ -40,6 +40,11 @@ function surfacePoints(pond: Pond): { x: number; z: number }[] {
   return points
 }
 
+function pondFish(pond: Pond): THREE.Mesh[] {
+  const school = pond.group.getObjectByName('pond-fish') as THREE.Group
+  return school.children as THREE.Mesh[]
+}
+
 describe('pond water surface', () => {
   it('reaches the bank instead of stranding a puddle in a dry bowl', () => {
     const craters: Crater[] = [{ x: 0, z: 0, radius: 3, depth: 1.5 }]
@@ -213,5 +218,181 @@ describe('pond water surface', () => {
     for (let i = 0; i < normals.count; i++) {
       expect(normals.getY(i)).toBeGreaterThan(0.99)
     }
+  })
+})
+
+describe('pond fish population', () => {
+  const makePond = (initialFish = 3): {
+    pond: Pond
+    groundY: (x: number, z: number) => number
+  } => {
+    const craters: Crater[] = [{ x: 0, z: 0, radius: 3, depth: 1.5 }]
+    const [basin] = groupBasins(craters, FLAT)
+    const groundY = dish(craters)
+    return {
+      pond: new Pond(basin, groundY, new RNG(7), false, initialFish),
+      groundY,
+    }
+  }
+
+  it('starts with three visible fish swimming below the surface and above the bed', () => {
+    const { pond, groundY } = makePond()
+
+    pond.update(1 / 12, 1 / 12)
+
+    expect(pond.fishCount).toBe(3)
+    for (const fish of pondFish(pond)) {
+      const worldX = pond.x + fish.position.x
+      const worldZ = pond.z + fish.position.z
+      const bedY = groundY(worldX, worldZ) - pond.basin.waterLevel
+      expect(fish.visible).toBe(true)
+      expect(fish.position.y).toBeLessThan(-0.05)
+      expect(fish.position.y).toBeGreaterThan(bedY + 0.08)
+      expect(pond.contains(worldX, worldZ)).toBe(true)
+    }
+  })
+
+  it('removes exactly one fish per catch and never underflows', () => {
+    const { pond } = makePond()
+
+    expect(pond.catchFish()).toBe(true)
+    expect(pond.fishCount).toBe(2)
+    expect(pondFish(pond).filter(fish => fish.visible)).toHaveLength(2)
+
+    expect(pond.catchFish()).toBe(true)
+    expect(pond.catchFish()).toBe(true)
+    expect(pond.catchFish()).toBe(false)
+    expect(pond.fishCount).toBe(0)
+    expect(pond.hasFish).toBe(false)
+  })
+
+  it('clears the stun when the last remaining fish is caught', () => {
+    const { pond } = makePond()
+    pond.stunFish()
+
+    while (pond.catchFish()) {
+      expect(pond.fishCount).toBeGreaterThanOrEqual(0)
+    }
+
+    expect(pond.fishStunned).toBe(false)
+  })
+
+  it('restores a partial or empty pond to three without allocating another school', () => {
+    const { pond } = makePond()
+    const school = pond.group.getObjectByName('pond-fish')
+    pond.catchFish()
+    pond.catchFish()
+
+    expect(pond.restoreFish()).toBe(true)
+    expect(pond.fishCount).toBe(3)
+    expect(pond.group.getObjectByName('pond-fish')).toBe(school)
+    expect(pond.restoreFish()).toBe(false)
+  })
+
+  it('returns restored fish underwater even when Rain lands on the same animation frame', () => {
+    const { pond } = makePond()
+    pond.stunFish()
+    pond.update(0, 1 / 12)
+    pond.catchFish()
+
+    pond.restoreFish()
+    pond.update(0, 1 / 12)
+
+    expect(pondFish(pond).every(fish => fish.position.y < -0.05)).toBe(true)
+  })
+
+  it('stuns remaining fish at the surface for two seconds without consuming them', () => {
+    const { pond } = makePond()
+    pond.catchFish()
+    const before = pond.fishCount
+
+    expect(pond.stunFish()).toBe(true)
+    pond.update(1 / 12, 1 / 12)
+    expect(pond.fishStunned).toBe(true)
+    expect(pondFish(pond).filter(fish => fish.visible).every(
+      fish => fish.position.y >= 0,
+    )).toBe(true)
+
+    pond.update(2.01, 2.1)
+    expect(pond.fishStunned).toBe(false)
+    expect(pond.fishCount).toBe(before)
+    expect(pondFish(pond).filter(fish => fish.visible).every(
+      fish => fish.position.y < -0.05,
+    )).toBe(true)
+  })
+
+  it('applies and ends stun immediately even when quantized time has not advanced', () => {
+    const { pond } = makePond()
+    const qt = 1 / 12
+    pond.update(0, qt)
+
+    pond.stunFish()
+    pond.update(0, qt)
+    expect(pondFish(pond).every(fish => fish.position.y >= 0)).toBe(true)
+
+    pond.update(2.01, qt)
+    expect(pond.fishStunned).toBe(false)
+    expect(pondFish(pond).every(fish => fish.position.y < -0.05)).toBe(true)
+  })
+
+  it('refreshes rather than stacks repeated Lightning stuns', () => {
+    const { pond } = makePond()
+    pond.stunFish()
+    pond.update(1.5, 1 / 12)
+
+    pond.stunFish()
+    pond.update(0.6, 2 / 12)
+    expect(pond.fishStunned).toBe(true)
+
+    pond.update(1.41, 3 / 12)
+    expect(pond.fishStunned).toBe(false)
+  })
+
+  it('keeps every swim route in submerged space across the animation cycle', () => {
+    const craters: Crater[] = [{ x: 0, z: 0, radius: 3, depth: 1.5 }]
+    const [basin] = groupBasins(craters, FLAT)
+    const bowl = dish(craters)
+    // A dry shoulder cuts into the nominal crater-centred route. A fixed route
+    // radius crosses it; a water-aware route must shrink into the wet half.
+    const groundY = (x: number, z: number): number => (
+      x > 0.12 ? Math.max(bowl(x, z), basin.waterLevel + 0.1) : bowl(x, z)
+    )
+    const pond = new Pond(basin, groundY, new RNG(7))
+
+    for (let frame = 0; frame < 240; frame++) {
+      pond.update(1 / 12, frame / 12)
+      for (const fish of pondFish(pond)) {
+        const worldX = pond.x + fish.position.x
+        const worldZ = pond.z + fish.position.z
+        const bedY = groundY(worldX, worldZ) - basin.waterLevel
+        expect(pond.contains(worldX, worldZ)).toBe(true)
+        expect(fish.position.y).toBeGreaterThan(bedY + 0.08)
+      }
+    }
+  })
+
+  it('faces each fish along the tangent of its swim route', () => {
+    const { pond } = makePond()
+    pond.update(0, 10 / 12)
+    const before = pondFish(pond).map(fish => fish.position.clone())
+
+    pond.update(1 / 12, 11 / 12)
+
+    for (let i = 0; i < pondFish(pond).length; i++) {
+      const fish = pondFish(pond)[i]
+      const movement = fish.position.clone().sub(before[i]).setY(0).normalize()
+      const forward = new THREE.Vector3(
+        Math.cos(fish.rotation.y),
+        0,
+        -Math.sin(fish.rotation.y),
+      )
+      expect(forward.dot(movement)).toBeGreaterThan(0.98)
+    }
+  })
+
+  it('does not stun an empty pond', () => {
+    const { pond } = makePond(0)
+    expect(pond.stunFish()).toBe(false)
+    expect(pond.fishStunned).toBe(false)
   })
 })
