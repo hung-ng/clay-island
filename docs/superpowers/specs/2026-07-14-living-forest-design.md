@@ -148,16 +148,17 @@ export function seedSite(
 
 The rule:
 
-1. Pick a random **healthy** tree (`sapling` or `normal` — not a stump, not a snag).
+1. Pick a random **standing** tree — one that `holdsPlace` (see §5.2). A tree mid-fall
+   sows nothing, and neither does a stump.
 2. Try points **2.5–5m** from it, gated by Stage 1's `isBuildable`, so a sapling
    never sprouts in a lake, in a crater, off the island, or on top of a hut.
-3. If there are **no healthy trees at all**, fall back to any buildable spot on the
-   island — the **mercy rule**. Total deforestation is recoverable, but slow.
+3. If **nothing is left standing**, fall back to any buildable spot on the island —
+   the **mercy rule**. Total deforestation is recoverable, but slow.
 
 `World.reseedForest(dt, rng, lowFx)` runs this on a **25–40s timer** whenever the
-living tree count is below **13**. Stumps and snags do **not** count toward the cap:
-they are scenery, not forest. It is called from the game loop beside `repopulate`
-and `relocateDrownedRuins`.
+count of trees that `holdsPlace` is below **13**. Stumps and snags do **not** count
+toward the cap: they are scenery, not forest. It is called from the game loop beside
+`repopulate` and `relocateDrownedRuins`.
 
 The consequence is the point of the whole stage: **forests move.** Clear the north
 woods and they creep back from the south, growing around your stumps. The island
@@ -201,9 +202,7 @@ passes all of them; once trees can be dead, only the living ones may burn:
 
 ```ts
 // Only a living tree is fuel. A stump, a felled log and a snag are not.
-...this.trees.filter(tree => (
-  tree.state === 'sapling' || tree.state === 'normal' || tree.state === 'burning'
-))
+...this.trees.filter(tree => tree.living)
 ```
 
 Without this, a `stump` reports `burning: false, burnt: false` — `healthy()` by
@@ -214,6 +213,25 @@ the same treatment.
 `Tree.burnt` must be `true` for `snag`, `felled` and `stump`, so a tree that leaves
 the fuel list mid-burn cannot be re-ignited by a lingering spread event in the same
 frame.
+
+### 5.2 Two predicates, not one
+
+"Is it fuel" and "does it count against the 13-tree cap" look like the same question
+and are not. They differ on exactly one state — `toppling` — and conflating them is
+a real bug:
+
+| | `sapling` | `normal` | `burning` | `toppling` | `felled` | `stump` | `snag` |
+|---|---|---|---|---|---|---|---|
+| `isLiving` — is it fuel? | ✓ | ✓ | ✓ | **✓** | ✗ | ✗ | ✗ |
+| `holdsPlace` — does it count? | ✓ | ✓ | ✓ | **✗** | ✗ | ✗ | ✗ |
+
+A **lightning split leaves a tree both `toppling` and `burning`.** If `toppling` were
+not fuel, that tree would drop out of `flammables()` mid-fall and its fire would
+never resolve — it would lie on the grass burning forever. But it is also on its way
+out, so the forest should be free to seed its replacement now rather than waiting out
+its 30-second log.
+
+Both live in `forest.ts`, so the fuel rule and the population rule cannot drift apart.
 
 `matrix.test.ts` pins `tree: ['ignite', 'destroy']`. That assertion exists precisely
 to make this a conscious change, and **must be updated to `['destroy']`**.
