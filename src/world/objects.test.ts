@@ -40,7 +40,7 @@ describe('Tree lifecycle', () => {
   it('lies as a felled log beside the stump once it has gone over', () => {
     const subject = tree()
     subject.chop()
-    const trunk = subject.group.getObjectByName('tree-trunk')!
+    const trunk = subject.group.getObjectByName('tree-trunk') as THREE.Mesh<THREE.CylinderGeometry>
     const stump = subject.group.getObjectByName('tree-stump')!
 
     subject.update(0.3, 0.3)
@@ -53,6 +53,12 @@ describe('Tree lifecycle', () => {
     expect(trunk.visible).toBe(true)
     expect(stump.visible).toBe(true)
     expect(trunk.position.x - stump.position.x).toBeCloseTo(0.9)
+
+    const halfHeight = trunk.geometry.parameters.height / 2
+    const largeEnd = trunk.localToWorld(new THREE.Vector3(0, -halfHeight, 0))
+    const smallEnd = trunk.localToWorld(new THREE.Vector3(0, halfHeight, 0))
+    const stumpCenter = stump.getWorldPosition(new THREE.Vector3())
+    expect(largeEnd.distanceTo(stumpCenter)).toBeLessThan(smallEnd.distanceTo(stumpCenter))
   })
 
   it('lets the chopped log disappear first, then expires the temporary stump', () => {

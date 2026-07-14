@@ -10,6 +10,7 @@ type PointerArm = {
   pointerId: number
   clientX: number
   clientY: number
+  button: HTMLButtonElement
 }
 
 const TARGET_LABELS: Record<TargetKind, string> = {
@@ -26,6 +27,27 @@ function powerButton(target: EventTarget | null): HTMLButtonElement | null {
   if (!(target instanceof Element)) return null
   const button = target.closest<HTMLButtonElement>('button[data-power]')
   return !button || button.disabled ? null : button
+}
+
+export function pointInsideClientRect(
+  clientX: number,
+  clientY: number,
+  rect: Pick<DOMRectReadOnly, 'left' | 'right' | 'top' | 'bottom'>,
+): boolean {
+  return clientX >= rect.left
+    && clientX <= rect.right
+    && clientY >= rect.top
+    && clientY <= rect.bottom
+}
+
+export function pointerDragMode(
+  clientX: number,
+  clientY: number,
+  originRect: Pick<DOMRectReadOnly, 'left' | 'right' | 'top' | 'bottom'> | null,
+): 'cancel' | 'target' {
+  return originRect && pointInsideClientRect(clientX, clientY, originRect)
+    ? 'cancel'
+    : 'target'
 }
 
 export function cameraRelativeOffset(
@@ -67,6 +89,8 @@ export class DragTargeting {
   private targetX = 0
   private targetZ = 0
   private focusOrigin: HTMLButtonElement | null = null
+  private pointerOrigin: HTMLButtonElement | null = null
+  private cancelPreview = false
   private previousCursor = ''
 
   constructor(
@@ -107,9 +131,10 @@ export class DragTargeting {
     if (this.activePower) this.cancel(false)
     if (pointerArm) this.pendingPointer = pointerArm
     this.activePower = id
-    this.focusOrigin = document.activeElement instanceof HTMLButtonElement
+    this.focusOrigin = pointerArm?.button ?? (document.activeElement instanceof HTMLButtonElement
       ? document.activeElement
-      : document.querySelector<HTMLButtonElement>(`button[data-power="${id}"]`)
+      : document.querySelector<HTMLButtonElement>(`button[data-power="${id}"]`))
+    this.pointerOrigin = pointerArm?.button ?? null
     this.previousCursor = this.dom.style.cursor
     this.dom.style.cursor = 'crosshair'
     this.liveRegion.classList.add('active')
@@ -128,12 +153,14 @@ export class DragTargeting {
 
   cancel(returnFocus = false): void {
     if (!this.activePower) return
+    this.setCancelPreview(false)
     this.activePower = null
     this.activePointerId = null
     this.pendingPointer = null
     this.keyboardMode = false
     this.validTarget = false
     this.reticle.visible = false
+    this.pointerOrigin = null
     this.dom.style.cursor = this.previousCursor
     this.liveRegion.classList.remove('active')
     this.liveRegion.textContent = ''
@@ -142,7 +169,7 @@ export class DragTargeting {
   }
 
   update(): void {
-    if (!this.activePower || !this.validTarget) return
+    if (!this.activePower || this.cancelPreview || !this.validTarget) return
     this.reticle.position.y = this.island.sampleHeight(this.targetX, this.targetZ) + 0.08
     this.setTargetKind(this.world.resolveTarget(this.targetX, this.targetZ))
   }
@@ -150,7 +177,7 @@ export class DragTargeting {
   private readonly capturePointerArm = (event: PointerEvent): void => {
     const button = powerButton(event.target)
     const id = button?.dataset.power as PowerId | undefined
-    if (!id || event.button !== 0) {
+    if (!button || !id || event.button !== 0) {
       this.pendingPointer = null
       return
     }
@@ -159,6 +186,7 @@ export class DragTargeting {
       pointerId: event.pointerId,
       clientX: event.clientX,
       clientY: event.clientY,
+      button,
     }
   }
 
@@ -170,6 +198,10 @@ export class DragTargeting {
   private readonly releasePointer = (event: PointerEvent): void => {
     if (!this.activePower || this.keyboardMode || event.pointerId !== this.activePointerId) return
     this.updateFromPointer(event.clientX, event.clientY)
+    if (this.cancelPreview) {
+      this.cancel(false)
+      return
+    }
     if (this.validTarget) this.fire()
     else this.cancel(false)
   }
@@ -212,6 +244,16 @@ export class DragTargeting {
   }
 
   private updateFromPointer(clientX: number, clientY: number): void {
+    const cancelSurface = this.pointerOrigin?.closest<HTMLElement>('.power-shell')
+      ?? this.pointerOrigin
+    const mode = pointerDragMode(
+      clientX,
+      clientY,
+      cancelSurface?.getBoundingClientRect() ?? null,
+    )
+    this.setCancelPreview(mode === 'cancel')
+    if (this.cancelPreview) return
+
     const rect = this.dom.getBoundingClientRect()
     this.pointer.set(
       ((clientX - rect.left) / rect.width) * 2 - 1,
@@ -229,6 +271,24 @@ export class DragTargeting {
     }
     const local = this.island.group.worldToLocal(hit.point.clone())
     this.setTarget(local.x, local.z)
+  }
+
+  private setCancelPreview(active: boolean): void {
+    if (this.cancelPreview === active) return
+    this.cancelPreview = active
+    this.pointerOrigin?.toggleAttribute('data-cancel-target', active)
+    this.liveRegion.classList.toggle('cancel-preview', active)
+
+    if (active) {
+      this.validTarget = false
+      this.reticle.visible = false
+      this.liveRegion.textContent = 'Release to cancel'
+      return
+    }
+
+    // Force the next raycast to restore its visible target label even when the
+    // pointer returns to the same target kind it was over before cancellation.
+    this.liveRegion.textContent = ''
   }
 
   private setTarget(x: number, z: number): void {

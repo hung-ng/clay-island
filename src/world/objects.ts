@@ -540,7 +540,7 @@ export class Tree {
     if (this.state === 'toppling') {
       const fall = Math.min(1, this.phase / TOPPLE_SECONDS)
       const easedFall = fall * fall
-      this.trunk.rotation.z = (Math.PI / 2) * easedFall
+      this.trunk.rotation.z = -(Math.PI / 2) * easedFall
       this.crown.rotation.z = this.trunk.rotation.z
       this.trunk.position.x = FELLED_OFFSET * easedFall
       this.crown.position.x = 1.45 * easedFall

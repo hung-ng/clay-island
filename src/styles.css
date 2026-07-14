@@ -162,6 +162,50 @@ body {
   box-shadow: inset 2px 2px 0 var(--paper), inset -3px -3px 0 var(--skin);
 }
 
+.power[data-cancel-target]:not(:disabled) {
+  background: color-mix(in srgb, var(--terracotta) 16%, transparent);
+  cursor: grabbing;
+}
+
+.power-shell:has(.power[data-cancel-target]) {
+  background: color-mix(in srgb, var(--paper) 82%, var(--terracotta));
+  box-shadow:
+    inset 3px 3px 0 color-mix(in srgb, var(--ink-soft) 42%, transparent),
+    inset -1px -1px 0 var(--cloud);
+}
+
+.power[data-cancel-target] > .power-glyph,
+.power[data-cancel-target] > .power-label {
+  opacity: 0.12;
+}
+
+.power[data-cancel-target]::before,
+.power[data-cancel-target]::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  width: min(56%, 44px);
+  height: 9px;
+  box-sizing: border-box;
+  border: 2px solid var(--ink-soft);
+  border-radius: 58% 42% 54% 46% / 55% 48% 52% 45%;
+  background: var(--terracotta);
+  box-shadow:
+    inset 1px 1px 0 color-mix(in srgb, var(--cloud) 55%, transparent),
+    0 2px 0 color-mix(in srgb, var(--ink-soft) 55%, transparent);
+  content: '';
+  pointer-events: none;
+}
+
+.power[data-cancel-target]::before {
+  transform: translate(-50%, -50%) rotate(43deg);
+}
+
+.power[data-cancel-target]::after {
+  transform: translate(-50%, -50%) rotate(-47deg);
+}
+
 .power-label {
   position: relative;
   z-index: 1;
