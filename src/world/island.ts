@@ -4,7 +4,7 @@ import { RNG } from '../core/rng'
 import { clayMaterial } from '../fx/clayMaterial'
 import { accumulateScorch, blendChannel } from '../fx/decals'
 import { PALETTE } from '../ui/tokens'
-import { craterOffset, type Crater } from './craters'
+import { craterInfluenceRadius, craterOffset, type Crater } from './craters'
 
 export const ISLAND_RADIUS = 15
 export const WALK_RADIUS = 12
@@ -84,7 +84,7 @@ export class Island {
 
   /** The one true ground height. Everything that stands on the island calls this. */
   sampleHeight(x: number, z: number): number {
-    return islandSurfaceY(x, z) - craterOffset(x, z, this.craters)
+    return islandSurfaceY(x, z) - craterOffset(x, z, this.craters, islandSurfaceY)
   }
 
   addCrater(crater: Crater): void {
@@ -94,7 +94,8 @@ export class Island {
     const colors = geometry.getAttribute('color')
     const ringStep = ISLAND_RADIUS / this.rings
 
-    this.forEachVertexNear(crater.x, crater.z, crater.radius + ringStep, (index, x, z, distance) => {
+    const influenceRadius = craterInfluenceRadius(crater)
+    this.forEachVertexNear(crater.x, crater.z, influenceRadius + ringStep, (index, x, z, distance) => {
       positions.setY(index, this.sampleHeight(x, z))
       if (distance >= crater.radius || crater.radius <= 0) return
 

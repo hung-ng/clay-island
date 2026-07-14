@@ -1,14 +1,23 @@
 import { EventBus, type TargetKind } from '../core/events'
 import { RNG } from '../core/rng'
 import { Villager, spawnVillagers } from '../villagers/villager'
-import { craterAt } from './craters'
+import { craterAt, craterRimY, type Crater } from './craters'
 import { FIRE_CONFIG, FireSystem, type FireEvent, type Flammable } from './fire'
-import { Island } from './island'
+import { Island, WALK_RADIUS, islandSurfaceY } from './island'
 import { Campfire, FlowerPatch, Grave, Hut, Pond, Tree } from './objects'
 import { placeSites } from './scatter'
+import {
+  BUILD_CLEARANCE,
+  groupBasins,
+  isBuildable,
+  type Basin,
+  type GroundQuery,
+} from './terrain'
 
 type Position = { x: number; z: number }
-type PondShape = Position & { radius: number }
+
+/** The village can grow to this many active huts. */
+export const MAX_HUTS = 6
 
 function hasPosition(value: unknown): value is Position {
   if (typeof value !== 'object' || value === null) return false
@@ -16,19 +25,19 @@ function hasPosition(value: unknown): value is Position {
   return typeof candidate.x === 'number' && typeof candidate.z === 'number'
 }
 
-function isPondShape(value: unknown): value is PondShape {
-  if (!hasPosition(value)) return false
-  return typeof (value as Partial<PondShape>).radius === 'number'
-}
-
 function within(a: Position, x: number, z: number, radius: number): boolean {
   return Math.hypot(a.x - x, a.z - z) <= radius
+}
+
+function sameBasin(a: Basin, b: Basin): boolean {
+  if (a.craters.length !== b.craters.length) return false
+  return a.craters.every(crater => b.craters.includes(crater))
 }
 
 export function repopulationHome(living: number, huts: Hut[]): Hut | null {
   const built = huts.find(hut => hut.state === 'built')
   if (built) return built
-  return living === 0 ? huts[0] ?? null : null
+  return living === 0 ? huts.find(hut => hut.state !== 'abandoned') ?? null : null
 }
 
 export class World {
@@ -84,7 +93,7 @@ export class World {
     if (this.trees.some(tree => within(tree, x, z, 1.2))) return 'tree'
     if (this.huts.some(hut => within(hut, x, z, 1.6))) return 'hut'
     if (this.campfire && !this.campfire.scattered && within(this.campfire, x, z, 1.5)) return 'campfire'
-    if (this.ponds.some(pond => isPondShape(pond) && within(pond, x, z, pond.radius))) return 'pond'
+    if (this.ponds.some(pond => pond.contains(x, z))) return 'pond'
     if (craterAt(x, z, this.island.craters)) return 'crater'
     return 'ground'
   }
@@ -96,7 +105,7 @@ export class World {
   }
 
   pondAt(x: number, z: number): Pond | null {
-    return this.ponds.find(pond => within(pond, x, z, pond.radius)) ?? null
+    return this.ponds.find(pond => pond.contains(x, z)) ?? null
   }
 
   objectsNear(x: number, z: number, radius: number): Array<Tree | Hut | Campfire> {
@@ -186,15 +195,34 @@ export class World {
   emptyPondAt(x: number, z: number): boolean {
     const pond = this.pondAt(x, z)
     if (!pond) return false
-    this.ponds.splice(this.ponds.indexOf(pond), 1)
-    this.island.group.remove(pond.group)
-    pond.dispose()
+    this.removePond(pond)
     this.bus.emit({ type: 'pond:emptied' })
     return true
   }
 
   scatterCampfire(): void {
     this.campfire.scatter()
+  }
+
+  needsFire(): boolean {
+    return !this.campfire || this.campfire.scattered || !this.campfire.lit
+  }
+
+  rebuildCampfireAt(x: number, z: number, rng: RNG, lowFx = false): boolean {
+    if (this.campfire && !this.campfire.scattered) {
+      this.campfire.flare(1.5, 1.4)
+      return true
+    }
+    const groundY = (gx: number, gz: number): number => this.island.sampleHeight(gx, gz)
+    if (!isBuildable(x, z, this.groundQuery(), groundY)) return false
+    if (this.campfire) {
+      this.island.group.remove(this.campfire.group)
+      this.campfire.dispose()
+    }
+    const campfire = new Campfire(x, z, this.island.sampleHeight(x, z), rng, lowFx)
+    this.campfire = campfire
+    this.island.group.add(campfire.group)
+    return true
   }
 
   clearFlowersNear(x: number, z: number, radius: number): number {
@@ -217,18 +245,126 @@ export class World {
   }
 
   fillCratersNear(x: number, z: number, radius: number, rng: RNG, lowFx = false): number {
+    const reached = this.island.craters.filter(crater => (
+      Math.hypot(crater.x - x, crater.z - z) - crater.radius <= radius
+    ))
+    if (reached.length === 0) return 0
+    return this.syncPonds(reached, rng, lowFx)
+  }
+
+  /**
+   * Resettle the water after the ground moves, the way `reground` resettles
+   * everything standing on it. A fresh crater cut beside a lake joins its basin,
+   * so the lake must be rebuilt to spread into the new hollow and find its new
+   * level — otherwise the water simply ignores the hole dug next to it.
+   */
+  refloodBasins(rng: RNG, lowFx = false): number {
+    return this.syncPonds([], rng, lowFx)
+  }
+
+  /**
+   * Rebuild every basin that either the rain just reached or that already holds
+   * water. Basins are re-derived from the craters rather than patched, because a
+   * single new crater can merge two existing lakes into one.
+   */
+  private syncPonds(wetted: readonly Crater[], rng: RNG, lowFx = false): number {
+    const flooded = this.ponds.map(pond => pond.basin)
+    // Measured against the lipped rim, not the bare dome: the ejecta bank is what
+    // actually holds the water in, and on a slope it is the only thing that does.
+    const basins = groupBasins(this.island.craters, (bx, bz) => (
+      craterRimY(bx, bz, this.island.craters, islandSurfaceY)
+    ))
+    const wanted = basins.filter(basin => (
+      basin.craters.some(crater => wetted.includes(crater))
+      || basin.craters.some(crater => flooded.some(old => old.craters.includes(crater)))
+    ))
+
     let created = 0
-    for (const crater of this.island.craters) {
-      if (Math.hypot(crater.x - x, crater.z - z) + crater.radius > radius) continue
-      if (this.ponds.some(pond => Math.hypot(pond.x - crater.x, pond.z - crater.z) < 0.1)) continue
-      const waterY = this.island.sampleHeight(crater.x, crater.z) + crater.depth * 0.48
-      const pond = new Pond(crater.x, crater.z, crater.radius, waterY, rng, lowFx)
+    for (const basin of wanted) {
+      if (this.ponds.some(pond => sameBasin(pond.basin, basin))) continue
+
+      const absorbed = this.ponds.filter(pond => (
+        pond.basin.craters.some(crater => basin.craters.includes(crater))
+      ))
+      const keepsFish = absorbed.length === 0 || absorbed.some(pond => pond.hasFish)
+      for (const pond of absorbed) this.removePond(pond)
+
+      const pond = new Pond(
+        basin,
+        (px, pz) => this.island.sampleHeight(px, pz),
+        rng,
+        lowFx,
+      )
+      pond.hasFish = keepsFish
       this.ponds.push(pond)
       this.island.group.add(pond.group)
-      this.bus.emit({ type: 'pond:created', x: crater.x, z: crater.z })
+      this.bus.emit({ type: 'pond:created', x: basin.x, z: basin.z })
       created++
     }
     return created
+  }
+
+  groundQuery(): GroundQuery {
+    const occupied: Position[] = [
+      ...this.trees,
+      ...this.huts.filter(hut => hut.state !== 'abandoned'),
+    ]
+    if (this.campfire && !this.campfire.scattered) occupied.push(this.campfire)
+    return {
+      basins: this.ponds.map(pond => pond.basin),
+      craters: this.island.craters,
+      occupied,
+    }
+  }
+
+  findBuildSite(rng: RNG, near?: Position): Position | null {
+    const query = this.groundQuery()
+    const groundY = (x: number, z: number): number => this.island.sampleHeight(x, z)
+    const home = near ?? this.villageCentre()
+
+    for (let ring = 0; ring < 6; ring++) {
+      const distance = BUILD_CLEARANCE + ring * 1.5
+      for (let attempt = 0; attempt < 24; attempt++) {
+        const angle = rng.range(0, Math.PI * 2)
+        const x = home.x + Math.cos(angle) * distance
+        const z = home.z + Math.sin(angle) * distance
+        if (Math.hypot(x, z) > WALK_RADIUS - 1) continue
+        if (isBuildable(x, z, query, groundY)) return { x, z }
+      }
+    }
+    return null
+  }
+
+  relocateDrownedRuins(rng: RNG, lowFx = false): void {
+    const groundY = (x: number, z: number): number => this.island.sampleHeight(x, z)
+
+    for (const hut of this.huts) {
+      if (hut.state !== 'ruin') continue
+      const query = this.groundQuery()
+      const ground: GroundQuery = {
+        ...query,
+        occupied: query.occupied.filter(prop => prop !== hut),
+      }
+      if (isBuildable(hut.x, hut.z, ground, groundY)) continue
+
+      hut.state = 'abandoned'
+      const activeHuts = this.huts.filter(candidate => candidate.state !== 'abandoned').length
+      if (activeHuts >= MAX_HUTS) continue
+
+      const site = this.findBuildSite(rng)
+      if (!site) continue
+      const replacement = new Hut(
+        `hut-${this.huts.length}`,
+        site.x,
+        site.z,
+        'site',
+        this.island.sampleHeight(site.x, site.z),
+        rng,
+        lowFx,
+      )
+      this.huts.push(replacement)
+      this.island.group.add(replacement.group)
+    }
   }
 
   growFruitNear(x: number, z: number, radius: number): number {
@@ -369,6 +505,26 @@ export class World {
     return this.trees.filter(tree => tree.burning).length
       + this.huts.filter(hut => hut.burning).length
       + Number(this.campfire?.burning ?? false)
+  }
+
+  private villageCentre(): Position {
+    const homes = this.huts.filter(hut => hut.state !== 'abandoned')
+    if (homes.length === 0) return { x: 0, z: 0 }
+    let x = 0
+    let z = 0
+    for (const hut of homes) {
+      x += hut.x
+      z += hut.z
+    }
+    return { x: x / homes.length, z: z / homes.length }
+  }
+
+  private removePond(pond: Pond): void {
+    const index = this.ponds.indexOf(pond)
+    if (index === -1) return
+    this.ponds.splice(index, 1)
+    this.island.group.remove(pond.group)
+    pond.dispose()
   }
 
   private flammables(): Flammable[] {

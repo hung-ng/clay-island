@@ -162,6 +162,9 @@ export class Meteor extends Power {
         ctx.island.addCrater({ x: ctx.x, z: ctx.z, radius: 2.8, depth: 1.3 })
         ctx.world.clearFlowersNear(ctx.x, ctx.z, 2.8)
         ctx.world.reground()
+        // A crater cut beside a lake joins its basin: the water spreads into the
+        // new hollow and settles at the merged bowl's lowest rim.
+        ctx.world.refloodBasins(ctx.rng, ctx.lowFx)
         ctx.island.scorch(ctx.x, ctx.z, 3.4)
         ctx.bus.emit({ type: 'crater:created', x: ctx.x, z: ctx.z })
         ctx.bus.emit({

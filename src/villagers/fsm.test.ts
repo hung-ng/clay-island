@@ -1,17 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import { RNG } from '../core/rng'
-import { decideNext, STATES, type FsmCtx } from './fsm'
+import { decideNext, stateDuration, STATES, type FsmCtx } from './fsm'
 
 const base = (o: Partial<FsmCtx> = {}): FsmCtx => ({
   state: 'wander', fireNear: false, freshGrave: false, hasRuin: false,
-  hasSite: false, hasPond: false, hasTree: true, campfireLit: true, rng: new RNG(3), ...o,
+  hasSite: false, hasPond: false, hasTree: true, campfireLit: true,
+  needsFire: false, rng: new RNG(3), ...o,
 })
 
 describe('FSM shape', () => {
-  it('has exactly 8 states — the hard cap from the spec', () => {
-    expect(STATES).toHaveLength(8)
+  it('has exactly 9 states', () => {
+    expect(STATES).toHaveLength(9)
     expect([...STATES].sort()).toEqual(
-      ['buildHut', 'chopTree', 'fish', 'flee', 'mourn', 'rebuild', 'sitAtFire', 'wander'],
+      ['buildHut', 'chopTree', 'fish', 'flee', 'makeFire', 'mourn', 'rebuild', 'sitAtFire', 'wander'],
     )
   })
 })
@@ -58,5 +59,38 @@ describe('weighted idle selection', () => {
   })
   it('is deterministic for a given seed', () => {
     expect(decideNext(base({ rng: new RNG(11) }))).toBe(decideNext(base({ rng: new RNG(11) })))
+  })
+})
+
+describe('makeFire', () => {
+  it('allows enough time to cross the island and build before its watchdog expires', () => {
+    expect(stateDuration('makeFire', new RNG(1))).toBe(35)
+  })
+
+  it('is reachable when the village has no usable fire', () => {
+    const picked = new Set<string>()
+    for (let seed = 0; seed < 200; seed++) {
+      picked.add(decideNext(base({
+        needsFire: true,
+        campfireLit: false,
+        hasTree: false,
+        rng: new RNG(seed),
+      })))
+    }
+    expect(picked.has('makeFire')).toBe(true)
+  })
+
+  it('is never chosen when the fire is already lit', () => {
+    for (let seed = 0; seed < 200; seed++) {
+      expect(decideNext(base({
+        needsFire: false,
+        campfireLit: true,
+        rng: new RNG(seed),
+      }))).not.toBe('makeFire')
+    }
+  })
+
+  it('yields to a nearby fire emergency', () => {
+    expect(decideNext(base({ needsFire: true, fireNear: true }))).toBe('flee')
   })
 })

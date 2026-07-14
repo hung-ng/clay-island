@@ -3,10 +3,12 @@ import { RNG } from '../core/rng'
 import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
 import { PALETTE, TIMING } from '../ui/tokens'
-import { ISLAND_RADIUS } from './island'
+import { craterAt } from './craters'
+import { ISLAND_RADIUS, WALK_RADIUS } from './island'
+import { isSubmerged, type Basin } from './terrain'
 
 export type TreeState = 'normal' | 'chopped' | 'burning' | 'burnt'
-export type HutState = 'site' | 'building' | 'built' | 'burning' | 'ruin'
+export type HutState = 'site' | 'building' | 'built' | 'burning' | 'ruin' | 'abandoned'
 
 const SCORCH = new THREE.Color(PALETTE.scorch)
 
@@ -441,6 +443,7 @@ export class Hut {
   }
 
   buildTick(): void {
+    if (this.state === 'abandoned') return
     if (this.state !== 'site' && this.state !== 'building' && this.state !== 'ruin') return
     if (this.state === 'ruin') {
       this.burnt = false
@@ -512,7 +515,10 @@ export class Hut {
     this.base.visible = structureVisible
     this.door.visible = structureVisible
     this.roofKnob.visible = structureVisible
-    this.siteStones.visible = this.state === 'site' || this.state === 'building' || this.state === 'ruin'
+    this.siteStones.visible = this.state === 'site'
+      || this.state === 'building'
+      || this.state === 'ruin'
+      || this.state === 'abandoned'
     for (const blob of this.smoke) blob.visible = this.state === 'built'
 
     const scale = this.state === 'building' ? Math.max(this.progress, 0.01) : 1
@@ -634,6 +640,10 @@ export class Campfire {
     this.douse()
   }
 
+  dispose(): void {
+    disposeObjectResources(this.group)
+  }
+
   setFireLightEnabled(on: boolean): void {
     this.lightEnabled = on
     this.light.visible = this.lit && on
@@ -660,34 +670,180 @@ export class Campfire {
   }
 }
 
+/**
+ * Grid spacing of the water surface, in metres. The clipped boundary cuts each
+ * cell as a straight chord, so the shoreline wobbles by roughly the sagitta of
+ * that chord: at half a metre the edge visibly steps, and it only reads as a
+ * smooth bank below about a quarter of a metre. The mesh is built once when the
+ * pond floods, never per frame, so a fine grid costs nothing to run.
+ */
+const WATER_CELL = 0.2
+
+/**
+ * How far the water body's underside floats above the ground it rests on. The
+ * two surfaces are the same shape, so without a gap they z-fight; lifting the
+ * water a centimetre keeps the bed visible through it rather than tearing.
+ */
+const WATER_BED_LIFT = 0.02
+
+/** A grid node: `depth` is how deep the water stands over the ground here. */
+type Corner = { x: number; z: number; depth: number }
+
+/** Where the waterline falls between a submerged corner and a dry one. */
+function waterline(wet: Corner, dry: Corner): Corner {
+  const span = wet.depth - dry.depth
+  const t = span === 0 ? 0.5 : wet.depth / span
+  return {
+    x: wet.x + (dry.x - wet.x) * t,
+    z: wet.z + (dry.z - wet.z) * t,
+    depth: 0,
+  }
+}
+
+/** The underside of the body, hugging the bed. Zero at the shore, so they meet. */
+function bedY(point: Corner): number {
+  return Math.min(0, WATER_BED_LIFT - point.depth)
+}
+
+/**
+ * Triangulate one clipped cell as a slab: a flat lid at the surface and a bed
+ * following the ground beneath it, wound so both faces point outward. Where the
+ * water thins to nothing at the bank the two collapse onto each other, closing
+ * the body without a seam.
+ */
+function pushSlab(top: number[], bed: number[], ring: Corner[]): void {
+  for (let i = 1; i + 1 < ring.length; i++) {
+    const [a, b, c] = [ring[0], ring[i], ring[i + 1]]
+    // Upward winding: the lid is visible from above, never as a flat underside.
+    top.push(a.x, 0, a.z, c.x, 0, c.z, b.x, 0, b.z)
+    // The bed is also seen from above, through the translucent water.
+    bed.push(a.x, bedY(a), a.z, c.x, bedY(c), c.z, b.x, bedY(b), b.z)
+  }
+}
+
+/**
+ * Build the water in a basin as a BODY, not a sheet: a flat lid at the water
+ * level, and a bed under it following the drowned ground. Seen from a low angle
+ * the two surfaces are visibly apart, so the water has a thickness that deepens
+ * toward the middle of the bowl and tapers to nothing at the bank — a single
+ * plane, however well shaped, always reads edge-on as exactly what it is.
+ *
+ * Each grid cell is clipped against the waterline rather than kept or dropped
+ * whole. Dropping partial cells left a half-metre staircase around the shore and
+ * pulled the water short of the bank; interpolating the boundary onto the true
+ * waterline puts the edge exactly where the ground surfaces, and lets the lid and
+ * the bed meet cleanly there.
+ */
+function waterBody(
+  basin: Basin,
+  groundY: (x: number, z: number) => number,
+): { top: THREE.BufferGeometry; bed: THREE.BufferGeometry; shoreline: { x: number; z: number }[] } {
+  const cells = Math.max(2, Math.ceil((basin.radius * 2) / WATER_CELL))
+  const step = (basin.radius * 2) / cells
+  const origin = -basin.radius
+
+  // Depth of water over the ground at a grid node: positive is submerged. Points
+  // outside every crater are dry by definition, so the water never spills past
+  // the bowls even where the surrounding ground dips below the water level.
+  const corner = (i: number, j: number): Corner => {
+    const localX = origin + i * step
+    const localZ = origin + j * step
+    const x = basin.x + localX
+    const z = basin.z + localZ
+    const inside = craterAt(x, z, basin.craters) !== null
+    return {
+      x: localX,
+      z: localZ,
+      depth: inside ? basin.waterLevel - groundY(x, z) : -1,
+    }
+  }
+
+  const topPositions: number[] = []
+  const bedPositions: number[] = []
+  const shoreline: { x: number; z: number }[] = []
+  for (let i = 0; i < cells; i++) {
+    for (let j = 0; j < cells; j++) {
+      // Corners in winding order around the cell, so the clipped ring stays convex.
+      const square = [corner(i, j), corner(i + 1, j), corner(i + 1, j + 1), corner(i, j + 1)]
+      if (square.every(point => point.depth <= 0)) continue
+
+      // Sutherland–Hodgman against the single plane depth = 0: keep the wet
+      // corners, and where an edge crosses the waterline, emit the crossing.
+      const ring: Corner[] = []
+      for (let k = 0; k < 4; k++) {
+        const current = square[k]
+        const next = square[(k + 1) % 4]
+        if (current.depth > 0) ring.push(current)
+        if ((current.depth > 0) !== (next.depth > 0)) {
+          const wet = current.depth > 0 ? current : next
+          const dry = current.depth > 0 ? next : current
+          ring.push(waterline(wet, dry))
+          // The dry grid corner is at most one cell from the rendered waterline.
+          // Reusing it gives fishers a stable bank position that agrees with the
+          // clipped mesh instead of approximating the shore from crater radii.
+          shoreline.push({ x: basin.x + dry.x, z: basin.z + dry.z })
+        }
+      }
+      if (ring.length >= 3) pushSlab(topPositions, bedPositions, ring)
+    }
+  }
+
+  const build = (positions: number[]): THREE.BufferGeometry => {
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    geometry.computeVertexNormals()
+    return geometry
+  }
+  return { top: build(topPositions), bed: build(bedPositions), shoreline }
+}
+
+/** One terrain-clipped water surface for a connected crater basin. */
 export class Pond {
   readonly group = new THREE.Group()
   hasFish = true
+  readonly x: number
+  readonly z: number
+  readonly radius: number
 
-  private readonly water: THREE.Mesh<THREE.CircleGeometry, THREE.MeshToonMaterial>
+  private readonly water: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>
+  private readonly bed: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>
+  private readonly shoreline: { x: number; z: number }[]
   private readonly floatingFish = new THREE.Group()
   private lastQt = Number.NEGATIVE_INFINITY
 
   constructor(
-    public x: number,
-    public z: number,
-    public radius: number,
-    y: number,
+    public readonly basin: Basin,
+    private readonly groundY: (x: number, z: number) => number,
     rng: RNG,
     lowFx = false,
   ) {
+    this.x = basin.x
+    this.z = basin.z
+    this.radius = basin.radius
     this.group.name = 'pond'
-    this.group.position.set(x, y, z)
+    this.group.position.set(basin.x, basin.waterLevel, basin.z)
+
+    const { top, bed, shoreline } = waterBody(basin, groundY)
+    this.shoreline = shoreline
+
+    // The drowned floor, in deep water-colour. Opaque and drawn first, so the
+    // translucent lid layers over it: you look THROUGH the surface and see the
+    // bed fall away beneath, which is what gives the water its depth.
+    const bedMaterial = clayMaterial(PALETTE.water, { flat: true })
+    bedMaterial.color.multiplyScalar(0.45)
+    this.bed = new THREE.Mesh(bed, bedMaterial)
+    this.bed.name = 'pond-bed'
+    this.bed.renderOrder = -1
+    this.bed.receiveShadow = !lowFx
+    this.group.add(this.bed)
 
     const material = clayMaterial(PALETTE.water, { flat: true })
     material.transparent = true
     material.opacity = 0.72
     material.depthWrite = false
-    material.side = THREE.DoubleSide
-    this.water = new THREE.Mesh(new THREE.CircleGeometry(radius * 0.86, 40), material)
+    material.side = THREE.FrontSide
+    this.water = new THREE.Mesh(top, material)
     this.water.name = 'pond-water'
-    this.water.rotation.x = -Math.PI / 2
-    this.water.position.y = 0.025
     this.water.receiveShadow = !lowFx
     this.group.add(this.water)
 
@@ -697,7 +853,11 @@ export class Pond {
       const fish = new THREE.Mesh(fishGeometry, fishMaterial)
       fish.name = 'floating-fish'
       const angle = (i / 3) * Math.PI * 2 + rng.range(-0.25, 0.25)
-      fish.position.set(Math.cos(angle) * radius * 0.38, 0.1, Math.sin(angle) * radius * 0.38)
+      fish.position.set(
+        Math.cos(angle) * basin.radius * 0.3,
+        0.1,
+        Math.sin(angle) * basin.radius * 0.3,
+      )
       fish.scale.set(1.35, 0.45, 0.72)
       fish.rotation.y = angle + Math.PI / 2
       fish.castShadow = !lowFx
@@ -705,6 +865,32 @@ export class Pond {
     }
     this.floatingFish.visible = false
     this.group.add(this.floatingFish)
+  }
+
+  contains(x: number, z: number): boolean {
+    return isSubmerged(x, z, [this.basin], this.groundY)
+  }
+
+  shoreNear(x: number, z: number): { x: number; z: number } {
+    let nearest: { x: number; z: number } | null = null
+    let nearestDistance = Number.POSITIVE_INFINITY
+    let fallback: { x: number; z: number } | null = null
+    let fallbackDistance = Number.POSITIVE_INFINITY
+
+    for (const candidate of this.shoreline) {
+      if (this.contains(candidate.x, candidate.z)) continue
+      const candidateDistance = Math.hypot(candidate.x - x, candidate.z - z)
+      if (candidateDistance < fallbackDistance) {
+        fallback = candidate
+        fallbackDistance = candidateDistance
+      }
+      if (Math.hypot(candidate.x, candidate.z) > WALK_RADIUS) continue
+      if (candidateDistance >= nearestDistance) continue
+      nearest = candidate
+      nearestDistance = candidateDistance
+    }
+
+    return nearest ?? fallback ?? { x, z }
   }
 
   floatFish(): boolean {
@@ -721,8 +907,6 @@ export class Pond {
   update(qt: number): void {
     if (qt === this.lastQt) return
     const frame = Math.floor(qt * TIMING.fps)
-    const pulse = 1 + Math.sin(frame * 0.45) * 0.012
-    this.water.scale.setScalar(pulse)
     this.water.material.opacity = 0.69 + Math.sin(frame * 0.32) * 0.035
     if (this.floatingFish.visible) {
       this.floatingFish.position.y = 0.035 + (frame % 4 < 2 ? 0.025 : 0)

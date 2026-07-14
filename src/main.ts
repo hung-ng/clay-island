@@ -99,6 +99,7 @@ const loop = new GameLoop(
   (dt) => {
     world.updateFire(dt, fireRng)
     world.updateGraves(dt)
+    world.relocateDrownedRuins(rng, lowFx)
     for (const villager of world.villagers) {
       villager.update(dt, clock.quantizedTime, world, island)
     }

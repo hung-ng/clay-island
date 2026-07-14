@@ -1,7 +1,7 @@
 import type { RNG } from '../core/rng'
 
 export const STATES = [
-  'wander', 'chopTree', 'buildHut', 'sitAtFire', 'flee', 'mourn', 'rebuild', 'fish',
+  'wander', 'chopTree', 'buildHut', 'sitAtFire', 'flee', 'mourn', 'rebuild', 'fish', 'makeFire',
 ] as const
 
 export type VillagerState = (typeof STATES)[number]
@@ -15,6 +15,7 @@ export type FsmCtx = {
   hasPond: boolean
   hasTree: boolean
   campfireLit: boolean
+  needsFire: boolean
   rng: RNG
 }
 
@@ -25,6 +26,7 @@ const IDLE: { state: VillagerState; weight: number; when: (c: FsmCtx) => boolean
   { state: 'chopTree', weight: 3, when: c => c.hasTree },
   { state: 'buildHut', weight: 3, when: c => c.hasSite },
   { state: 'fish', weight: 4, when: c => c.hasPond },
+  { state: 'makeFire', weight: 5, when: c => c.needsFire },
 ]
 
 export function decideNext(ctx: FsmCtx): VillagerState {
@@ -50,6 +52,9 @@ export function stateDuration(state: VillagerState, rng: RNG): number {
     case 'buildHut':
     case 'rebuild': return rng.range(3, 5)
     case 'fish': return rng.range(5, 9)
+    // Long enough to cross the walkable island and finish the 2.5s build action.
+    // This is a watchdog, not the normal theatrical activity duration.
+    case 'makeFire': return 35
     case 'sitAtFire': return rng.range(6, 12)
     case 'wander': return rng.range(3, 6)
   }
