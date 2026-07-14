@@ -3,14 +3,15 @@ import { RNG } from '../core/rng'
 import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
 import { PALETTE, TIMING } from '../ui/tokens'
+import { Charring } from './charring'
 import { craterAt } from './craters'
+import { holdsPlace, isLiving, type TreeState } from './forest'
 import { ISLAND_RADIUS, WALK_RADIUS } from './island'
 import { isSubmerged, type Basin } from './terrain'
 
-export type TreeState = 'normal' | 'chopped' | 'burning' | 'burnt'
+export type { TreeState } from './forest'
 export type HutState = 'site' | 'building' | 'built' | 'burning' | 'ruin' | 'abandoned'
-
-const SCORCH = new THREE.Color(PALETTE.scorch)
+export type CampfireState = 'site' | 'building' | 'lit' | 'doused' | 'scattered'
 
 function disposeObjectResources(object: THREE.Object3D): void {
   const geometries = new Set<THREE.BufferGeometry>()
@@ -29,19 +30,43 @@ function setShadow(object: THREE.Object3D, lowFx: boolean): void {
   object.castShadow = !lowFx
 }
 
-function addBlobShadow(group: THREE.Group, radius: number, lowFx: boolean): void {
-  if (!lowFx) return
-  const material = new THREE.MeshBasicMaterial({
-    color: PALETTE.scorch,
-    transparent: true,
-    opacity: 0.25,
-    depthWrite: false,
-  })
-  const shadow = new THREE.Mesh(new THREE.CircleGeometry(radius, 24), material)
-  shadow.rotation.x = -Math.PI / 2
-  shadow.position.y = 0.025
-  shadow.renderOrder = 1
-  group.add(shadow)
+/** A low-FX blob shadow that can follow an object's changing silhouette. */
+class BlobShadow {
+  private readonly mesh: THREE.Mesh | null
+
+  constructor(group: THREE.Group, private readonly baseRadius: number, lowFx: boolean) {
+    if (!lowFx) {
+      this.mesh = null
+      return
+    }
+    const material = new THREE.MeshBasicMaterial({
+      color: PALETTE.scorch,
+      transparent: true,
+      opacity: 0.25,
+      depthWrite: false,
+    })
+    this.mesh = new THREE.Mesh(new THREE.CircleGeometry(1, 24), material)
+    this.mesh.rotation.x = -Math.PI / 2
+    this.mesh.position.y = 0.025
+    this.mesh.renderOrder = 1
+    this.mesh.scale.setScalar(baseRadius)
+    group.add(this.mesh)
+  }
+
+  setScale(fraction: number, stretch = 1): void {
+    if (!this.mesh) return
+    this.mesh.scale.set(this.baseRadius * fraction * stretch, this.baseRadius * fraction, 1)
+  }
+
+  setOffset(x: number, z = 0): void {
+    if (!this.mesh) return
+    this.mesh.position.x = x
+    this.mesh.position.z = z
+  }
+}
+
+function addBlobShadow(group: THREE.Group, radius: number, lowFx: boolean): BlobShadow {
+  return new BlobShadow(group, radius, lowFx)
 }
 
 function ringMesh(
@@ -180,24 +205,41 @@ class BurningVisual {
   }
 }
 
+const TOPPLE_SECONDS = 0.6
+const FELLED_OFFSET = 0.9
+const FELLED_SECONDS = 30
+const FADE_SECONDS = 2
+const GROW_SECONDS = 40
+const STUMP_SECONDS = 30
+
+type TreeFallCause = 'chop' | 'fire' | null
+type PreFireState = 'sapling' | 'normal'
+
 export class Tree {
-  state: TreeState = 'normal'
+  state: TreeState
   group = new THREE.Group()
   readonly kind = 'tree' as const
   burning = false
   burnt = false
   burnTime = 0
 
+  private trunk: THREE.Mesh
+  private stump: THREE.Mesh
   private crown = new THREE.Group()
-  private crownMaterials: THREE.MeshToonMaterial[] = []
-  private crownColors: THREE.Color[] = []
-  private recoveryTime = 0
-  private shrinkFrames = 0
-  private lastQt = Number.NEGATIVE_INFINITY
-  private burnMix = 0
+  private charring: Charring
+  private shadow: BlobShadow
   private fruit: THREE.InstancedMesh | null = null
   private fruitTime = 0
   private fireVisual: BurningVisual
+  private fireStarted = false
+  private phase = 0
+  private fallCause: TreeFallCause = null
+  private fallScale = 1
+  private fallTrunkY = 0.55
+  private fallCrownY = 1.45
+  private expiredValue = false
+  private preFireState: PreFireState | null = null
+  private preFirePhase = 0
 
   constructor(
     public id: string,
@@ -206,23 +248,44 @@ export class Tree {
     y: number,
     rng: RNG,
     private lowFx = false,
+    state: TreeState = 'normal',
   ) {
+    this.state = state
     this.group.position.set(x, y, z)
 
-    const trunkGeometry = wobble(new THREE.CylinderGeometry(0.18, 0.28, 1.1, 10, 3), rng, 0.045)
-    const trunk = new THREE.Mesh(trunkGeometry, clayMaterial(PALETTE.bark))
-    trunk.position.y = 0.55
-    setShadow(trunk, lowFx)
-    this.group.add(trunk)
+    const trunkMaterial = clayMaterial(PALETTE.bark)
+    this.trunk = new THREE.Mesh(
+      wobble(new THREE.CylinderGeometry(0.18, 0.28, 1.1, 10, 3), rng, 0.045),
+      trunkMaterial,
+    )
+    this.trunk.name = 'tree-trunk'
+    this.trunk.position.y = 0.55
+    setShadow(this.trunk, lowFx)
+    this.group.add(this.trunk)
+
+    const stumpMaterial = clayMaterial(PALETTE.bark)
+    stumpMaterial.color.multiplyScalar(0.85)
+    this.stump = new THREE.Mesh(
+      wobble(new THREE.CylinderGeometry(0.26, 0.3, 0.3, 9, 2), rng, 0.06),
+      stumpMaterial,
+    )
+    this.stump.name = 'tree-stump'
+    this.stump.position.y = 0.15
+    this.stump.visible = false
+    setShadow(this.stump, lowFx)
+    this.group.add(this.stump)
+
+    this.charring = new Charring([trunkMaterial])
 
     const leafColors = [PALETTE.leafA, PALETTE.grassDark, PALETTE.leafB]
     const crownCount = rng.int(2, 3)
     for (let i = 0; i < crownCount; i++) {
       const radius = rng.range(0.7, 1)
-      const color = rng.pick(leafColors)
-      const material = clayMaterial(color)
-      const geometry = wobble(new THREE.SphereGeometry(radius, 14, 10), rng, 0.08)
-      const blob = new THREE.Mesh(geometry, material)
+      const material = clayMaterial(rng.pick(leafColors))
+      const blob = new THREE.Mesh(
+        wobble(new THREE.SphereGeometry(radius, 14, 10), rng, 0.08),
+        material,
+      )
       blob.position.set(
         rng.range(-0.42, 0.42),
         rng.range(-0.08, 0.42),
@@ -231,52 +294,93 @@ export class Tree {
       blob.scale.set(rng.range(0.9, 1.15), rng.range(0.8, 1.05), rng.range(0.9, 1.15))
       blob.rotation.set(rng.range(-0.18, 0.18), rng.range(0, Math.PI * 2), rng.range(-0.18, 0.18))
       setShadow(blob, lowFx)
-      this.crownMaterials.push(material)
-      this.crownColors.push(new THREE.Color(color))
+      this.charring.add(material)
       this.crown.add(blob)
     }
     this.crown.position.y = 1.45
+    this.crown.name = 'tree-crown'
     this.crown.rotation.y = rng.range(0, Math.PI * 2)
     this.group.add(this.crown)
     this.fireVisual = new BurningVisual(seedFromId(id), 1.25, 0.34, lowFx)
     this.group.add(this.fireVisual.group)
-    addBlobShadow(this.group, 1.05, lowFx)
+    this.shadow = addBlobShadow(this.group, 1.05, lowFx)
+    this.syncAppearance()
+    if (this.state === 'sapling') this.setGrowth(0)
+  }
+
+  get living(): boolean {
+    return isLiving(this.state)
+  }
+
+  get holdsPlace(): boolean {
+    return holdsPlace(this.state)
+  }
+
+  get expired(): boolean {
+    return this.expiredValue
   }
 
   chop(): void {
-    if (this.state === 'burning') return
-    this.state = 'chopped'
-    this.beginRecovery()
+    if (this.state !== 'normal') return
+    this.burnt = true
+    this.topple('chop')
   }
 
   ignite(): void {
-    if (this.state === 'burning' || this.state === 'burnt') return
+    if (this.fireStarted || this.burnt) return
+    if (this.state !== 'sapling' && this.state !== 'normal') return
+    this.preFireState = this.state
+    this.preFirePhase = this.phase
     this.state = 'burning'
+    this.phase = 0
     this.burning = true
     this.burnt = false
     this.burnTime = 0
-    this.burnMix = 0
+    this.charring.set(0)
     this.fireVisual.setBurning(true)
+    this.fireStarted = true
+    this.syncAppearance()
   }
 
   extinguish(): void {
     if (this.state !== 'burning') return
-    this.state = 'normal'
+    this.state = this.preFireState ?? 'normal'
+    this.phase = this.preFirePhase
     this.burning = false
+    this.burnt = false
     this.burnTime = 0
-    this.burnMix = 0
+    this.charring.set(0)
     this.fireVisual.setBurning(false)
-    this.resetCrownColors()
+    this.fireStarted = false
+    this.preFireState = null
+    this.preFirePhase = 0
+    this.syncAppearance()
+    if (this.state === 'sapling') this.setGrowth(Math.min(1, this.phase / GROW_SECONDS))
   }
 
   setBurnt(): void {
-    this.state = 'burnt'
+    if (this.state !== 'burning') return
     this.burning = false
     this.burnt = true
-    this.burnMix = 1
     this.fireVisual.setBurning(false)
-    this.beginRecovery()
-    for (const material of this.crownMaterials) material.color.copy(SCORCH)
+    this.fireStarted = false
+    this.charring.set(1)
+    this.preFireState = null
+    this.preFirePhase = 0
+    this.topple('fire')
+  }
+
+  obliterate(): void {
+    this.burning = false
+    this.burnt = true
+    this.burnTime = 0
+    this.fireVisual.setBurning(false)
+    this.fireStarted = false
+    this.expire()
+  }
+
+  dispose(): void {
+    disposeObjectResources(this.group)
   }
 
   setFireLightEnabled(on: boolean): void {
@@ -284,6 +388,7 @@ export class Tree {
   }
 
   growFruit(): boolean {
+    if (this.state !== 'normal') return false
     if (this.fruit) {
       this.fruitTime = 60
       return false
@@ -315,34 +420,77 @@ export class Tree {
   }
 
   update(dt: number, qt: number): void {
-    if (this.state === 'burning') {
-      this.burnMix = Math.min(1, this.burnMix + dt * 0.65)
-      this.crownMaterials.forEach((material, i) => {
-        material.color.copy(this.crownColors[i]).lerp(SCORCH, this.burnMix)
-      })
+    if (this.expiredValue) return
+    this.phase += dt
+
+    if (this.burning) {
+      this.charring.set(Math.min(1, this.charring.amount + dt * 0.65))
     }
 
-    if (this.state === 'chopped' || this.state === 'burnt') {
-      this.recoveryTime += dt
-      if (qt !== this.lastQt && this.shrinkFrames < 4) this.shrinkFrames++
-      const collapsed = THREE.MathUtils.lerp(1, 0.15, this.shrinkFrames / 4)
-      const regrowth = Math.min(1, this.recoveryTime / 120)
-      const scale = THREE.MathUtils.lerp(collapsed, 1, regrowth)
-      this.crown.scale.setScalar(scale)
-      if (this.state === 'burnt') {
-        this.crownMaterials.forEach((material, i) => {
-          material.color.copy(SCORCH).lerp(this.crownColors[i], regrowth)
-        })
-      }
-      if (regrowth >= 1) {
+    if (this.state === 'sapling') {
+      const growth = Math.min(1, this.phase / GROW_SECONDS)
+      this.setGrowth(growth)
+      if (growth >= 1) {
         this.state = 'normal'
-        this.burnt = false
-        this.burnTime = 0
-        this.crown.scale.setScalar(1)
-        this.resetCrownColors()
+        this.phase = 0
       }
     }
-    this.lastQt = qt
+
+    if (this.state === 'toppling') {
+      const fall = Math.min(1, this.phase / TOPPLE_SECONDS)
+      const easedFall = fall * fall
+      this.trunk.rotation.z = (Math.PI / 2) * easedFall
+      this.crown.rotation.z = this.trunk.rotation.z
+      this.trunk.position.x = FELLED_OFFSET * easedFall
+      this.crown.position.x = 1.45 * easedFall
+      this.trunk.position.y = THREE.MathUtils.lerp(
+        this.fallTrunkY,
+        0.18 * this.fallScale,
+        fall,
+      )
+      this.crown.position.y = THREE.MathUtils.lerp(
+        this.fallCrownY,
+        0.42 * this.fallScale,
+        fall,
+      )
+      this.shadow.setScale(this.fallScale, 1 + fall * 0.6)
+      this.shadow.setOffset(FELLED_OFFSET * easedFall * 0.5)
+      if (fall >= 1 && !this.burning) {
+        this.state = 'felled'
+        this.burnt = true
+        this.phase = 0
+        this.dropCrown()
+        this.syncAppearance()
+      }
+    }
+
+    if (this.state === 'felled') {
+      const fade = Math.max(0, this.phase - FELLED_SECONDS) / FADE_SECONDS
+      if (fade > 0) {
+        const material = this.trunk.material as THREE.MeshToonMaterial
+        material.transparent = true
+        material.opacity = Math.max(0, 1 - fade)
+      }
+      if (this.phase >= FELLED_SECONDS + FADE_SECONDS) {
+        if (this.fallCause === 'chop') {
+          this.state = 'stump'
+          this.phase = 0
+          this.syncAppearance()
+        } else {
+          this.expire()
+        }
+      }
+    }
+
+    if (this.state === 'stump') {
+      const fade = Math.max(0, this.phase - STUMP_SECONDS) / FADE_SECONDS
+      if (fade > 0) {
+        const material = this.stump.material as THREE.MeshToonMaterial
+        material.transparent = true
+        material.opacity = Math.max(0, 1 - fade)
+      }
+      if (this.phase >= STUMP_SECONDS + FADE_SECONDS) this.expire()
+    }
 
     if (this.fruit) {
       this.fruitTime -= dt
@@ -355,14 +503,63 @@ export class Tree {
     this.fireVisual.update(qt)
   }
 
-  private beginRecovery(): void {
-    this.recoveryTime = 0
-    this.shrinkFrames = 0
-    this.lastQt = Number.NEGATIVE_INFINITY
+  private topple(cause: Exclude<TreeFallCause, null>): void {
+    if (this.state === 'toppling' || this.state === 'felled' || this.state === 'stump') return
+    this.fallCause = cause
+    this.fallScale = this.trunk.scale.x
+    this.fallTrunkY = this.trunk.position.y
+    this.fallCrownY = this.crown.position.y
+    this.state = 'toppling'
+    this.phase = 0
+    this.syncAppearance()
   }
 
-  private resetCrownColors(): void {
-    this.crownMaterials.forEach((material, i) => material.color.copy(this.crownColors[i]))
+  private dropCrown(): void {
+    this.crown.visible = false
+  }
+
+  private setGrowth(growth: number): void {
+    const scale = THREE.MathUtils.lerp(0.25, 1, growth)
+    this.trunk.scale.setScalar(scale)
+    this.trunk.position.y = 0.55 * scale
+    this.crown.scale.setScalar(scale)
+    this.crown.position.y = 1.45 * scale
+    this.shadow.setScale(scale)
+  }
+
+  private syncAppearance(): void {
+    const standing = this.state === 'sapling' || this.state === 'normal' || this.state === 'burning'
+    const fallen = this.state === 'toppling' || this.state === 'felled'
+
+    this.trunk.visible = standing || fallen
+    this.crown.visible = standing || this.state === 'toppling'
+    this.stump.visible = this.fallCause === 'chop'
+      && (this.state === 'toppling' || this.state === 'felled' || this.state === 'stump')
+
+    if (this.state === 'stump') {
+      this.shadow.setOffset(0)
+      this.shadow.setScale(0.33)
+      return
+    }
+    if (this.state === 'felled') {
+      this.shadow.setOffset(FELLED_OFFSET * 0.5)
+      this.shadow.setScale(this.fallScale, 1.6)
+      return
+    }
+    if (this.state === 'burning' && this.preFireState === 'sapling') {
+      this.shadow.setOffset(0)
+      this.shadow.setScale(THREE.MathUtils.lerp(0.25, 1, Math.min(1, this.preFirePhase / GROW_SECONDS)))
+      return
+    }
+    if (this.state === 'sapling') return
+    this.shadow.setOffset(0)
+    this.shadow.setScale(1)
+  }
+
+  private expire(): void {
+    this.expiredValue = true
+    this.group.visible = false
+    this.fireVisual.setBurning(false)
   }
 }
 
@@ -375,12 +572,12 @@ export class Hut {
   burnTime = 0
 
   private base: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>
-  private door: THREE.Mesh
-  private roofKnob: THREE.Mesh
+  private door: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>
+  private roofKnob: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>
   private siteStones: THREE.InstancedMesh
   private smoke: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>[] = []
   private lastQt = Number.NEGATIVE_INFINITY
-  private burnMix = 0
+  private charring: Charring
   private fireVisual: BurningVisual
 
   constructor(
@@ -401,23 +598,30 @@ export class Hut {
       wobble(new THREE.SphereGeometry(1.1, 18, 12), rng, 0.1),
       baseMaterial,
     )
+    this.base.name = 'hut-base'
     this.base.position.y = 0.82
     setShadow(this.base, lowFx)
 
+    const doorMaterial = clayMaterial(PALETTE.scorch)
     this.door = new THREE.Mesh(
       wobble(new THREE.BoxGeometry(0.52, 0.74, 0.14, 3, 3, 2), rng, 0.025),
-      clayMaterial(PALETTE.scorch),
+      doorMaterial,
     )
+    this.door.name = 'hut-door'
     this.door.position.set(0, 0.6, 0.96)
     setShadow(this.door, lowFx)
 
+    const knobMaterial = clayMaterial(PALETTE.hutClay)
     this.roofKnob = new THREE.Mesh(
       wobble(new THREE.SphereGeometry(0.25, 10, 8), rng, 0.04),
-      clayMaterial(PALETTE.hutClay),
+      knobMaterial,
     )
+    this.roofKnob.name = 'hut-roof-knob'
     this.roofKnob.position.y = 1.72
     this.roofKnob.scale.y = 0.8
     setShadow(this.roofKnob, lowFx)
+
+    this.charring = new Charring([baseMaterial, doorMaterial, knobMaterial])
 
     this.siteStones = ringMesh(5, 0.82, 0.22, rng, lowFx)
 
@@ -451,6 +655,7 @@ export class Hut {
     }
     this.state = 'building'
     this.progress = Math.min(1, this.progress + 0.34)
+    this.charring.set(0)
     if (this.progress >= 1) this.state = 'built'
     this.syncAppearance()
   }
@@ -461,7 +666,7 @@ export class Hut {
     this.burning = true
     this.burnt = false
     this.burnTime = 0
-    this.burnMix = 0
+    this.charring.set(0)
     this.fireVisual.setBurning(true)
     this.syncAppearance()
   }
@@ -471,8 +676,7 @@ export class Hut {
     this.state = 'built'
     this.burning = false
     this.burnTime = 0
-    this.burnMix = 0
-    this.base.material.color.set(PALETTE.hutClay)
+    this.charring.set(0)
     this.fireVisual.setBurning(false)
     this.syncAppearance()
   }
@@ -482,7 +686,7 @@ export class Hut {
     this.burning = false
     this.burnt = true
     this.progress = 0
-    this.burnMix = 1
+    this.charring.set(1)
     this.fireVisual.setBurning(false)
     this.syncAppearance()
   }
@@ -491,10 +695,13 @@ export class Hut {
     this.fireVisual.setLightEnabled(on)
   }
 
+  dispose(): void {
+    disposeObjectResources(this.group)
+  }
+
   update(dt: number, qt: number): void {
     if (this.state === 'burning') {
-      this.burnMix = Math.min(1, this.burnMix + dt * 0.5)
-      this.base.material.color.set(PALETTE.hutClay).lerp(SCORCH, this.burnMix)
+      this.charring.set(Math.min(1, this.charring.amount + dt * 0.5))
     }
 
     if (qt !== this.lastQt && this.state === 'built') {
@@ -530,8 +737,7 @@ export class Hut {
 
 export class Campfire {
   group = new THREE.Group()
-  lit = true
-  scattered = false
+  progress: number
   readonly id = 'campfire'
   readonly kind = 'campfire' as const
   burning = false
@@ -553,9 +759,12 @@ export class Campfire {
     y: number,
     rng: RNG,
     lowFx = false,
+    public state: CampfireState = 'lit',
   ) {
+    this.progress = state === 'site' || state === 'building' ? 0 : 1
     this.group.position.set(x, y, z)
     this.stones = ringMesh(6, 0.7, 0.19, rng, lowFx)
+    this.stones.name = 'campfire-stones'
     this.group.add(this.stones)
 
     for (let i = 0; i < 2; i++) {
@@ -563,6 +772,7 @@ export class Campfire {
         wobble(new THREE.CylinderGeometry(0.12, 0.14, 1.35, 9, 3), rng, 0.035),
         clayMaterial(PALETTE.bark),
       )
+      log.name = 'campfire-log'
       log.rotation.z = Math.PI / 2
       log.rotation.y = (i === 0 ? 1 : -1) * Math.PI / 4
       log.position.y = 0.22
@@ -577,6 +787,7 @@ export class Campfire {
         wobble(new THREE.SphereGeometry(0.27 - i * 0.035, 10, 8), rng, 0.045),
         clayMaterial(colors[i]),
       )
+      flame.name = 'campfire-flame'
       flame.userData.index = i
       flame.position.y = 0.52 + i * 0.2
       flame.scale.y = 1.45
@@ -590,33 +801,66 @@ export class Campfire {
     this.light.castShadow = false
     this.group.add(this.light)
     addBlobShadow(this.group, 1.05, lowFx)
+    if (state === 'scattered') this.scatterPieces()
+    this.syncAppearance()
+  }
+
+  get lit(): boolean {
+    return this.state === 'lit'
+  }
+
+  get scattered(): boolean {
+    return this.state === 'scattered'
+  }
+
+  buildTick(amount: number): void {
+    if (amount <= 0 || (this.state !== 'site' && this.state !== 'building')) return
+    this.state = 'building'
+    this.progress = Math.min(1, this.progress + amount)
+    this.burning = false
+    this.burnt = false
+    this.burnTime = 0
+    if (this.progress >= 1) this.state = 'lit'
+    this.syncAppearance()
   }
 
   flare(seconds = 1, scale = 1.75): void {
-    if (this.scattered) return
-    this.lit = true
+    if (this.state === 'site' || this.state === 'building' || this.scattered) return
+    this.state = 'lit'
+    this.progress = 1
     this.flareTime = seconds
     this.flareScale = scale
+    this.syncAppearance()
   }
 
   ignite(): void {
-    if (this.scattered) return
+    if (this.state === 'site' || this.state === 'building' || this.scattered) return
     this.burning = true
     this.burnTime = 0
     this.flare()
   }
 
   douse(): void {
-    this.lit = false
+    if (this.state === 'lit') this.state = 'doused'
     this.burning = false
     this.burnTime = 0
     this.flareTime = 0
     this.flareScale = 1
+    this.syncAppearance()
   }
 
   scatter(): void {
-    this.douse()
-    this.scattered = true
+    this.burning = false
+    this.burnTime = 0
+    this.flareTime = 0
+    this.flareScale = 1
+    this.state = 'scattered'
+    this.progress = 1
+    this.scatterPieces()
+    this.syncAppearance()
+  }
+
+  private scatterPieces(): void {
     const dummy = new THREE.Object3D()
     for (let i = 0; i < this.stones.count; i++) {
       const angle = (i / this.stones.count) * Math.PI * 2 + (i % 2 === 0 ? -0.18 : 0.14)
@@ -667,6 +911,19 @@ export class Campfire {
       flame.scale.set(flareScale * (0.9 + Math.abs(jz) * 0.18), flareScale * (1.35 + Math.abs(jx) * 0.3), flareScale)
     }
     this.lastQt = qt
+  }
+
+  private syncAppearance(): void {
+    const logsVisible = this.state !== 'site'
+    const logScale = this.state === 'building' ? Math.max(this.progress, 0.01) : 1
+    this.stones.visible = true
+    for (const log of this.logs) {
+      log.visible = logsVisible
+      log.scale.setScalar(logScale)
+    }
+    for (const flame of this.flames) flame.visible = this.lit
+    this.light.visible = this.lit && this.lightEnabled
+    this.light.intensity = this.lit ? 1.5 : 0
   }
 }
 

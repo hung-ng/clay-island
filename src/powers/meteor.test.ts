@@ -22,13 +22,13 @@ function context(kind: CastCtx['kind']): CastCtx {
 }
 
 describe('Meteor target outcomes', () => {
-  it('ignites and destroys a directly hit tree', () => {
+  it('obliterates a directly hit tree without setting it alight', () => {
     const ctx = context('tree')
 
     applyInteractions(resolveInteraction('meteor', ctx.kind), ctx, 1.5)
 
-    expect(ctx.world.igniteTarget).toHaveBeenCalledWith('tree', 2, 3)
     expect(ctx.world.destroyTarget).toHaveBeenCalledWith('tree', 2, 3)
+    expect(ctx.world.igniteTarget).not.toHaveBeenCalled()
   })
 
   it('destroys a directly hit hut', () => {

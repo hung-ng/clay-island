@@ -104,6 +104,7 @@ const loop = new GameLoop(
       villager.update(dt, clock.quantizedTime, world, island)
     }
     world.repopulate(dt, rng, lowFx)
+    world.reseedForest(dt, rng, lowFx)
   },
   (dt) => {
     clock.advance(dt)
@@ -113,7 +114,7 @@ const loop = new GameLoop(
     for (const power of powerIds) {
       tray.setCooldown(power, powers.cooldown01(power))
     }
-    for (const tree of world.trees) tree.update(dt, clock.quantizedTime)
+    world.updateTrees(dt, clock.quantizedTime)
     for (const hut of world.huts) hut.update(dt, clock.quantizedTime)
     world.campfire.update(dt, clock.quantizedTime)
     world.updatePonds(clock.quantizedTime)

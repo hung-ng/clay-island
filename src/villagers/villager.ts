@@ -6,7 +6,7 @@ import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
 import { PALETTE, TIMING } from '../ui/tokens'
 import { WALK_RADIUS, type Island } from '../world/island'
-import type { Hut, Pond, Tree } from '../world/objects'
+import type { Campfire, Hut, Pond, Tree } from '../world/objects'
 import type { World } from '../world/world'
 import { decideNext, stateDuration, type FsmCtx, type VillagerState } from './fsm'
 
@@ -85,7 +85,7 @@ export class Villager {
   private targetHut: Hut | null = null
   private targetGrave: GraveLike | null = null
   private targetPond: Pond | null = null
-  private fireSite: Point | null = null
+  private targetCampfire: Campfire | null = null
   private rebuildingRuin = false
   private spawnFrames: number
   private spawnLastQt = Number.NEGATIVE_INFINITY
@@ -482,6 +482,10 @@ export class Villager {
           return
         }
         if (distance(this, this.targetHut) <= 1.55) {
+          if (!world.huts.includes(this.targetHut) && !world.commitBuildSite(this.targetHut)) {
+            this.enter('wander', world)
+            return
+          }
           this.arrived = true
           this.actionTimer -= dt
           if (this.actionTimer <= 0) {
@@ -557,11 +561,24 @@ export class Villager {
         return
       }
       case 'makeFire': {
-        if (!this.fireSite || !world.needsFire()) {
+        if (!this.targetCampfire || !world.isCampfireBuildTarget(this.targetCampfire)) {
           this.enter('wander', world)
           return
         }
-        if (this.targetDistance() < 0.4) {
+        if (this.targetCampfire.lit) {
+          this.enter('sitAtFire', world)
+          return
+        }
+        if (this.targetCampfire.scattered || !world.needsFire()) {
+          this.enter('wander', world)
+          return
+        }
+        if (distance(this, this.targetCampfire) <= 1.25) {
+          if (world.campfire !== this.targetCampfire
+            && !world.commitCampfireSite(this.targetCampfire)) {
+            this.enter('wander', world)
+            return
+          }
           if (!this.arrived) {
             this.arrived = true
             this.actionTimer = 2.5
@@ -572,10 +589,15 @@ export class Villager {
             this.arms[0].rotation.z = -swing
             this.arms[1].rotation.z = swing
           }
-          if (this.actionTimer <= 0) {
+          if (this.targetCampfire.state === 'site' || this.targetCampfire.state === 'building') {
+            this.targetCampfire.buildTick(dt / 2.5)
+            if (this.targetCampfire.lit) this.enter('sitAtFire', world)
+            return
+          }
+          if (this.actionTimer <= 0 && this.targetCampfire.state === 'doused') {
             const rebuilt = world.rebuildCampfireAt(
-              this.fireSite.x,
-              this.fireSite.z,
+              this.targetCampfire.x,
+              this.targetCampfire.z,
               this.rng,
               this.lowFx,
             )
@@ -611,7 +633,7 @@ export class Villager {
     this.targetHut = null
     this.targetGrave = null
     this.targetPond = null
-    this.fireSite = null
+    this.targetCampfire = null
     this.rebuildingRuin = false
 
     switch (state) {
@@ -625,7 +647,7 @@ export class Villager {
         return
       }
       case 'buildHut': {
-        this.targetHut = world.buildSite()
+        this.targetHut = world.claimBuildSite(this.rng, this.lowFx)
         if (!this.targetHut) return this.enter('wander', world)
         this.setTarget(this.targetHut)
         return
@@ -667,20 +689,13 @@ export class Villager {
         return
       }
       case 'makeFire': {
-        const existing = world.campfire
-        if (existing && !existing.scattered) {
-          this.fireSite = { x: existing.x, z: existing.z }
-          const angle = this.rng.range(0, Math.PI * 2)
-          this.setTarget({
-            x: existing.x + Math.cos(angle) * 1.1,
-            z: existing.z + Math.sin(angle) * 1.1,
-          })
-          return
-        }
-        const site = world.findBuildSite(this.rng, existing ?? undefined)
-        if (!site) return this.enter('wander', world)
-        this.fireSite = site
-        this.setTarget(site)
+        this.targetCampfire = world.claimCampfireSite(this.rng, this.lowFx)
+        if (!this.targetCampfire || this.targetCampfire.lit) return this.enter('wander', world)
+        const angle = this.rng.range(0, Math.PI * 2)
+        this.setTarget({
+          x: this.targetCampfire.x + Math.cos(angle) * 1.1,
+          z: this.targetCampfire.z + Math.sin(angle) * 1.1,
+        })
         return
       }
     }
@@ -692,7 +707,7 @@ export class Villager {
       fireNear: world.nearestBurning(this.x, this.z, 7) !== null,
       freshGrave: world.graves.some(grave => isGrave(grave) && grave.fresh),
       hasRuin: world.huts.some(hut => hut.state === 'ruin'),
-      hasSite: world.huts.some(hut => hut.state === 'site' || hut.state === 'building'),
+      hasSite: world.hasHutWork(),
       hasPond: world.ponds.length > 0,
       hasTree: world.trees.some(tree => tree.state === 'normal'),
       campfireLit: world.campfire?.lit ?? false,

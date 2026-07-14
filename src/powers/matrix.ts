@@ -31,7 +31,8 @@ export const INTERACTION_KINDS: readonly InteractionKind[] = [
 
 const MATRIX: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
   meteor: {
-    tree: ['ignite', 'destroy'],
+    // The struck tree is annihilated; blast fire is handled separately nearby.
+    tree: ['destroy'],
     hut: ['destroy'],
     villager: ['kill'],
     pond: ['emptyPond', 'steam'],

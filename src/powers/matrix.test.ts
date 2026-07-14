@@ -8,7 +8,7 @@ const TARGETS: TargetKind[] = ['ground', 'tree', 'hut', 'villager', 'pond', 'cra
 
 const EXPECTED: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
   meteor: {
-    tree: ['ignite', 'destroy'],
+    tree: ['destroy'],
     hut: ['destroy'],
     villager: ['kill'],
     pond: ['emptyPond', 'steam'],

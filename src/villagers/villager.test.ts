@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RNG } from '../core/rng'
 import { WALK_RADIUS } from '../world/island'
-import type { Pond } from '../world/objects'
+import type { Campfire, Hut, Pond } from '../world/objects'
 import type { World } from '../world/world'
 import { fleeTarget, Villager } from './villager'
 
@@ -58,6 +58,77 @@ describe('villager persistent activities', () => {
     villager.performActivity(1 / 30, false, world)
 
     expect(villager.enter).toHaveBeenCalledWith('wander', world)
+  })
+})
+
+describe('villager deferred construction', () => {
+  type BuildHarness = {
+    state: 'buildHut' | 'makeFire'
+    x: number
+    z: number
+    arrived: boolean
+    actionTimer: number
+    rebuildingRuin: boolean
+    targetHut: Hut | null
+    targetCampfire: Campfire | null
+    arms: Array<{ rotation: { z: number }; userData: { baseRotation: number } }>
+    enter: ReturnType<typeof vi.fn>
+    performActivity(dt: number, ticked: boolean, world: World): void
+  }
+
+  function harness(state: BuildHarness['state']): BuildHarness {
+    const villager = Object.create(Villager.prototype) as BuildHarness
+    Object.assign(villager, {
+      state,
+      x: 0,
+      z: 0,
+      arrived: false,
+      actionTimer: 1,
+      rebuildingRuin: false,
+      targetHut: null,
+      targetCampfire: null,
+      arms: [
+        { rotation: { z: 0 }, userData: { baseRotation: 0 } },
+        { rotation: { z: 0 }, userData: { baseRotation: 0 } },
+      ],
+      enter: vi.fn(),
+    })
+    return villager
+  }
+
+  it('reveals a reserved hut site only when the builder arrives', () => {
+    const villager = harness('buildHut')
+    const site = { x: 0, z: 0, state: 'site' } as Hut
+    villager.targetHut = site
+    const world = {
+      huts: [],
+      commitBuildSite: vi.fn(() => true),
+    } as unknown as World
+
+    villager.performActivity(1 / 30, false, world)
+
+    expect(world.commitBuildSite).toHaveBeenCalledWith(site)
+  })
+
+  it('reveals a reserved campfire site immediately before its first build tick', () => {
+    const villager = harness('makeFire')
+    const buildTick = vi.fn()
+    const site = {
+      x: 0, z: 0, state: 'site', lit: false, scattered: false, buildTick,
+    } as unknown as Campfire
+    villager.targetCampfire = site
+    const world = {
+      campfire: { state: 'scattered' },
+      needsFire: vi.fn(() => true),
+      isCampfireBuildTarget: vi.fn(() => true),
+      commitCampfireSite: vi.fn(() => true),
+    } as unknown as World
+
+    villager.performActivity(1 / 30, false, world)
+
+    expect(world.commitCampfireSite).toHaveBeenCalledWith(site)
+    expect(buildTick).toHaveBeenCalledOnce()
+    expect(buildTick.mock.calls[0][0]).toBeCloseTo(1 / 75)
   })
 })
 

@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { RNG } from '../core/rng'
 import type { Villager } from '../villagers/villager'
+import { MAX_TREES } from './forest'
 import type { Island } from './island'
-import type { Campfire, FlowerPatch, Hut, Pond, Tree } from './objects'
+import { Campfire, Hut, Tree, type FlowerPatch, type Pond } from './objects'
 import { repopulationHome, World } from './world'
 
 vi.mock('../fx/clayMaterial', async () => {
@@ -17,6 +18,22 @@ function makeWorld(): World {
     group: { add: vi.fn(), remove: vi.fn() },
   } as unknown as Island
   return new World(island)
+}
+
+function addTree(world: World, id: string, x: number, z: number): Tree {
+  const tree = new Tree(id, x, z, 0, new RNG(1))
+  world.trees.push(tree)
+  return tree
+}
+
+function advanceTree(tree: Tree, seconds: number, from = 0): number {
+  const step = 1 / 12
+  let qt = from
+  for (let elapsed = 0; elapsed < seconds; elapsed += step) {
+    qt += step
+    tree.update(step, qt)
+  }
+  return qt
 }
 
 function floodedWorld(
@@ -80,23 +97,34 @@ describe('World impact consequences', () => {
     expect(campfire.group.position.y).toBe(-2)
   })
 
-  it.each([
-    ['tree', 'setBurnt'],
-    ['hut', 'setRuin'],
-  ] as const)('destroys the nearest %s and emits its burnt event', (kind, method) => {
+  it('removes and disposes the nearest meteor-hit tree', () => {
     const world = makeWorld()
-    const target = { x: 2, z: 3, [method]: vi.fn() }
-    const farther = { x: 2.8, z: 3, [method]: vi.fn() }
-    if (kind === 'tree') world.trees.push(target as unknown as Tree, farther as unknown as Tree)
-    else world.huts.push(target as unknown as Hut, farther as unknown as Hut)
+    const target = addTree(world, 'tree-0', 2, 3)
+    const farther = addTree(world, 'tree-1', 2.8, 3)
+    const dispose = vi.spyOn(target, 'dispose')
     const events: string[] = []
     world.bus.on(event => events.push(event.type))
 
-    expect(world.destroyTarget(kind, 2, 3)).toBe(true)
+    expect(world.destroyTarget('tree', 2, 3)).toBe(true)
 
-    expect(target[method]).toHaveBeenCalledOnce()
-    expect(farther[method]).not.toHaveBeenCalled()
+    expect(world.trees).toEqual([farther])
+    expect(target.expired).toBe(true)
+    expect(target.state).toBe('normal')
+    expect(world.island.group.remove).toHaveBeenCalledWith(target.group)
+    expect(dispose).toHaveBeenCalledOnce()
     expect(events).toContain('burnt')
+  })
+
+  it('turns the nearest meteor-hit hut into a ruin', () => {
+    const world = makeWorld()
+    const target = { x: 2, z: 3, setRuin: vi.fn() }
+    const farther = { x: 2.8, z: 3, setRuin: vi.fn() }
+    world.huts.push(target as unknown as Hut, farther as unknown as Hut)
+
+    expect(world.destroyTarget('hut', 2, 3)).toBe(true)
+
+    expect(target.setRuin).toHaveBeenCalledOnce()
+    expect(farther.setRuin).not.toHaveBeenCalled()
   })
 
   it('kills only the nearest living villager in the impact radius', () => {
@@ -318,19 +346,21 @@ describe('World hut relocation', () => {
     expect(drowned.state).toBe('abandoned')
   })
 
-  it('adds a replacement site on dry ground when it abandons a ruin', () => {
+  it('does not add a replacement site until a villager claims the work', () => {
     const crater = { x: 5, z: 0, radius: 3, depth: 1.5 }
     const world = floodedWorld([crater])
-    world.huts.push(
-      { id: 'hut-0', x: 5, z: 0, state: 'ruin', group: { position: { y: 0 } } } as unknown as Hut,
-    )
+    const drowned = {
+      id: 'hut-0', x: 5, z: 0, state: 'ruin', group: { position: { y: 0 } }, dispose: vi.fn(),
+    }
+    world.huts.push(drowned as unknown as Hut)
     world.fillCratersNear(5, 0, 10, new RNG(1))
 
     world.relocateDrownedRuins(new RNG(1))
 
-    const site = world.huts.find(hut => hut.state === 'site')
-    expect(site).toBeDefined()
-    expect(world.island.sampleHeight(site!.x, site!.z)).toBeGreaterThanOrEqual(0)
+    expect(drowned.state).toBe('abandoned')
+    expect(world.huts).toEqual([drowned])
+    expect(world.huts.some(hut => hut.state === 'site')).toBe(false)
+    expect(drowned.dispose).not.toHaveBeenCalled()
   })
 
   it('leaves a ruin on good dry ground rebuildable', () => {
@@ -343,66 +373,186 @@ describe('World hut relocation', () => {
     expect(fine.state).toBe('ruin')
   })
 
-  it('never offers an abandoned ruin as a build site', () => {
+  it('reserves replacement ground invisibly, then reveals it when building starts', () => {
     const world = floodedWorld([])
-    world.huts.push({ id: 'hut-0', x: 5, z: 0, state: 'abandoned' } as unknown as Hut)
+    const abandoned = {
+      id: 'hut-0', x: 5, z: 0, state: 'abandoned', group: {}, dispose: vi.fn(),
+    }
+    world.huts.push(abandoned as unknown as Hut)
+    vi.spyOn(world, 'findBuildSite').mockReturnValue({ x: -4, z: 2 })
 
-    expect(world.buildSite()).toBeNull()
+    const site = world.claimBuildSite(new RNG(1))
+
+    expect(site?.state).toBe('site')
+    expect(world.claimBuildSite(new RNG(2))).toBe(site)
+    expect(world.huts).toEqual([abandoned])
+    expect(world.groundQuery().occupied).toContain(site)
+    expect(world.island.group.remove).not.toHaveBeenCalled()
+    expect(world.island.group.add).not.toHaveBeenCalled()
+    expect(abandoned.dispose).not.toHaveBeenCalled()
+
+    expect(world.commitBuildSite(site!)).toBe(true)
+    expect(world.huts).toEqual([site])
+    expect(world.island.group.remove).toHaveBeenCalledWith(abandoned.group)
+    expect(abandoned.dispose).toHaveBeenCalledOnce()
+    expect(world.island.group.add).toHaveBeenCalledWith(site?.group)
+  })
+
+  it('cancels an invalidated hut reservation without removing abandoned stones', () => {
+    const world = floodedWorld([])
+    const abandoned = {
+      id: 'hut-0', x: 5, z: 0, state: 'abandoned', group: {}, dispose: vi.fn(),
+    }
+    world.huts.push(abandoned as unknown as Hut)
+    vi.spyOn(world, 'findBuildSite').mockReturnValue({ x: -4, z: 2 })
+    const site = world.claimBuildSite(new RNG(1))!
+    const dispose = vi.spyOn(site, 'dispose')
+    world.island.craters.push({ x: -4, z: 2, radius: 1, depth: 1 })
+
+    expect(world.commitBuildSite(site)).toBe(false)
+
+    expect(world.huts).toEqual([abandoned])
+    expect(abandoned.dispose).not.toHaveBeenCalled()
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(world.island.group.remove).not.toHaveBeenCalled()
+    expect(world.island.group.add).not.toHaveBeenCalled()
+  })
+
+  it('keeps abandoned stones when no valid replacement ground exists', () => {
+    const world = floodedWorld([])
+    const abandoned = {
+      id: 'hut-0', x: 5, z: 0, state: 'abandoned', group: {}, dispose: vi.fn(),
+    }
+    world.huts.push(abandoned as unknown as Hut)
+    vi.spyOn(world, 'findBuildSite').mockReturnValue(null)
+
+    expect(world.claimBuildSite(new RNG(1))).toBeNull()
+    expect(world.huts).toEqual([abandoned])
+    expect(abandoned.dispose).not.toHaveBeenCalled()
+  })
+
+  it('reports abandoned stones as deferred hut work', () => {
+    const world = floodedWorld([])
+    world.huts.push({ state: 'abandoned' } as Hut)
+
+    expect(world.hasHutWork()).toBe(true)
   })
 })
 
 describe('World campfire recovery', () => {
-  it('reports a missing, doused, or scattered fire as needing recovery', () => {
+  it('scatters a doused campfire when its ground becomes submerged', () => {
+    const crater = { x: 5, z: 0, radius: 3, depth: 1.5 }
+    const world = floodedWorld([crater])
+    const campfire = new Campfire(5, 0, -1.5, new RNG(1), false, 'doused')
+    world.campfire = campfire
+    world.fillCratersNear(5, 0, 10, new RNG(1))
+
+    expect(world.ponds[0].contains(campfire.x, campfire.z)).toBe(true)
+
+    world.relocateDrownedRuins(new RNG(1))
+
+    expect(campfire.state).toBe('scattered')
+  })
+
+  it('needs work for every state except lit', () => {
     const world = makeWorld()
     expect(world.needsFire()).toBe(true)
 
-    world.campfire = { lit: false, scattered: false } as Campfire
-    expect(world.needsFire()).toBe(true)
+    for (const state of ['site', 'building', 'doused', 'scattered'] as const) {
+      world.campfire = new Campfire(0, 0, 0, new RNG(1), false, state)
+      expect(world.needsFire()).toBe(true)
+    }
 
-    world.campfire = { lit: true, scattered: true } as Campfire
-    expect(world.needsFire()).toBe(true)
-
-    world.campfire = { lit: true, scattered: false } as Campfire
+    world.campfire = new Campfire(0, 0, 0, new RNG(1), false, 'lit')
     expect(world.needsFire()).toBe(false)
   })
 
   it('relights an intact doused fire without replacing it', () => {
     const world = makeWorld()
-    const campfire = { lit: false, scattered: false, flare: vi.fn() }
+    const campfire = new Campfire(0, 0, 0, new RNG(1), false, 'doused')
+    const flare = vi.spyOn(campfire, 'flare')
     world.campfire = campfire as unknown as Campfire
 
     expect(world.rebuildCampfireAt(4, 5, new RNG(1))).toBe(true)
 
     expect(world.campfire).toBe(campfire)
-    expect(campfire.flare).toHaveBeenCalledWith(1.5, 1.4)
+    expect(flare).toHaveBeenCalledWith(1.5, 1.4)
+    expect(campfire.state).toBe('lit')
   })
 
-  it('replaces and disposes a scattered fire', () => {
+  it('reserves a site invisibly, then reveals it when campfire building starts', () => {
     const world = makeWorld()
-    const old = { lit: false, scattered: true, group: {}, dispose: vi.fn() }
-    world.campfire = old as unknown as Campfire
+    const old = new Campfire(0, 0, 0, new RNG(1), false, 'lit')
+    old.scatter()
+    const dispose = vi.spyOn(old, 'dispose')
+    world.campfire = old
+    vi.spyOn(world, 'findBuildSite').mockReturnValue({ x: 4, z: 5 })
 
-    world.rebuildCampfireAt(4, 5, new RNG(1))
+    const site = world.claimCampfireSite(new RNG(1))
 
-    expect(world.campfire).not.toBe(old)
-    expect(world.campfire.x).toBe(4)
-    expect(world.campfire.z).toBe(5)
-    expect(world.campfire.lit).toBe(true)
+    expect(site?.state).toBe('site')
+    expect(site?.x).toBe(4)
+    expect(site?.z).toBe(5)
+    expect(world.claimCampfireSite(new RNG(2))).toBe(site)
+    expect(world.campfire).toBe(old)
+    expect(world.groundQuery().occupied).toContain(site)
+    expect(world.isCampfireBuildTarget(site!)).toBe(true)
+    expect(world.island.group.remove).not.toHaveBeenCalled()
+    expect(world.island.group.add).not.toHaveBeenCalled()
+    expect(dispose).not.toHaveBeenCalled()
+
+    expect(world.commitCampfireSite(site!)).toBe(true)
+    expect(world.campfire).toBe(site)
     expect(world.island.group.remove).toHaveBeenCalledWith(old.group)
-    expect(old.dispose).toHaveBeenCalledOnce()
+    expect(dispose).toHaveBeenCalledOnce()
     expect(world.island.group.add).toHaveBeenCalledWith(world.campfire.group)
   })
 
-  it('does not replace a scattered fire on ground that became unbuildable', () => {
-    const world = floodedWorld([{ x: 4, z: 5, radius: 3, depth: 1.5 }])
-    const old = { lit: false, scattered: true, group: {}, dispose: vi.fn() }
-    world.campfire = old as unknown as Campfire
+  it('cancels an invalidated campfire reservation without removing scattered remains', () => {
+    const world = makeWorld()
+    const old = new Campfire(0, 0, 0, new RNG(1))
+    old.scatter()
+    const oldDispose = vi.spyOn(old, 'dispose')
+    world.campfire = old
+    vi.spyOn(world, 'findBuildSite').mockReturnValue({ x: 4, z: 5 })
+    const site = world.claimCampfireSite(new RNG(1))!
+    const siteDispose = vi.spyOn(site, 'dispose')
+    world.island.craters.push({ x: 4, z: 5, radius: 1, depth: 1 })
 
-    expect(world.rebuildCampfireAt(4, 5, new RNG(1))).toBe(false)
+    expect(world.commitCampfireSite(site)).toBe(false)
 
     expect(world.campfire).toBe(old)
-    expect(old.dispose).not.toHaveBeenCalled()
+    expect(oldDispose).not.toHaveBeenCalled()
+    expect(siteDispose).toHaveBeenCalledOnce()
     expect(world.island.group.remove).not.toHaveBeenCalled()
+    expect(world.island.group.add).not.toHaveBeenCalled()
+  })
+
+  it('keeps scattered remains when no valid replacement ground exists', () => {
+    const world = makeWorld()
+    const old = new Campfire(0, 0, 0, new RNG(1))
+    old.scatter()
+    const dispose = vi.spyOn(old, 'dispose')
+    world.campfire = old
+    vi.spyOn(world, 'findBuildSite').mockReturnValue(null)
+
+    expect(world.claimCampfireSite(new RNG(1))).toBeNull()
+
+    expect(world.campfire).toBe(old)
+    expect(dispose).not.toHaveBeenCalled()
+    expect(world.island.group.remove).not.toHaveBeenCalled()
+  })
+
+  it('reserves and reveals a site on demand when the campfire is missing', () => {
+    const world = makeWorld()
+    vi.spyOn(world, 'findBuildSite').mockReturnValue({ x: 3, z: -2 })
+
+    const site = world.claimCampfireSite(new RNG(1))
+
+    expect(site?.state).toBe('site')
+    expect(world.campfire).toBeUndefined()
+    expect(world.commitCampfireSite(site!)).toBe(true)
+    expect(world.campfire).toBe(site)
   })
 })
 
@@ -422,9 +572,9 @@ describe('population recovery', () => {
     expect(repopulationHome(1, [ruin])).toBeNull()
   })
 
-  it('never respawns from an abandoned ruin', () => {
+  it('uses abandoned stones as the zero-population mercy origin', () => {
     const abandoned = { state: 'abandoned' } as Hut
-    expect(repopulationHome(0, [abandoned])).toBeNull()
+    expect(repopulationHome(0, [abandoned])).toBe(abandoned)
   })
 
   it('uses a replacement site as the zero-population fallback', () => {
@@ -432,5 +582,132 @@ describe('population recovery', () => {
     const site = { state: 'site' } as Hut
 
     expect(repopulationHome(0, [abandoned, site])).toBe(site)
+  })
+})
+
+describe('World forest', () => {
+  it('a STUMP is not fuel — a clearing of stumps is not a tinderbox', () => {
+    const world = makeWorld()
+    const stump = addTree(world, 'tree-0', 0, 0)
+    stump.chop()
+    advanceTree(stump, 33)
+    const alight = addTree(world, 'tree-1', 1, 0)
+    alight.ignite()
+
+    const flammables = (world as unknown as {
+      flammables(): Array<{ id: string }>
+    }).flammables()
+    expect(flammables.map(item => item.id)).not.toContain(stump.id)
+    expect(flammables.map(item => item.id)).toContain(alight.id)
+
+    for (let i = 0; i < 200; i++) world.updateFire(1 / 12, new RNG(i))
+
+    expect(stump.state).toBe('stump')
+    expect(stump.burning).toBe(false)
+  })
+
+  it('bridges a spread ignition into the tree visual lifecycle', () => {
+    const world = makeWorld()
+    const source = addTree(world, 'tree-0', 0, 0)
+    const target = addTree(world, 'tree-1', 1, 0)
+    source.ignite()
+
+    world.updateFire(1, { chance: () => true } as unknown as RNG)
+
+    expect(target.burning).toBe(true)
+    expect(target.state).toBe('burning')
+    expect(target.group.getObjectByName('burning-fx')?.visible).toBe(true)
+  })
+
+  it('grows a sapling when the forest is below the cap', () => {
+    const world = makeWorld()
+    addTree(world, 'tree-0', 0, 0)
+
+    for (let i = 0; i < 60; i++) world.reseedForest(1, new RNG(2), false)
+
+    expect(world.trees.length).toBeGreaterThan(1)
+    expect(world.trees.some(tree => tree.state === 'sapling')).toBe(true)
+  })
+
+  it('stops at MAX_TREES', () => {
+    const world = makeWorld()
+    for (let i = 0; i < MAX_TREES; i++) addTree(world, `tree-${i}`, i - 6, 0)
+
+    for (let i = 0; i < 200; i++) world.reseedForest(1, new RNG(3), false)
+
+    expect(world.livingTrees()).toHaveLength(MAX_TREES)
+  })
+
+  it('does NOT count stumps toward the cap — a cleared island regrows', () => {
+    const world = makeWorld()
+    for (let i = 0; i < MAX_TREES; i++) {
+      const stump = addTree(world, `tree-${i}`, i - 6, 0)
+      stump.chop()
+      advanceTree(stump, 33)
+    }
+
+    for (let i = 0; i < 60; i++) world.reseedForest(1, new RNG(4), false)
+
+    expect(world.livingTrees().length).toBeGreaterThan(0)
+  })
+
+  it('a meteor annihilates a tree and leaves no wooden remnant', () => {
+    const world = makeWorld()
+    const tree = addTree(world, 'tree-0', 2, 2)
+
+    world.destroyTarget('tree', 2, 2)
+
+    expect(world.trees).not.toContain(tree)
+    expect(tree.expired).toBe(true)
+    expect(tree.state).toBe('normal')
+  })
+
+  it('lightning uses the same upright burn as spreading fire', () => {
+    const world = makeWorld()
+    const tree = addTree(world, 'tree-0', 2, 2)
+
+    world.igniteTarget('tree', 2, 2)
+
+    expect(tree.burning).toBe(true)
+    expect(tree.state).toBe('burning')
+  })
+
+  it('removes an expired temporary remnant from the registry and scene', () => {
+    const world = makeWorld()
+    const tree = addTree(world, 'tree-0', 2, 2)
+    const dispose = vi.spyOn(tree, 'dispose')
+    tree.ignite()
+    tree.setBurnt()
+
+    for (let i = 0; i < 34 * 12; i++) world.updateTrees(1 / 12, i / 12)
+
+    expect(world.trees).not.toContain(tree)
+    expect(world.island.group.remove).toHaveBeenCalledWith(tree.group)
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('removes an expired chopped stump and frees its occupied ground', () => {
+    const world = makeWorld()
+    const tree = addTree(world, 'tree-0', 2, 2)
+    const dispose = vi.spyOn(tree, 'dispose')
+    tree.chop()
+
+    expect(world.groundQuery().occupied).toContain(tree)
+    for (let i = 0; i < 66 * 12; i++) world.updateTrees(1 / 12, i / 12)
+
+    expect(world.trees).not.toContain(tree)
+    expect(world.groundQuery().occupied).not.toContain(tree)
+    expect(world.island.group.remove).toHaveBeenCalledWith(tree.group)
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('a hut ignited by lightning burns upright', () => {
+    const world = makeWorld()
+    const hut = new Hut('hut-0', 3, 3, 'built', 0, new RNG(1))
+    world.huts.push(hut)
+
+    world.igniteTarget('hut', 3, 3)
+
+    expect(hut.state).toBe('burning')
   })
 })
