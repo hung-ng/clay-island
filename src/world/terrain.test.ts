@@ -11,6 +11,20 @@ import {
 
 const flat = (): number => 0
 
+/** The cratered ground under a flat rim surface. */
+function dish(craters: Crater[]) {
+  return (x: number, z: number): number => {
+    let depth = 0
+    for (const crater of craters) {
+      const t = Math.hypot(x - crater.x, z - crater.z) / crater.radius
+      if (t < 1) {
+        depth = Math.max(depth, crater.depth * Math.cos(t * Math.PI * 0.5) ** 2)
+      }
+    }
+    return -depth
+  }
+}
+
 describe('groupBasins', () => {
   it('returns nothing for no craters', () => {
     expect(groupBasins([], flat)).toEqual([])
@@ -24,13 +38,24 @@ describe('groupBasins', () => {
     expect(basins[0].craters).toEqual(craters)
   })
 
-  it('merges two overlapping craters into a single basin', () => {
+  it('keeps overlapping crater rims separate when their water has a dry saddle', () => {
     const craters: Crater[] = [
       { x: 0, z: 0, radius: 3, depth: 1.5 },
       { x: 4, z: 0, radius: 3, depth: 1.5 },
     ]
+
+    expect(dish(craters)(2, 0)).toBeGreaterThan(-0.5)
+    expect(groupBasins(craters, flat)).toHaveLength(2)
+  })
+
+  it('merges overlapping craters when water covers the saddle between them', () => {
+    const craters: Crater[] = [
+      { x: 0, z: 0, radius: 3, depth: 1.5 },
+      { x: 3, z: 0, radius: 3, depth: 1.5 },
+    ]
     const basins = groupBasins(craters, flat)
 
+    expect(dish(craters)(1.5, 0)).toBeLessThan(-0.5)
     expect(basins).toHaveLength(1)
     expect(basins[0].craters).toHaveLength(2)
   })
@@ -57,8 +82,8 @@ describe('groupBasins', () => {
   it('merges transitively', () => {
     const craters: Crater[] = [
       { x: 0, z: 0, radius: 2, depth: 1 },
+      { x: 1.5, z: 0, radius: 2, depth: 1 },
       { x: 3, z: 0, radius: 2, depth: 1 },
-      { x: 6, z: 0, radius: 2, depth: 1 },
     ]
     const basins = groupBasins(craters, flat)
 
@@ -70,15 +95,15 @@ describe('groupBasins', () => {
     const sloped = (x: number): number => -x * 0.1
     const craters: Crater[] = [
       { x: 0, z: 0, radius: 3, depth: 1.5 },
-      { x: 4, z: 0, radius: 3, depth: 1.5 },
+      { x: 2, z: 0, radius: 3, depth: 1.5 },
     ]
     const basins = groupBasins(craters, sloped)
 
     expect(basins).toHaveLength(1)
-    // The lowest lip of the merged bowl is the far shore at x = 7, not either
+    // The lowest lip of the merged bowl is the far shore at x = 5, not either
     // crater's centre. Sampling centres put the level near -0.4 and stood the
     // water above the downhill bank.
-    expect(basins[0].waterLevel).toBeLessThanOrEqual(-0.7)
+    expect(basins[0].waterLevel).toBeLessThanOrEqual(-1)
   })
 
   it('leaves a bank of earth standing above the waterline', () => {
@@ -159,13 +184,13 @@ describe('groupBasins', () => {
   it('spans the merged bowl from its centroid to the far rim', () => {
     const craters: Crater[] = [
       { x: 0, z: 0, radius: 3, depth: 1.5 },
-      { x: 4, z: 0, radius: 3, depth: 1.5 },
+      { x: 3, z: 0, radius: 3, depth: 1.5 },
     ]
     const [basin] = groupBasins(craters, flat)
 
-    expect(basin.x).toBeCloseTo(2)
+    expect(basin.x).toBeCloseTo(1.5)
     expect(basin.z).toBeCloseTo(0)
-    expect(basin.radius).toBeCloseTo(5)
+    expect(basin.radius).toBeCloseTo(4.5)
   })
 
   it('is deterministic', () => {

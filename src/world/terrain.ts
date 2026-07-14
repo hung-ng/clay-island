@@ -1,4 +1,4 @@
-import { craterAt, type Crater } from './craters'
+import { craterAt, craterBowlDepthAt, type Crater } from './craters'
 import { WALK_RADIUS } from './island'
 
 /** A connected group of crater bowls sharing one water surface. */
@@ -37,13 +37,10 @@ export type GroundQuery = {
   occupied: readonly { x: number; z: number }[]
 }
 
-/** Bowls must overlap with non-zero area to exchange water below their rims. */
-function overlaps(a: Crater, b: Crater): boolean {
-  return Math.hypot(a.x - b.x, a.z - b.z) < a.radius + b.radius
-}
-
 /** How many points around a crater's lip we test to find its lowest point. */
 const RIM_SAMPLES = 48
+/** Maximum gap between samples along the saddle joining two crater centres. */
+const SADDLE_SAMPLE_STEP = 0.1
 
 /**
  * The height of the lowest lip the basin would pour over.
@@ -90,6 +87,34 @@ function waterLevelOf(
   return lowestRim - FREEBOARD
 }
 
+/**
+ * Whether two bowls share a visibly continuous water surface.
+ *
+ * Rim overlap alone is not enough: freeboard can leave the upper part of the
+ * overlap dry, producing two visible ponds that the simulation incorrectly
+ * treats as one. The direct saddle between radial bowls is their lowest crossing,
+ * so every sample along it must lie below the pair's shared water level.
+ */
+function sharesWater(
+  a: Crater,
+  b: Crater,
+  rimY: (x: number, z: number) => number,
+): boolean {
+  const distance = Math.hypot(a.x - b.x, a.z - b.z)
+  if (distance >= a.radius + b.radius) return false
+
+  const waterLevel = waterLevelOf([a, b], rimY)
+  const samples = Math.max(2, Math.ceil(distance / SADDLE_SAMPLE_STEP))
+  for (let sample = 0; sample <= samples; sample++) {
+    const t = sample / samples
+    const x = a.x + (b.x - a.x) * t
+    const z = a.z + (b.z - a.z) * t
+    const groundY = rimY(x, z) - craterBowlDepthAt(x, z, [a, b])
+    if (groundY >= waterLevel) return false
+  }
+  return true
+}
+
 function centroidOf(craters: readonly Crater[]): { x: number; z: number } {
   let x = 0
   let z = 0
@@ -108,7 +133,7 @@ function spanOf(craters: readonly Crater[], x: number, z: number): number {
   return radius
 }
 
-/** Group craters by transitive overlap so each connected bowl has one level. */
+/** Group craters by transitive wet connectivity so each visible pond has one level. */
 export function groupBasins(
   craters: Crater[],
   surfaceY: (x: number, z: number) => number,
@@ -123,7 +148,7 @@ export function groupBasins(
 
     for (let i = 0; i < group.length; i++) {
       for (let j = unassigned.length - 1; j >= 0; j--) {
-        if (!overlaps(group[i], unassigned[j])) continue
+        if (!sharesWater(group[i], unassigned[j], surfaceY)) continue
         group.push(unassigned[j])
         unassigned.splice(j, 1)
       }

@@ -216,25 +216,25 @@ describe('World refloodBasins', () => {
     expect(world.ponds).toHaveLength(1)
 
     // A meteor digs a second crater overlapping the first. No rain falls.
-    craters.push({ x: 4, z: 0, radius: 3, depth: 1.5 })
+    craters.push({ x: 3, z: 0, radius: 3, depth: 1.5 })
     world.refloodBasins(new RNG(1))
 
     // The lake must grow to cover BOTH bowls, not ignore the new hole.
     expect(world.ponds).toHaveLength(1)
     expect(world.ponds[0].basin.craters).toHaveLength(2)
-    expect(world.ponds[0].contains(4, 0)).toBe(true)
+    expect(world.ponds[0].contains(3, 0)).toBe(true)
   })
 
   it('merges two separate lakes when a crater bridges them', () => {
     const craters = [
       { x: 0, z: 0, radius: 2.5, depth: 1.5 },
-      { x: 9, z: 0, radius: 2.5, depth: 1.5 },
+      { x: 6, z: 0, radius: 2.5, depth: 1.5 },
     ]
     const world = floodedWorld(craters)
     world.fillCratersNear(0, 0, 20, new RNG(1))
     expect(world.ponds).toHaveLength(2)
 
-    craters.push({ x: 4.5, z: 0, radius: 2.5, depth: 1.5 })
+    craters.push({ x: 3, z: 0, radius: 2.5, depth: 1.5 })
     world.refloodBasins(new RNG(1))
 
     expect(world.ponds).toHaveLength(1)
@@ -266,24 +266,39 @@ describe('World refloodBasins', () => {
 })
 
 describe('World ponds', () => {
-  it('makes one pond from two overlapping craters', () => {
+  it('makes one pond from two craters joined below the waterline', () => {
+    const world = floodedWorld([
+      { x: 0, z: 0, radius: 3, depth: 1.5 },
+      { x: 3, z: 0, radius: 3, depth: 1.5 },
+    ])
+
+    world.fillCratersNear(1.5, 0, 10, new RNG(1))
+
+    expect(world.ponds).toHaveLength(1)
+  })
+
+  it('does not carry rain across a dry saddle between overlapping crater rims', () => {
     const world = floodedWorld([
       { x: 0, z: 0, radius: 3, depth: 1.5 },
       { x: 4, z: 0, radius: 3, depth: 1.5 },
     ])
 
-    world.fillCratersNear(2, 0, 10, new RNG(1))
+    world.fillCratersNear(0, 0, 0.5, new RNG(1))
 
     expect(world.ponds).toHaveLength(1)
+    expect(world.ponds[0].basin.craters).toEqual([
+      { x: 0, z: 0, radius: 3, depth: 1.5 },
+    ])
+    expect(world.ponds[0].contains(4, 0)).toBe(false)
   })
 
   it('gives the merged pond one water level', () => {
     const world = floodedWorld([
       { x: 0, z: 0, radius: 3, depth: 1.5 },
-      { x: 4, z: 0, radius: 3, depth: 1.5 },
+      { x: 3, z: 0, radius: 3, depth: 1.5 },
     ])
 
-    world.fillCratersNear(2, 0, 10, new RNG(1))
+    world.fillCratersNear(1.5, 0, 10, new RNG(1))
 
     expect(world.ponds[0].group.position.y).toBeCloseTo(world.ponds[0].basin.waterLevel)
   })

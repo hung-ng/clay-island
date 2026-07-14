@@ -110,7 +110,7 @@ describe('pond water surface', () => {
   it('makes ONE continuous sheet across two overlapping craters', () => {
     const craters: Crater[] = [
       { x: 0, z: 0, radius: 3, depth: 1.5 },
-      { x: 4, z: 0, radius: 3, depth: 1.5 },
+      { x: 3, z: 0, radius: 3, depth: 1.5 },
     ]
     const [basin] = groupBasins(craters, FLAT)
     const pond = new Pond(basin, dish(craters), new RNG(1))
@@ -118,10 +118,10 @@ describe('pond water surface', () => {
     const points = surfacePoints(pond)
     // Water over both bowls...
     expect(points.some(p => Math.hypot(p.x - 0, p.z) < 1)).toBe(true)
-    expect(points.some(p => Math.hypot(p.x - 4, p.z) < 1)).toBe(true)
+    expect(points.some(p => Math.hypot(p.x - 3, p.z) < 1)).toBe(true)
     // ...and across the saddle between them, where the two bowls merge. If the
     // sheet broke here you would see two discs, not one lake.
-    expect(points.some(p => Math.abs(p.x - 2) < 0.4 && Math.abs(p.z) < 0.4)).toBe(true)
+    expect(points.some(p => Math.abs(p.x - 1.5) < 0.4 && Math.abs(p.z) < 0.4)).toBe(true)
   })
 
   it('has real thickness: a bed below the surface, not one flat plane', () => {

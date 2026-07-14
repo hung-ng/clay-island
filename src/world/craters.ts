@@ -10,6 +10,21 @@ export function craterInfluenceRadius(crater: Crater): number {
   return crater.radius * CRATER_LIP_REACH
 }
 
+/** The deepest bowl excavation contributed by any crater at this point. */
+export function craterBowlDepthAt(
+  x: number,
+  z: number,
+  craters: readonly Crater[],
+): number {
+  let depth = 0
+  for (const crater of craters) {
+    const t = Math.hypot(x - crater.x, z - crater.z) / crater.radius
+    if (t >= 1) continue
+    depth = Math.max(depth, crater.depth * Math.cos(t * Math.PI * 0.5) ** 2)
+  }
+  return depth
+}
+
 /** How far the levelled lip stands above the highest ground on the natural rim. */
 const LIP_BOOST = 0.1
 
@@ -67,7 +82,7 @@ export function craterOffset(
   craters: Crater[],
   surfaceY?: (x: number, z: number) => number,
 ): number {
-  let dig = 0
+  const dig = craterBowlDepthAt(x, z, craters)
   let raise = 0
 
   for (const c of craters) {
@@ -80,10 +95,6 @@ export function craterOffset(
         raise = Math.max(raise, wanted)
       }
     }
-
-    if (t >= 1) continue
-    // Smooth bowl: deepest at the centre, tapering to nothing at the rim.
-    dig = Math.max(dig, c.depth * Math.cos(t * Math.PI * 0.5) ** 2)
   }
 
   // Each term is already the max across craters, so neither stacks; the bowl then
