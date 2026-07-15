@@ -175,7 +175,8 @@ export function createJournalUI(
     }
   })
 
-  let toastTimer = 0
+  let toastShowing = false
+  const toastQueue: Moment[] = []
   const toastHost = document.createElement('div')
   toastHost.className = 'moment-toast'
   toastHost.setAttribute('role', 'status')
@@ -183,21 +184,36 @@ export function createJournalUI(
   toastHost.hidden = true
   ui.appendChild(toastHost)
 
+  const showNextToast = (): void => {
+    const moment = toastQueue.shift()
+    if (!moment) {
+      toastShowing = false
+      toastHost.hidden = true
+      return
+    }
+
+    toastShowing = true
+    toastHost.replaceChildren()
+    const title = document.createElement('strong')
+    title.textContent = moment.title
+    const copy = document.createElement('span')
+    copy.textContent = moment.hint
+    toastHost.append(title, copy)
+    toastHost.hidden = false
+    requestAnimationFrame(() => toastHost.classList.add('show'))
+    window.setTimeout(() => {
+      toastHost.classList.remove('show')
+      window.setTimeout(() => {
+        toastHost.hidden = true
+        showNextToast()
+      }, options.reducedMotion() ? 0 : 320)
+    }, 3000)
+  }
+
   const api: JournalUI = {
     toast(moment) {
-      window.clearTimeout(toastTimer)
-      toastHost.replaceChildren()
-      const title = document.createElement('strong')
-      title.textContent = moment.title
-      const copy = document.createElement('span')
-      copy.textContent = moment.hint
-      toastHost.append(title, copy)
-      toastHost.hidden = false
-      requestAnimationFrame(() => toastHost.classList.add('show'))
-      toastTimer = window.setTimeout(() => {
-        toastHost.classList.remove('show')
-        window.setTimeout(() => { toastHost.hidden = true }, options.reducedMotion() ? 0 : 320)
-      }, 3000)
+      toastQueue.push(moment)
+      if (!toastShowing) showNextToast()
     },
     setUnlocked(unlocked) {
       tiles.forEach((button, index) => {
