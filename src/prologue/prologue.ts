@@ -363,11 +363,10 @@ export class PrologueSet {
   }
 
   private createMaterialPiles(lowFx: boolean): void {
-    const lateralOffsets = [-0.72, 0, 0.72] as const
     this.builtHuts.forEach((hut, hutIndex) => {
       for (let stage = 0; stage < 3; stage++) {
-        const x = hut.x + 1.6 + stage * 0.22
-        const z = hut.z + (lateralOffsets[hutIndex] ?? 0)
+        const x = hut.x + 1.6 + (stage - 1) * 0.22
+        const z = hut.z
         const pile = materialPile(
           `prologue-material-hut-${hutIndex}-${stage}`,
           'wood',
@@ -376,6 +375,7 @@ export class PrologueSet {
           z,
           lowFx,
         )
+        pile.rotation.set(Math.PI / 2, 0, 0)
         this.materialPiles.push(pile)
         this.group.add(pile)
       }
@@ -386,7 +386,7 @@ export class PrologueSet {
       const z = Math.sin(angle) * 1.65
       const pile = materialPile(
         `prologue-material-fire-${stage}`,
-        'stone',
+        'wood',
         x,
         this.island.sampleHeight(x, z),
         z,

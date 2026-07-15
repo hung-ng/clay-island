@@ -100,7 +100,7 @@ describe('PrologueSet', () => {
     set.dispose()
   })
 
-  it('creates nine deterministic hut piles followed by three fire piles', () => {
+  it('creates nine deterministic hut logs followed by three fire logs', () => {
     const blueprint = createInitialWorldBlueprint(7)
     const set = new PrologueSet(blueprint, false, false)
     const comparison = new PrologueSet(blueprint, false, false)
@@ -122,12 +122,21 @@ describe('PrologueSet', () => {
       pile.position.toArray(),
       pile.rotation.toArray(),
     ]))
-    const lateralOffsets = [-0.72, 0, 0.72]
+    expect(piles.slice(9).map(pile => (pile as THREE.Mesh).geometry.type)).toEqual([
+      'CylinderGeometry',
+      'CylinderGeometry',
+      'CylinderGeometry',
+    ])
+    expect(set.actors.slice(4).map(actor =>
+      actor.group.getObjectByName(`${actor.spec.id}-carried-wood`)?.name,
+    )).toEqual(['villager-4-carried-wood', 'villager-5-carried-wood'])
     set.huts.forEach((hut, hutIndex) => {
       for (let stage = 0; stage < 3; stage++) {
         const pile = piles[hutIndex * 3 + stage]
-        expect(pile.position.x).toBeCloseTo(hut.x + 1.6 + stage * 0.22)
-        expect(pile.position.z).toBeCloseTo(hut.z + lateralOffsets[hutIndex])
+        expect(pile.position.x).toBeCloseTo(hut.x + 1.6 + (stage - 1) * 0.22)
+        expect(pile.position.z).toBeCloseTo(hut.z)
+        expect(pile.rotation.x).toBeCloseTo(Math.PI / 2)
+        expect(pile.rotation.z).toBeCloseTo(0)
       }
     })
 

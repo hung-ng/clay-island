@@ -5,25 +5,14 @@ import { VillagerModel } from '../villagers/model'
 import type { InitialVillagerSpec } from '../world/blueprint'
 import type { ActorState } from './choreography'
 
-function actorNumber(id: string): number {
-  const match = id.match(/(\d+)$/)
-  return match ? Number(match[1]) : 0
-}
-
 function carriedProp(spec: InitialVillagerSpec, lowFx: boolean): THREE.Object3D {
-  const wood = actorNumber(spec.id) < 4
-  const mesh = wood
-    ? new THREE.Mesh(
-        new THREE.CylinderGeometry(0.055, 0.07, 0.52, 6),
-        clayMaterial(PALETTE.bark),
-      )
-    : new THREE.Mesh(
-        new THREE.DodecahedronGeometry(0.14, 0),
-        clayMaterial(PALETTE.stone),
-      )
-  mesh.name = `${spec.id}-carried-${wood ? 'wood' : 'stone'}`
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.055, 0.07, 0.52, 6),
+    clayMaterial(PALETTE.bark),
+  )
+  mesh.name = `${spec.id}-carried-wood`
   mesh.position.set(0, -0.22, 0.08)
-  mesh.rotation.z = wood ? Math.PI / 2 : 0
+  mesh.rotation.z = Math.PI / 2
   mesh.castShadow = !lowFx
   mesh.visible = false
   return mesh

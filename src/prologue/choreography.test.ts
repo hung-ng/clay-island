@@ -44,6 +44,10 @@ describe('prologue choreography', () => {
     for (const [at, actor] of [[8, 4], [8.8, 5], [9.6, 4]] as const) {
       expect(prologueStateAt(at, blueprint).actorStates[actor].pose).toBe('place')
     }
+
+    expect(prologueStateAt(8.4, blueprint).actorStates.slice(4).map(
+      actor => actor.carry,
+    )).toEqual(['wood', 'wood'])
   })
 
   it('orbits at constant height, radius, target, and angular speed', () => {

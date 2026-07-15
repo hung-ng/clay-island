@@ -207,7 +207,7 @@ function actorState(
     carry: buildingTravel || (elapsed >= 3.2 && elapsed <= 6.8 && !beat)
       ? 'wood'
       : fireTravel || (elapsed >= 8 && elapsed < 10 && !beat)
-        ? 'stone'
+        ? 'wood'
         : null,
     frame,
   }
