@@ -25,6 +25,7 @@ export type FsmCtx = {
   hasPond: boolean
   hasFishPond: boolean
   hasTree: boolean
+  canChopAutomatically: boolean
   campfireLit: boolean
   needsFire: boolean
   hasFruitTree: boolean
@@ -37,7 +38,12 @@ export type FsmCtx = {
 const IDLE: { state: VillagerState; weight: number; when: (c: FsmCtx) => boolean }[] = [
   { state: 'wander', weight: 4, when: () => true },
   { state: 'sitAtFire', weight: 3, when: c => c.campfireLit },
-  { state: 'chopTree', weight: 3, when: c => c.hasTree },
+  {
+    state: 'chopTree',
+    weight: 3,
+    when: c => c.hasTree
+      && (c.canChopAutomatically || c.suggestion?.kind === 'chop'),
+  },
   { state: 'buildHut', weight: 3, when: c => c.hasSite },
   { state: 'fish', weight: 4, when: c => c.hasFishPond },
   {

@@ -67,6 +67,7 @@ type ActivityHarness = {
   eating: number
   arrived: boolean
   actionTimer: number
+  chopFrames: number
   timer: number
   thirst: number
   resumeState: string | null
@@ -100,6 +101,7 @@ function activityHarness(
   villager.eating = 0
   villager.arrived = false
   villager.actionTimer = 0
+  villager.chopFrames = 0
   villager.timer = 5
   villager.thirst = 0
   villager.resumeState = null
@@ -1255,13 +1257,143 @@ describe('villagers use the world', () => {
       rig: createRigStub(),
       enter: vi.fn(),
     })
-    const world = { chipsAt: vi.fn() } as unknown as World
+    const world = {
+      chipsAt: vi.fn(),
+      canChopAutomatically: () => true,
+    } as unknown as World
 
     for (let i = 0; i < 8; i++) villager.performActivity(1 / 12, true, world)
 
     expect(tree.shudder).toHaveBeenCalledTimes(4)
     expect(world.chipsAt).toHaveBeenCalledTimes(4)
     expect(tree.chop).toHaveBeenCalledOnce()
+  })
+
+  it('cancels the final autonomous axe blow when eight standing trees remain', () => {
+    const tree = {
+      x: 0,
+      z: 0,
+      state: 'normal',
+      shudder: vi.fn(),
+      chop: vi.fn(),
+    } as unknown as Tree
+    const villager = activityHarness('chopTree')
+    villager.targetTree = tree
+    const world = {
+      chipsAt: vi.fn(),
+      canChopAutomatically: () => false,
+    } as unknown as World
+
+    for (let i = 0; i < 8; i++) villager.performActivity(1 / 12, true, world)
+
+    expect(tree.chop).not.toHaveBeenCalled()
+    expect(villager.enter).toHaveBeenCalledWith('wander', world)
+  })
+
+  it('lets a Nudge-directed villager chop below the autonomous reserve', () => {
+    const tree = {
+      x: 0,
+      z: 0,
+      state: 'normal',
+      shudder: vi.fn(),
+      chop: vi.fn(),
+    } as unknown as Tree
+    const villager = activityHarness('chopTree')
+    villager.suggestion = { kind: 'chop', x: 0, z: 0 }
+    villager.targetTree = tree
+    const world = {
+      chipsAt: vi.fn(),
+      canChopAutomatically: () => false,
+    } as unknown as World
+
+    for (let i = 0; i < 8; i++) villager.performActivity(1 / 12, true, world)
+
+    expect(tree.chop).toHaveBeenCalledOnce()
+  })
+
+  it('retargets a mourner to dry shore when Rain floods the grave en route', () => {
+    const grave = { x: 0, z: 0, fresh: true }
+    const shore = { x: 1.4, z: 0 }
+    const pond = { shoreNear: vi.fn(() => shore) } as unknown as Pond
+    const villager = Object.create(Villager.prototype) as unknown as {
+      state: 'mourn'
+      x: number
+      z: number
+      arrived: boolean
+      actionTimer: number
+      targetGrave: typeof grave
+      targetMourningPond: Pond | null
+      bus: { emit: ReturnType<typeof vi.fn> }
+      emote: ReturnType<typeof vi.fn>
+      enter: ReturnType<typeof vi.fn>
+      setTarget: ReturnType<typeof vi.fn>
+      targetDistance(): number
+      performActivity(dt: number, ticked: boolean, world: World): void
+    }
+    Object.assign(villager, {
+      state: 'mourn',
+      x: 2.5,
+      z: 0,
+      arrived: false,
+      actionTimer: 0,
+      targetGrave: grave,
+      targetMourningPond: null,
+      bus: { emit: vi.fn() },
+      emote: vi.fn(),
+      enter: vi.fn(),
+      setTarget: vi.fn(),
+      targetDistance: () => 1,
+    })
+    const world = { pondAt: vi.fn(() => pond) } as unknown as World
+
+    villager.performActivity(1 / 60, true, world)
+
+    expect(pond.shoreNear).toHaveBeenCalledWith(2.5, 0)
+    expect(villager.setTarget).toHaveBeenCalledWith(shore)
+    expect(villager.targetMourningPond).toBe(pond)
+  })
+
+  it('completes mourning from the shore without walking into the pond', () => {
+    const grave = { x: 0, z: 0, fresh: true }
+    const pond = { shoreNear: vi.fn() } as unknown as Pond
+    const emit = vi.fn()
+    const villager = Object.create(Villager.prototype) as unknown as {
+      state: 'mourn'
+      x: number
+      z: number
+      arrived: boolean
+      actionTimer: number
+      targetGrave: typeof grave
+      targetMourningPond: Pond
+      bus: { emit: typeof emit }
+      emote: ReturnType<typeof vi.fn>
+      enter: ReturnType<typeof vi.fn>
+      setTarget: ReturnType<typeof vi.fn>
+      targetDistance(): number
+      performActivity(dt: number, ticked: boolean, world: World): void
+    }
+    Object.assign(villager, {
+      state: 'mourn',
+      x: 1.4,
+      z: 0,
+      arrived: false,
+      actionTimer: 0,
+      targetGrave: grave,
+      targetMourningPond: pond,
+      bus: { emit },
+      emote: vi.fn(),
+      enter: vi.fn(),
+      setTarget: vi.fn(),
+      targetDistance: () => 0.1,
+    })
+    const world = { pondAt: vi.fn(() => pond) } as unknown as World
+
+    villager.performActivity(1.1, true, world)
+    villager.performActivity(1.1, true, world)
+
+    expect(grave.fresh).toBe(false)
+    expect(emit).toHaveBeenCalledWith({ type: 'villager:mourned' })
+    expect(villager.enter).toHaveBeenCalledWith('wander', world)
   })
 
   it('pauses at an old grave but leaves fresh graves to mourners', () => {

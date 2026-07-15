@@ -4,7 +4,7 @@ import type { SuggestionKind } from '../villagers/fsm'
 import { Villager, spawnVillagers } from '../villagers/villager'
 import { craterAt, craterRimY, type Crater } from './craters'
 import { FIRE_CONFIG, FireSystem, type FireEvent, type Flammable } from './fire'
-import { MAX_TREES, seedSite, type Seedling } from './forest'
+import { AUTONOMOUS_TREE_RESERVE, MAX_TREES, seedSite, type Seedling } from './forest'
 import { Island, WALK_RADIUS, islandSurfaceY } from './island'
 import { Campfire, FlowerPatch, Grave, Hut, MAX_POND_FISH, Pond, Tree } from './objects'
 import {
@@ -777,6 +777,11 @@ export class World {
   /** Trees still occupying a place in the forest population. */
   livingTrees(): Tree[] {
     return this.trees.filter(tree => tree.holdsPlace)
+  }
+
+  /** Ordinary idle work preserves a visible forest; a direct Nudge may override it. */
+  canChopAutomatically(): boolean {
+    return this.livingTrees().length > AUTONOMOUS_TREE_RESERVE
   }
 
   /** Sprout a sapling near survivors while the forest is below its cap. */

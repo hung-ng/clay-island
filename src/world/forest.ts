@@ -12,6 +12,8 @@ export type TreeState =
 
 /** The island supports this many standing trees. Falling trees and remnants do not count. */
 export const MAX_TREES = 13
+/** Villagers preserve this many standing trees unless the player explicitly nudges a chop. */
+export const AUTONOMOUS_TREE_RESERVE = 8
 
 const SEED_MIN = 2.5
 const SEED_MAX = 5

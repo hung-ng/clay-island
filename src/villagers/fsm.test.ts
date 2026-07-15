@@ -11,7 +11,8 @@ import {
 const base = (o: Partial<FsmCtx> = {}): FsmCtx => ({
   state: 'wander', fireNear: false, freshGrave: false, hasRuin: false,
   hasSite: false, hasPond: false, hasTree: true, campfireLit: true,
-  hasFishPond: false, needsFire: false, hasFruitTree: false, fireOut: false,
+  hasFishPond: false, canChopAutomatically: true,
+  needsFire: false, hasFruitTree: false, fireOut: false,
   suggestion: null, rng: new RNG(3), ...o,
 })
 
@@ -50,6 +51,17 @@ describe('weighted idle selection', () => {
       const ctx = base({ rng: new RNG(seed), hasTree: false, hasSite: false, hasPond: false })
       const next = decideNext(ctx)
       expect(['wander', 'sitAtFire']).toContain(next)
+    }
+  })
+  it('does not choose autonomous chopping while the forest reserve is protected', () => {
+    for (let seed = 0; seed < 300; seed++) {
+      const context = base({
+        rng: new RNG(seed),
+        hasTree: true,
+        canChopAutomatically: false,
+      })
+
+      expect(decideNext(context)).not.toBe('chopTree')
     }
   })
   it('fishes only when at least one pond is stocked', () => {
@@ -145,6 +157,21 @@ describe('a nudge suggests, it never commands', () => {
     }
     expect(taken).toBeGreaterThan(200)
     expect(taken).toBeLessThan(300)
+  })
+
+  it('lets an explicit chop suggestion bypass the autonomous forest reserve', () => {
+    let taken = 0
+    for (let seed = 0; seed < 300; seed++) {
+      const context = base({
+        rng: new RNG(seed),
+        hasTree: true,
+        suggestion: { kind: 'chop', x: 0, z: 0 },
+        canChopAutomatically: false,
+      })
+      if (decideNext(context) === 'chopTree') taken++
+    }
+
+    expect(taken).toBeGreaterThan(200)
   })
 
   it('is ignored outright by an emergency', () => {

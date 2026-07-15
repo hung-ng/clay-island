@@ -904,6 +904,16 @@ describe('World suggestions and village growth', () => {
 })
 
 describe('World forest', () => {
+  it('allows autonomous chopping only above the eight-tree reserve', () => {
+    const world = makeWorld()
+    for (let i = 0; i < 8; i++) addTree(world, `tree-${i}`, i, 0)
+
+    expect(world.canChopAutomatically()).toBe(false)
+
+    addTree(world, 'tree-8', 8, 0)
+    expect(world.canChopAutomatically()).toBe(true)
+  })
+
   it('a STUMP is not fuel — a clearing of stumps is not a tinderbox', () => {
     const world = makeWorld()
     const stump = addTree(world, 'tree-0', 0, 0)

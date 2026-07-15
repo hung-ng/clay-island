@@ -144,7 +144,7 @@ export class Journal {
       // `bySpread` is the lesson: fire jumps from tree to tree on its own.
       // The old `burning >= 5` was a body count, and taught nothing.
       case 'fire:ignited': return event.bySpread ? 'wildfire' : null
-      case 'fire:doused': return event.burning >= 3 ? 'firefighter' : null
+      case 'fire:doused': return event.byRain && event.burning >= 1 ? 'firefighter' : null
       case 'pond:emptied': return 'drained'
       case 'crater:created':
         this.state.craters.push({ x: event.x, z: event.z })

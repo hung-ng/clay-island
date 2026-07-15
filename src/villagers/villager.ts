@@ -126,6 +126,7 @@ export class Villager {
   private targetTree: Tree | null = null
   private targetHut: Hut | null = null
   private targetGrave: GraveLike | null = null
+  private targetMourningPond: Pond | null = null
   private targetPond: Pond | null = null
   private targetCampfire: Campfire | null = null
   private rebuildingRuin = false
@@ -329,6 +330,11 @@ export class Villager {
       this.group.rotation.y = Math.atan2(
         this.targetPond.x - this.x,
         this.targetPond.z - this.z,
+      )
+    } else if (this.arrived && this.state === 'mourn' && this.targetGrave) {
+      this.group.rotation.y = Math.atan2(
+        this.targetGrave.x - this.x,
+        this.targetGrave.z - this.z,
       )
     }
 
@@ -756,6 +762,10 @@ export class Villager {
             world.chipsAt(this.targetTree.x, this.targetTree.z)
           }
           if (this.chopFrames >= 8) {
+            if (!this.suggestionForState('chopTree') && !world.canChopAutomatically()) {
+              this.enter('wander', world)
+              return
+            }
             this.targetTree.chop()
             this.completeSuggestionFor('chopTree')
             this.enter('wander', world)
@@ -817,7 +827,12 @@ export class Villager {
           this.enter('wander', world)
           return
         }
-        if (distance(this, this.targetGrave) < 0.35) {
+        const pond = world.pondAt(this.targetGrave.x, this.targetGrave.z)
+        if (pond !== this.targetMourningPond) {
+          this.targetMourningPond = pond
+          this.setTarget(pond ? pond.shoreNear(this.x, this.z) : this.targetGrave)
+        }
+        if (this.targetDistance() < 0.35) {
           if (!this.arrived) {
             this.arrived = true
             this.actionTimer = 2.2
@@ -1156,6 +1171,7 @@ export class Villager {
     this.targetTree = null
     this.targetHut = null
     this.targetGrave = null
+    this.targetMourningPond = null
     this.targetPond = null
     this.targetCampfire = null
     this.rebuildingRuin = false
@@ -1204,7 +1220,10 @@ export class Villager {
         const graves = world.graves.filter(isGrave).filter(grave => grave.fresh)
         this.targetGrave = graves.sort((a, b) => distance(this, a) - distance(this, b))[0] ?? null
         if (!this.targetGrave) return this.enter('wander', world)
-        this.setTarget(this.targetGrave)
+        this.targetMourningPond = world.pondAt(this.targetGrave.x, this.targetGrave.z)
+        this.setTarget(this.targetMourningPond
+          ? this.targetMourningPond.shoreNear(this.x, this.z)
+          : this.targetGrave)
         return
       }
       case 'rebuild': {
@@ -1281,6 +1300,7 @@ export class Villager {
       hasPond: world.ponds.length > 0,
       hasFishPond: world.ponds.some(pond => pond.hasFish),
       hasTree: world.trees.some(tree => tree.state === 'normal' && !tree.hasFruit),
+      canChopAutomatically: world.canChopAutomatically(),
       campfireLit: world.campfire?.lit ?? false,
       needsFire: world.needsFire(),
       hasFruitTree: world.fruitingTree() !== null,

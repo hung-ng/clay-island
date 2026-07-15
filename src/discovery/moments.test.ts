@@ -85,10 +85,11 @@ describe('Journal.observe', () => {
     expect(journal.observe({ type: 'villager:ate' })?.id).toBe('fed')
   })
 
-  it('firefighter needs a douse while three or more were burning', () => {
+  it('unlocks Firefighter when Rain douses at least one active fire', () => {
     const journal = new Journal(memoryStorage())
-    expect(journal.observe({ type: 'fire:doused', byRain: true, burning: 2 })).toBeNull()
-    expect(journal.observe({ type: 'fire:doused', byRain: true, burning: 3 })?.id)
+    expect(journal.observe({ type: 'fire:doused', byRain: false, burning: 3 })).toBeNull()
+    expect(journal.observe({ type: 'fire:doused', byRain: true, burning: 0 })).toBeNull()
+    expect(journal.observe({ type: 'fire:doused', byRain: true, burning: 1 })?.id)
       .toBe('firefighter')
   })
 
