@@ -59,7 +59,7 @@ export class VillagerModel {
       leg.position.set(side * 0.11, 0.12, 0)
       this.addPart(leg, lowFx)
     }
-    this.arms = [arms[0], arms[1]]
+    this.arms = [arms[0]!, arms[1]!]
     this.group.scale.setScalar(MODEL_SCALE)
 
     this.axe = new THREE.Group()
@@ -121,7 +121,7 @@ export class VillagerModel {
   }
 
   restoreColors(): void {
-    this.materials.forEach((material, index) => material.color.copy(this.cleanColors[index]))
+    this.materials.forEach((material, index) => material.color.copy(this.cleanColors[index]!))
   }
 
   dispose(): void {

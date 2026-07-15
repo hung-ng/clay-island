@@ -48,8 +48,7 @@ export function buildInitialWorld(
     )
     person.group.name = spec.id
     person.group.rotation.y = spec.facing
-    world.villagers.push(person)
-    island.group.add(person.group)
+    world.addVillager(person)
   }
 
   return { island, world }

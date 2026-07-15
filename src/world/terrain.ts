@@ -148,8 +148,8 @@ export function groupBasins(
 
     for (let i = 0; i < group.length; i++) {
       for (let j = unassigned.length - 1; j >= 0; j--) {
-        if (!sharesWater(group[i], unassigned[j], surfaceY)) continue
-        group.push(unassigned[j])
+        if (!sharesWater(group[i]!, unassigned[j]!, surfaceY)) continue
+        group.push(unassigned[j]!)
         unassigned.splice(j, 1)
       }
     }

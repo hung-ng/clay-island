@@ -27,7 +27,10 @@ export type CameraControlsPort = {
   maxTargetRadius: number
   minPolarAngle: number
   maxPolarAngle: number
-  touches: { ONE?: THREE.TOUCH | null; TWO?: THREE.TOUCH | null }
+  touches: {
+    ONE?: THREE.TOUCH | null | undefined
+    TWO?: THREE.TOUCH | null | undefined
+  }
   update(dt?: number): void
   dispose(): void
   addEventListener(type: 'start' | 'end', listener: () => void): void

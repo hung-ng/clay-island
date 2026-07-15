@@ -64,14 +64,16 @@ describe('pond Nudge outcomes', () => {
 })
 
 describe('tree Nudge outcomes', () => {
-  const cast = (hasFruit: boolean): ReturnType<typeof vi.fn> => {
+  const cast = (hasFruit: boolean, actionable = true): ReturnType<typeof vi.fn> => {
     const suggest = vi.fn()
+    const tree = { id: 'tree-selected', hasFruit }
     const ctx = {
       kind: 'tree',
       x: 3,
       z: -1,
       world: {
-        treeAt: () => ({ hasFruit }),
+        treeAt: () => tree,
+        actionableTreeAt: () => actionable ? tree : null,
         suggest,
       },
     } as unknown as CastCtx
@@ -81,10 +83,14 @@ describe('tree Nudge outcomes', () => {
   }
 
   it('suggests harvesting from a fruiting tree', () => {
-    expect(cast(true)).toHaveBeenCalledWith(3, -1, 'harvest')
+    expect(cast(true)).toHaveBeenCalledWith(3, -1, 'harvest', 'tree-selected')
   })
 
   it('suggests chopping a bare tree', () => {
-    expect(cast(false)).toHaveBeenCalledWith(3, -1, 'chop')
+    expect(cast(false)).toHaveBeenCalledWith(3, -1, 'chop', 'tree-selected')
+  })
+
+  it('does not redirect a Nudge from an invalid tree to another tree', () => {
+    expect(cast(false, false)).not.toHaveBeenCalled()
   })
 })

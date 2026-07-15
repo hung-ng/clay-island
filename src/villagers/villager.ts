@@ -55,6 +55,19 @@ function distance(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.z - b.z)
 }
 
+function disposeObjectResources(object: THREE.Object3D): void {
+  const geometries = new Set<THREE.BufferGeometry>()
+  const materials = new Set<THREE.Material>()
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return
+    geometries.add(child.geometry)
+    const childMaterials = Array.isArray(child.material) ? child.material : [child.material]
+    for (const material of childMaterials) materials.add(material)
+  })
+  for (const geometry of geometries) geometry.dispose()
+  for (const material of materials) material.dispose()
+}
+
 function clampToIsland(point: Point): Point {
   const radius = Math.hypot(point.x, point.z)
   if (radius <= WALK_RADIUS) return point
@@ -360,6 +373,14 @@ export class Villager {
     this.bus.emit({ type: 'villager:died', cause })
   }
 
+  dispose(): void {
+    this.group.removeFromParent()
+    this.ghost.removeFromParent()
+    disposeObjectResources(this.group)
+    disposeObjectResources(this.ghost)
+    this.emoteSprite.dispose()
+  }
+
   emote(kind: EmoteKind): void {
     this.emoteSprite.show(kind, 2.2)
   }
@@ -450,7 +471,7 @@ export class Villager {
       .filter(candidate => candidate.state === 'built')
       .sort((a, b) => distance(this, a) - distance(this, b))[0] ?? null
     const tree = world.trees
-      .filter(candidate => candidate.state === 'normal')
+      .filter(candidate => world.isTreeActionable(candidate))
       .sort((a, b) => distance(this, a) - distance(this, b))[0] ?? null
     const treeIsNearer = tree !== null
       && (hut === null || distance(this, tree) < distance(this, hut))
@@ -520,19 +541,19 @@ export class Villager {
     switch (suggestion.kind) {
       case 'chop':
         if (this.targetTree) {
-          if (!world.trees.includes(this.targetTree) || this.targetTree.state !== 'normal') {
+          if (!world.trees.includes(this.targetTree) || !world.isTreeActionable(this.targetTree)) {
             this.suggestion = null
           } else if (this.targetTree.hasFruit) {
             this.convertChopSuggestionToHarvest()
           }
         } else {
-          const intended = world.trees
-            .filter(tree => distance(tree, suggestion) <= 1.2)
-            .sort((a, b) => distance(a, suggestion) - distance(b, suggestion))[0]
-          if (intended?.state === 'normal' && intended.hasFruit) {
-            this.convertChopSuggestionToHarvest()
-          } else if (!world.trees.some(tree => tree.state === 'normal' && !tree.hasFruit)) {
+          const intended = suggestion.targetId
+            ? world.trees.find(tree => tree.id === suggestion.targetId) ?? null
+            : world.actionableTreeAt(suggestion.x, suggestion.z)
+          if (!intended || !world.isTreeActionable(intended)) {
             this.suggestion = null
+          } else if (intended.hasFruit) {
+            this.convertChopSuggestionToHarvest()
           }
         }
         return
@@ -542,17 +563,16 @@ export class Villager {
         if (this.eating > 0) return
         if (this.targetTree) {
           if (!world.trees.includes(this.targetTree)
-            || this.targetTree.state !== 'normal'
+            || !world.isTreeActionable(this.targetTree)
             || (!this.targetTree.hasFruit && this.eating <= 0)) {
             this.suggestion = null
           }
           return
         }
-        const intended = world.trees
-          .filter(tree => distance(tree, suggestion) <= 1.2)
-          .sort((a, b) => distance(a, suggestion) - distance(b, suggestion))[0]
-        if ((intended && (intended.state !== 'normal' || !intended.hasFruit))
-          || !world.trees.some(tree => tree.state === 'normal' && tree.hasFruit)) {
+        const intended = suggestion.targetId
+          ? world.trees.find(tree => tree.id === suggestion.targetId) ?? null
+          : world.actionableTreeAt(suggestion.x, suggestion.z)
+        if (!intended || !world.isTreeActionable(intended) || !intended.hasFruit) {
           this.suggestion = null
         }
         return
@@ -690,7 +710,7 @@ export class Villager {
     // Water is an obstacle, never a hazard. Four depth samples approximate a
     // shoreline gradient and steer walkers away without introducing a navmesh.
     const probe = 0.9
-    for (const [ox, oz] of [[probe, 0], [-probe, 0], [0, probe], [0, -probe]]) {
+    for (const [ox, oz] of [[probe, 0], [-probe, 0], [0, probe], [0, -probe]] as const) {
       const depth = world.waterDepthAt(this.x + ox, this.z + oz)
       if (depth <= 0) continue
       const push = Math.min(1, depth) * 2.6
@@ -739,7 +759,7 @@ export class Villager {
         return
       }
       case 'chopTree': {
-        if (!this.targetTree || this.targetTree.state !== 'normal') {
+        if (!this.targetTree || !world.isTreeActionable(this.targetTree)) {
           this.cancelSuggestionFor('chopTree')
           this.enter('wander', world)
           return
@@ -930,7 +950,7 @@ export class Villager {
         // Once the fruit is in hand the tree no longer matters — eat it even if
         // the tree burns down mid-chew.
         if (this.eating > 0) return
-        if (!this.targetTree || !this.targetTree.hasFruit) {
+        if (!this.targetTree || !world.isTreeActionable(this.targetTree) || !this.targetTree.hasFruit) {
           this.cancelSuggestionFor('harvest')
           this.enter('wander', world)
           return
@@ -1136,15 +1156,23 @@ export class Villager {
   }
 
   private selectHarvestTree(world: World, preferred: Tree | null = null): Tree | null {
-    const trees = world.trees.filter(tree => tree.state === 'normal' && tree.hasFruit)
+    const trees = world.trees.filter(tree => world.isTreeActionable(tree) && tree.hasFruit)
     if (preferred && trees.includes(preferred)) return preferred
-    const origin = this.suggestion?.kind === 'harvest' ? this.suggestion : this
+    const suggestion = this.suggestion?.kind === 'harvest' ? this.suggestion : null
+    if (suggestion?.targetId) {
+      return trees.find(tree => tree.id === suggestion.targetId) ?? null
+    }
+    const origin = suggestion ?? this
     return trees.sort((a, b) => distance(origin, a) - distance(origin, b))[0] ?? null
   }
 
   private selectChopTree(world: World): Tree | null {
-    const trees = world.trees.filter(tree => tree.state === 'normal' && !tree.hasFruit)
-    const origin = this.suggestion?.kind === 'chop' ? this.suggestion : this
+    const trees = world.trees.filter(tree => world.isTreeActionable(tree) && !tree.hasFruit)
+    const suggestion = this.suggestion?.kind === 'chop' ? this.suggestion : null
+    if (suggestion?.targetId) {
+      return trees.find(tree => tree.id === suggestion.targetId) ?? null
+    }
+    const origin = suggestion ?? this
     return trees.sort((a, b) => distance(origin, a) - distance(origin, b))[0] ?? null
   }
 
@@ -1299,7 +1327,7 @@ export class Villager {
       hasSite: world.hasHutWork(),
       hasPond: world.ponds.length > 0,
       hasFishPond: world.ponds.some(pond => pond.hasFish),
-      hasTree: world.trees.some(tree => tree.state === 'normal' && !tree.hasFruit),
+      hasTree: world.choppableTree() !== null,
       canChopAutomatically: world.canChopAutomatically(),
       campfireLit: world.campfire?.lit ?? false,
       needsFire: world.needsFire(),
@@ -1414,7 +1442,9 @@ export function spawnVillagers(
         const radius = rng.range(2.2, 9.8)
         const candidate = { x: Math.cos(angle) * radius, z: Math.sin(angle) * radius }
         const clearOfObjects = world.objectsNear(candidate.x, candidate.z, 1.6).length === 0
-        const clearOfVillagers = world.villagers.every(villager => distance(candidate, villager) >= 0.75)
+        const clearOfVillagers = world.villagers.every(villager => (
+          !villager.alive || distance(candidate, villager) >= 0.75
+        ))
         if (clearOfObjects && clearOfVillagers) {
           point = candidate
           break
@@ -1423,22 +1453,20 @@ export function spawnVillagers(
     }
 
     const visualSeed = rng.int(1, 0x7fffffff)
+    const villagerOptions: VillagerOptions = { visualSeed }
+    if (options.lowFx !== undefined) villagerOptions.lowFx = options.lowFx
+    if (options.animateIn !== undefined) villagerOptions.animateIn = options.animateIn
     const villager = new Villager(
-      `villager-${world.villagers.length}`,
+      world.nextVillagerId(),
       point.x,
       point.z,
       island,
       rng,
       world,
       world.bus,
-      {
-        lowFx: options.lowFx,
-        animateIn: options.animateIn,
-        visualSeed,
-      },
+      villagerOptions,
     )
-    world.villagers.push(villager)
-    island.group.add(villager.group)
+    world.addVillager(villager)
     spawned.push(villager)
   }
   return spawned

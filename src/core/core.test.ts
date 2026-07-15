@@ -16,6 +16,9 @@ describe('RNG', () => {
     const r = new RNG(1)
     for (let i = 0; i < 100; i++) { const v = r.range(2, 5); expect(v).toBeGreaterThanOrEqual(2); expect(v).toBeLessThan(5) }
   })
+  it('rejects an empty choice instead of returning undefined', () => {
+    expect(() => new RNG(1).pick([])).toThrow(RangeError)
+  })
 })
 
 describe('noise', () => {

@@ -63,7 +63,7 @@ export class ParticleBurst {
     let index = this.cursor
 
     while (spawned < options.n && scanned < this.max) {
-      if (this.lifetime[index] <= 0) {
+      if (this.lifetime[index]! <= 0) {
         this.spawn(index, options, baseSize)
         this.mesh.setColorAt(index, color)
         spawned++
@@ -82,10 +82,10 @@ export class ParticleBurst {
   update(dt: number): void {
     let changed = false
     for (let i = 0; i < this.max; i++) {
-      const life = this.lifetime[i]
+      const life = this.lifetime[i]!
       if (life <= 0) continue
-      this.age[i] += dt
-      if (this.age[i] >= life) {
+      this.age[i] = this.age[i]! + dt
+      if (this.age[i]! >= life) {
         this.lifetime[i] = 0
         this.writeMatrix(i, 0)
         changed = true
@@ -93,16 +93,16 @@ export class ParticleBurst {
       }
 
       const offset = i * 3
-      this.velocity[offset + 1] -= this.gravity[i] * dt
-      this.position[offset] += this.velocity[offset] * dt
-      this.position[offset + 1] += this.velocity[offset + 1] * dt
-      this.position[offset + 2] += this.velocity[offset + 2] * dt
-      this.rotation[offset] += this.spin[offset] * dt
-      this.rotation[offset + 1] += this.spin[offset + 1] * dt
-      this.rotation[offset + 2] += this.spin[offset + 2] * dt
+      this.velocity[offset + 1] = this.velocity[offset + 1]! - this.gravity[i]! * dt
+      this.position[offset] = this.position[offset]! + this.velocity[offset]! * dt
+      this.position[offset + 1] = this.position[offset + 1]! + this.velocity[offset + 1]! * dt
+      this.position[offset + 2] = this.position[offset + 2]! + this.velocity[offset + 2]! * dt
+      this.rotation[offset] = this.rotation[offset]! + this.spin[offset]! * dt
+      this.rotation[offset + 1] = this.rotation[offset + 1]! + this.spin[offset + 1]! * dt
+      this.rotation[offset + 2] = this.rotation[offset + 2]! + this.spin[offset + 2]! * dt
 
-      const remaining = 1 - this.age[i] / life
-      this.writeMatrix(i, this.size[i] * remaining)
+      const remaining = 1 - this.age[i]! / life
+      this.writeMatrix(i, this.size[i]! * remaining)
       changed = true
     }
     if (changed) this.mesh.instanceMatrix.needsUpdate = true
@@ -128,16 +128,16 @@ export class ParticleBurst {
     this.lifetime[index] = options.life * this.rng.range(0.8, 1.2)
     this.gravity[index] = options.gravity
     this.size[index] = baseSize * this.rng.range(0.65, 1.4)
-    this.writeMatrix(index, this.size[index])
+    this.writeMatrix(index, this.size[index]!)
   }
 
   private writeMatrix(index: number, scale: number): void {
     const offset = index * 3
     this.dummy.position.fromArray(this.position, offset)
     this.dummy.rotation.set(
-      this.rotation[offset],
-      this.rotation[offset + 1],
-      this.rotation[offset + 2],
+      this.rotation[offset]!,
+      this.rotation[offset + 1]!,
+      this.rotation[offset + 2]!,
     )
     this.dummy.scale.setScalar(scale)
     this.dummy.updateMatrix()

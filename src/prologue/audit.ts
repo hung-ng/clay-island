@@ -33,7 +33,7 @@ export function compareFramebuffers(
       compared++
       const offset = (y * width + x) * 4
       if ([0, 1, 2].some(channel => (
-        Math.abs(before[offset + channel] - after[offset + channel]) > 2
+        Math.abs(before[offset + channel]! - after[offset + channel]!) > 2
       ))) changed++
     }
   }

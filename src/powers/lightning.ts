@@ -5,7 +5,7 @@ import { wobble } from '../fx/wobble'
 import { PALETTE } from '../ui/tokens'
 import { resolveInteraction } from './matrix'
 import { applyInteractions } from './outcomes'
-import { Power, type CastCtx } from './power'
+import { impactContext, Power, type CastCtx } from './power'
 
 type Actor = {
   start(): void
@@ -26,12 +26,11 @@ function gatheringCloud(ctx: CastCtx): Actor {
     [0, 0.18, 0, 1.18],
     [0.72, -0.02, -0.08, 0.86],
   ] as const
-  for (let i = 0; i < offsets.length; i++) {
+  for (const [i, [x, y, z, scale]] of offsets.entries()) {
     const geometry = wobble(new THREE.SphereGeometry(0.82, 12, 9), ctx.rng, 0.09)
     const material = clayMaterial(i === 1 ? PALETTE.scorch : PALETTE.stone)
     const blob = new THREE.Mesh(geometry, material)
     blob.name = 'lightning-cloud-blob'
-    const [x, y, z, scale] = offsets[i]
     blob.position.set(x, y, z)
     blob.scale.set(scale, scale * 0.72, scale)
     blob.castShadow = true
@@ -43,7 +42,7 @@ function gatheringCloud(ctx: CastCtx): Actor {
 
   let startedAt = Number.POSITIVE_INFINITY
   let removed = false
-  const driver = group.children[0]
+  const driver = group.children[0]!
   driver.frustumCulled = false
   driver.onBeforeRender = () => {
     if (!Number.isFinite(startedAt)) return
@@ -97,7 +96,7 @@ function boltGeometry(ctx: CastCtx, y0: number): Actor {
   addTube(points, 0.075)
 
   for (const [index, side] of [[3, -1], [5, 1]] as const) {
-    const start = points[index]
+    const start = points[index]!
     const end = start.clone().add(new THREE.Vector3(
       ctx.rng.range(1.1, 1.8) * side,
       ctx.rng.range(-3.8, -2.4),
@@ -143,6 +142,7 @@ export class Lightning extends Power {
         cloud.start()
       })
       .at(0.9, () => {
+        const impact = impactContext(ctx)
         bolt.start()
         ctx.fx.flash(PALETTE.ghost, 0.06)
         ctx.fx.shake.add(0.35, 0.24)
@@ -150,9 +150,9 @@ export class Lightning extends Power {
           if (villager.alive) villager.flinch()
         }
         ctx.bus.emit({
-          type: 'power:impact', power: this.id, target: ctx.kind, x: ctx.x, z: ctx.z,
+          type: 'power:impact', power: this.id, target: impact.kind, x: ctx.x, z: ctx.z,
         })
-        applyInteractions(resolveInteraction(this.id, ctx.kind), ctx, y0)
+        applyInteractions(resolveInteraction(this.id, impact.kind), impact, y0)
       })
       .at(0.9 + 2 / 12, () => bolt.remove())
       .at(1.2, () => cloud.remove())

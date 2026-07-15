@@ -6,7 +6,7 @@ import type { SuggestionKind } from '../villagers/fsm'
 import { MAX_HUTS } from '../world/world'
 import { resolveInteraction } from './matrix'
 import { applyInteractions } from './outcomes'
-import { Power, type CastCtx } from './power'
+import { impactContext, Power, type CastCtx } from './power'
 
 type Ripple = {
   start(): void
@@ -137,9 +137,10 @@ export class Nudge extends Power {
         ripple.start()
       })
       .at(0.25, () => {
-        applyInteractions(resolveInteraction(this.id, ctx.kind), ctx, y0)
+        const impact = impactContext(ctx)
+        applyInteractions(resolveInteraction(this.id, impact.kind), impact, y0)
         ctx.bus.emit({
-          type: 'power:impact', power: this.id, target: ctx.kind, x: ctx.x, z: ctx.z,
+          type: 'power:impact', power: this.id, target: impact.kind, x: ctx.x, z: ctx.z,
         })
       })
       .at(1.2, () => ripple.remove())

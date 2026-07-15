@@ -310,18 +310,17 @@ export class PrologueSet {
   private applyHuts(state: PrologueState): void {
     state.hutStages.forEach((stage, index) => {
       const hut = this.builtHuts[index]
-      while (this.appliedHutStages[index] < stage) {
+      if (!hut) return
+      while ((this.appliedHutStages[index] ?? 0) < stage) {
         hut.buildTick()
-        this.appliedHutStages[index]++
+        this.appliedHutStages[index] = (this.appliedHutStages[index] ?? 0) + 1
       }
       if (!state.reducedMotion || stage === 0) {
         setPresentationOpacity(hut.group, 1)
         return
       }
-      setPresentationOpacity(
-        hut.group,
-        revealAmount(state.elapsed, HUT_BEATS[index][stage - 1]),
-      )
+      const revealAt = HUT_BEATS[index]?.[stage - 1]
+      setPresentationOpacity(hut.group, revealAt === undefined ? 1 : revealAmount(state.elapsed, revealAt))
     })
   }
 
@@ -349,11 +348,13 @@ export class PrologueSet {
     for (let index = 0; index < 9; index++) {
       const hut = Math.floor(index / 3)
       const stage = index % 3
-      this.materialPiles[index].visible = this.hutStage(state, hut) <= stage
+      const pile = this.materialPiles[index]
+      if (pile) pile.visible = this.hutStage(state, hut) <= stage
     }
     for (let index = 0; index < 3; index++) {
       const consumed = state.campfireProgress >= (index + 1) * 0.33
-      this.materialPiles[9 + index].visible = !consumed
+      const pile = this.materialPiles[9 + index]
+      if (pile) pile.visible = !consumed
     }
   }
 
@@ -366,7 +367,7 @@ export class PrologueSet {
     this.builtHuts.forEach((hut, hutIndex) => {
       for (let stage = 0; stage < 3; stage++) {
         const x = hut.x + 1.6 + stage * 0.22
-        const z = hut.z + lateralOffsets[hutIndex]
+        const z = hut.z + (lateralOffsets[hutIndex] ?? 0)
         const pile = materialPile(
           `prologue-material-hut-${hutIndex}-${stage}`,
           'wood',

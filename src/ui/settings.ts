@@ -1,4 +1,5 @@
 import type { VisualQuality } from '../core/preferences'
+import { setModalBackgroundInert } from './modal'
 
 export type SettingsUI = {
   close(): void
@@ -181,16 +182,10 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
   }
 
   const setBackgroundInert = (value: boolean): void => {
-    if (value) {
-      for (const child of ui.children) {
-        if (!(child instanceof HTMLElement) || child === layer) continue
-        if (!backgroundInertState.has(child)) backgroundInertState.set(child, child.inert)
-        child.inert = true
-      }
-      return
-    }
-    for (const [element, wasInert] of backgroundInertState) element.inert = wasInert
-    backgroundInertState.clear()
+    const background = [...ui.children].filter((child): child is HTMLElement => (
+      child instanceof HTMLElement && child !== layer
+    ))
+    setModalBackgroundInert(background, backgroundInertState, value)
   }
 
   const showSettingsBody = (focus = true): void => {
@@ -248,7 +243,10 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
     ;(quality === 'enhanced' ? enhancedRadio : reducedRadio).focus({ preventScroll: true })
   }
 
-  const handleTrigger = (): void => setOpen(!open)
+  const handleTrigger = (): void => {
+    if (trigger.inert || trigger.closest('[inert]')) return
+    setOpen(!open)
+  }
   const handleClose = (): void => setOpen(false)
   const handleBackdrop = (): void => setOpen(false)
   const handleSound = (): void => options.onSoundChange(!muted)
@@ -285,7 +283,7 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
       focusable.at(-1)?.focus()
     } else if (!event.shiftKey && current === focusable.length - 1) {
       event.preventDefault()
-      focusable[0].focus()
+      focusable[0]?.focus()
     }
   }
 

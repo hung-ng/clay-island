@@ -370,7 +370,11 @@ export class Sfx {
   }
 
   private trackVoice(sources: AudioScheduledSourceNode[], nodes: AudioNode[]): void {
-    while (this.voices.length >= MAX_VOICES) this.voices[0].stop()
+    while (this.voices.length >= MAX_VOICES) {
+      const oldest = this.voices[0]
+      if (!oldest) break
+      oldest.stop()
+    }
     let ended = 0
     let cleaned = false
     const voice: Voice = {

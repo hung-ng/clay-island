@@ -5,7 +5,7 @@ import { wobble } from '../fx/wobble'
 import { PALETTE } from '../ui/tokens'
 import { resolveInteraction } from './matrix'
 import { applyInteractions } from './outcomes'
-import { Power, type CastCtx } from './power'
+import { impactContext, Power, type CastCtx } from './power'
 
 type AnimatedActor = {
   start(): void
@@ -153,6 +153,7 @@ export class Meteor extends Power {
       .at(0, () => shadow.start())
       .at(0, () => rock.start())
       .at(1.2, () => {
+        const impact = impactContext(ctx)
         rock.remove()
         shadow.remove()
         ctx.fx.shake.add(0.9, 0.6)
@@ -174,9 +175,9 @@ export class Meteor extends Power {
         ctx.island.scorch(ctx.x, ctx.z, 3.4)
         ctx.bus.emit({ type: 'crater:created', x: ctx.x, z: ctx.z })
         ctx.bus.emit({
-          type: 'power:impact', power: this.id, target: ctx.kind, x: ctx.x, z: ctx.z,
+          type: 'power:impact', power: this.id, target: impact.kind, x: ctx.x, z: ctx.z,
         })
-        applyInteractions(resolveInteraction(this.id, ctx.kind), ctx, y0)
+        applyInteractions(resolveInteraction(this.id, impact.kind), impact, y0)
         for (const villager of ctx.world.villagers) {
           if (villager.alive && Math.hypot(villager.x - ctx.x, villager.z - ctx.z) <= 4.5) {
             villager.cower()

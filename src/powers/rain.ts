@@ -6,7 +6,7 @@ import { PALETTE } from '../ui/tokens'
 import { ISLAND_RADIUS } from '../world/island'
 import { resolveInteraction } from './matrix'
 import { applyInteractions } from './outcomes'
-import { Power, type CastCtx } from './power'
+import { impactContext, Power, type CastCtx } from './power'
 
 const RAIN_RADIUS = 5
 const DROP_COUNT = 120
@@ -54,12 +54,11 @@ function rainField(ctx: CastCtx): RainActor {
     [1.1, 0.02, -0.08, 1.02],
     [0, -0.35, 0.18, 1.1],
   ] as const
-  for (let i = 0; i < cloudOffsets.length; i++) {
+  for (const [i, [x, y, z, scale]] of cloudOffsets.entries()) {
     const geometry = wobble(new THREE.SphereGeometry(0.95, 12, 9), ctx.rng, 0.1)
     const material = clayMaterial(i === 4 ? PALETTE.stone : PALETTE.cloud)
     const blob = new THREE.Mesh(geometry, material)
     blob.name = 'rain-cloud-blob'
-    const [x, y, z, scale] = cloudOffsets[i]
     blob.position.set(x, y, z)
     blob.scale.set(scale, scale * 0.68, scale)
     blob.castShadow = true
@@ -109,7 +108,7 @@ function rainField(ctx: CastCtx): RainActor {
     dropZ[i] = offset.z
     dropSpeed[i] = ctx.rng.range(0.72, 1.18)
     dropPhase[i] = ctx.rng.next()
-    previousCycle[i] = dropPhase[i]
+    previousCycle[i] = dropPhase[i]!
   }
 
   const rippleX = new Float32Array(RIPPLE_COUNT)
@@ -149,27 +148,29 @@ function rainField(ctx: CastCtx): RainActor {
     if (raining) {
       const rainElapsed = elapsed - 1.2
       for (let i = 0; i < DROP_COUNT; i++) {
-        const cycle = (rainElapsed * dropSpeed[i] + dropPhase[i]) % 1
-        const ground = ctx.island.sampleHeight(ctx.x + dropX[i], ctx.z + dropZ[i]) + 0.08
+        const cycle = (rainElapsed * dropSpeed[i]! + dropPhase[i]!) % 1
+        const localX = dropX[i]!
+        const localZ = dropZ[i]!
+        const ground = ctx.island.sampleHeight(ctx.x + localX, ctx.z + localZ) + 0.08
         const y = THREE.MathUtils.lerp(9, ground, cycle)
-        dummy.position.set(dropX[i], y, dropZ[i])
+        dummy.position.set(localX, y, localZ)
         dummy.rotation.set(0, 0, 0)
         dummy.scale.set(0.75, 2.8, 0.75)
         dummy.updateMatrix()
         droplets.setMatrixAt(i, dummy.matrix)
-        if (cycle < previousCycle[i]) spawnRipple(dropX[i], ground, dropZ[i], now)
+        if (cycle < previousCycle[i]!) spawnRipple(localX, ground, localZ, now)
         previousCycle[i] = cycle
       }
       droplets.instanceMatrix.needsUpdate = true
     }
 
     for (let i = 0; i < RIPPLE_COUNT; i++) {
-      const age = (now - rippleStarted[i]) / 1000
+      const age = (now - rippleStarted[i]!) / 1000
       if (age < 0 || age > 2 / 12) {
         dummy.scale.setScalar(0)
       } else {
         const progress = age / (2 / 12)
-        dummy.position.set(rippleX[i], rippleY[i], rippleZ[i])
+        dummy.position.set(rippleX[i]!, rippleY[i]!, rippleZ[i]!)
         dummy.rotation.set(-Math.PI / 2, 0, 0)
         dummy.scale.setScalar(THREE.MathUtils.lerp(0.7, 3.8, progress))
       }
@@ -179,7 +180,7 @@ function rainField(ctx: CastCtx): RainActor {
     ripples.instanceMatrix.needsUpdate = true
   }
 
-  const driver = cloud.children[0]
+  const driver = cloud.children[0]!
   driver.frustumCulled = false
   driver.onBeforeRender = render
   ctx.island.group.add(group)
@@ -241,11 +242,12 @@ export class Rain extends Power {
         actor.start()
       })
       .at(1.2, () => {
+        const impact = impactContext(ctx)
         ctx.bus.emit({
-          type: 'power:impact', power: this.id, target: ctx.kind, x: ctx.x, z: ctx.z,
+          type: 'power:impact', power: this.id, target: impact.kind, x: ctx.x, z: ctx.z,
         })
         effectTick()
-        applyInteractions(resolveInteraction(this.id, ctx.kind), ctx, y0)
+        applyInteractions(resolveInteraction(this.id, impact.kind), impact, y0)
       })
 
     for (let i = 1; i < 12; i++) timeline.at(1.2 + i * 0.5, effectTick)

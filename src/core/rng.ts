@@ -9,6 +9,9 @@ export class RNG {
   }
   range(min: number, max: number): number { return min + (max - min) * this.next() }
   int(min: number, max: number): number { return Math.floor(this.range(min, max + 1)) }
-  pick<T>(a: T[]): T { return a[Math.floor(this.next() * a.length)] }
+  pick<T>(a: readonly T[]): T {
+    if (a.length === 0) throw new RangeError('RNG.pick requires at least one item')
+    return a[Math.floor(this.next() * a.length)]!
+  }
   chance(p: number): boolean { return this.next() < p }
 }

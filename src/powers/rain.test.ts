@@ -30,6 +30,7 @@ describe('rain placement', () => {
     const restoreFishNear = vi.fn()
     const world = {
       campfire: { lit: false, x: 99, z: 99 },
+      resolveTarget: vi.fn(() => 'ground'),
       douseNear: vi.fn(),
       fillCratersNear,
       restoreFishNear,

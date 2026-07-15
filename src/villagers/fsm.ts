@@ -14,7 +14,7 @@ export type SuggestionKind =
   | 'build'
   | 'makeFire'
   | 'gather'
-export type Suggestion = { kind: SuggestionKind; x: number; z: number }
+export type Suggestion = { kind: SuggestionKind; x: number; z: number; targetId?: string }
 
 export type FsmCtx = {
   state: VillagerState

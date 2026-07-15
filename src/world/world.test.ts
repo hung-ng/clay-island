@@ -116,6 +116,29 @@ describe('World targeting', () => {
     expect(world.treeAt(4, 0)).toBeNull()
     expect(farther).not.toBe(nearer)
   })
+
+  it('excludes submerged trees from villager work and ground-nudge queries', () => {
+    const world = makeWorld()
+    const bare = addTree(world, 'tree-bare', 1, 1)
+    const fruiting = addTree(world, 'tree-fruiting', 2, 2)
+    fruiting.growFruit()
+    world.submerged = vi.fn(() => true)
+
+    expect(world.choppableTree()).toBeNull()
+    expect(world.fruitingTree()).toBeNull()
+    expect(world.treesNear(bare.x, bare.z, 2)).toBe(0)
+    expect(world.fruitTreesNear(fruiting.x, fruiting.z, 2)).toBe(0)
+  })
+})
+
+describe('World villager registry', () => {
+  it('keeps replacement ids monotonic after live entries are retired', () => {
+    const world = makeWorld()
+    world.addVillager({ id: 'villager-7', group: {} } as Villager)
+
+    expect(world.nextVillagerId()).toBe('villager-8')
+    expect(world.nextVillagerId()).toBe('villager-9')
+  })
 })
 
 describe('World impact consequences', () => {
@@ -172,7 +195,7 @@ describe('World impact consequences', () => {
   it('kills only the nearest living villager in the impact radius', () => {
     const world = makeWorld()
     const dead = { x: 2, z: 3, alive: false, die: vi.fn() }
-    const near = { x: 2.4, z: 3, alive: true, die: vi.fn() }
+    const near = { x: 2.4, z: 3, alive: true, die: vi.fn(), dispose: vi.fn() }
     const far = { x: 4, z: 3, alive: true, die: vi.fn() }
     world.villagers.push(
       dead as unknown as Villager,
@@ -184,7 +207,21 @@ describe('World impact consequences', () => {
 
     expect(dead.die).not.toHaveBeenCalled()
     expect(near.die).toHaveBeenCalledWith('meteor')
+    expect(near.dispose).toHaveBeenCalledOnce()
+    expect(world.villagers).not.toContain(near)
     expect(far.die).not.toHaveBeenCalled()
+  })
+
+  it('expires old graves and releases their scene resources', () => {
+    const world = makeWorld()
+    const grave = world.addGrave(2, 3, new RNG(1))
+    const dispose = vi.spyOn(grave, 'dispose')
+
+    world.updateGraves(181)
+
+    expect(world.graves).not.toContain(grave)
+    expect(world.island.group.remove).toHaveBeenCalledWith(grave.group)
+    expect(dispose).toHaveBeenCalledOnce()
   })
 
   it('removes and disposes an emptied pond so rain can refill its crater', () => {

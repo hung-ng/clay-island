@@ -142,6 +142,16 @@ function activityHarness(
   return villager
 }
 
+const dryTreeWork = {
+  isTreeActionable: (tree: Tree): boolean => tree.state === 'normal',
+  actionableTreeAt(this: { trees: Tree[] }, x: number, z: number, radius = 1.2): Tree | null {
+    return this.trees
+      .filter(tree => tree.state === 'normal' && Math.hypot(tree.x - x, tree.z - z) <= radius)
+      .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0]
+      ?? null
+  },
+}
+
 describe('villager fleeing', () => {
   it('moves directly away from a nearby danger', () => {
     expect(fleeTarget({ x: 2, z: 0 }, { x: 1, z: 0 }, new RNG(1))).toEqual({ x: 7, z: 0 })
@@ -170,6 +180,43 @@ describe('villager fleeing', () => {
     )
 
     expect(target.z).not.toBe(0)
+  })
+})
+
+describe('villager resource ownership', () => {
+  it('detaches and disposes model, prop, ghost, and emote resources on retirement', () => {
+    const parent = new THREE.Group()
+    const group = new THREE.Group()
+    const ghost = new THREE.Group()
+    const geometry = new THREE.BoxGeometry()
+    const material = new THREE.MeshBasicMaterial()
+    const ghostGeometry = new THREE.SphereGeometry()
+    const ghostMaterial = new THREE.MeshBasicMaterial()
+    const geometryDispose = vi.spyOn(geometry, 'dispose')
+    const materialDispose = vi.spyOn(material, 'dispose')
+    const ghostGeometryDispose = vi.spyOn(ghostGeometry, 'dispose')
+    const ghostMaterialDispose = vi.spyOn(ghostMaterial, 'dispose')
+    const emoteDispose = vi.fn()
+    group.add(new THREE.Mesh(geometry, material))
+    ghost.add(new THREE.Mesh(ghostGeometry, ghostMaterial))
+    parent.add(group, ghost)
+    const villager = Object.create(Villager.prototype) as unknown as {
+      group: THREE.Group
+      ghost: THREE.Group
+      emoteSprite: { dispose(): void }
+      dispose(): void
+    }
+    Object.assign(villager, { group, ghost, emoteSprite: { dispose: emoteDispose } })
+
+    villager.dispose()
+
+    expect(group.parent).toBeNull()
+    expect(ghost.parent).toBeNull()
+    expect(geometryDispose).toHaveBeenCalledOnce()
+    expect(materialDispose).toHaveBeenCalledOnce()
+    expect(ghostGeometryDispose).toHaveBeenCalledOnce()
+    expect(ghostMaterialDispose).toHaveBeenCalledOnce()
+    expect(emoteDispose).toHaveBeenCalledOnce()
   })
 })
 
@@ -455,7 +502,7 @@ describe('held prop alignment', () => {
     }
     const villager = activityHarness('harvest')
     villager.targetTree = tree as unknown as Tree
-    const world = { ponds: [], trees: [tree] } as unknown as World
+    const world = { ...dryTreeWork, ponds: [], trees: [tree] } as unknown as World
 
     villager.performActivity(1.3, true, world)
     villager.updateHeldFruit(0, true)
@@ -508,9 +555,10 @@ describe('completion-based suggestions', () => {
       enter: vi.fn(),
     })
     const world = {
+      ...dryTreeWork,
       nearestBurning: () => null,
       ponds: [],
-      trees: [{ state: 'normal' }],
+      trees: [{ x: 1, z: 2, state: 'normal', hasFruit: false }],
       graves: [],
       huts: [],
     } as unknown as World
@@ -742,9 +790,27 @@ describe('completion-based suggestions', () => {
       targetTree: stale,
       enter: vi.fn(),
     })
-    const world = { trees: [{ state: 'normal' }] } as unknown as World
+    const world = { ...dryTreeWork, trees: [{ state: 'normal' }] } as unknown as World
 
     villager.performActivity(1 / 30, false, world)
+
+    expect(villager.suggestion).toBeNull()
+  })
+
+  it('does not retarget an unclaimed tree suggestion when its selected id disappears', () => {
+    const other = { id: 'tree-other', x: 0.2, z: 0, state: 'normal', hasFruit: false } as Tree
+    const villager = Object.create(Villager.prototype) as unknown as {
+      suggestion: Suggestion | null
+      targetTree: Tree | null
+      normalizeSuggestion(world: World): void
+    }
+    Object.assign(villager, {
+      suggestion: { kind: 'chop', x: 0, z: 0, targetId: 'tree-selected' },
+      targetTree: null,
+    })
+    const world = { ...dryTreeWork, trees: [other] } as unknown as World
+
+    villager.normalizeSuggestion(world)
 
     expect(villager.suggestion).toBeNull()
   })
@@ -876,7 +942,7 @@ describe('completion-based suggestions', () => {
       z: 0,
       suggestion: { kind: 'harvest', x: 1.2, z: 0 },
     })
-    const world = { trees: [unrelated, intended] } as unknown as World
+    const world = { ...dryTreeWork, trees: [unrelated, intended] } as unknown as World
 
     expect(villager.selectHarvestTree(world)).toBe(intended)
   })
@@ -891,7 +957,7 @@ describe('completion-based suggestions', () => {
       selectHarvestTree(world: World, preferred?: Tree | null): Tree | null
     }
     Object.assign(villager, { x: 0, z: 0, suggestion: null })
-    const world = { trees: [nearerFruit, grownTarget] } as unknown as World
+    const world = { ...dryTreeWork, trees: [nearerFruit, grownTarget] } as unknown as World
 
     expect(villager.selectHarvestTree(world, grownTarget)).toBe(grownTarget)
   })
@@ -910,7 +976,7 @@ describe('completion-based suggestions', () => {
       z: 0,
       suggestion: { kind: 'chop', x: 1, z: 0 },
     })
-    const world = { trees: [fruiting, bare] } as unknown as World
+    const world = { ...dryTreeWork, trees: [fruiting, bare] } as unknown as World
 
     expect(villager.selectChopTree(world)).toBe(bare)
   })
@@ -934,7 +1000,7 @@ describe('completion-based suggestions', () => {
     const villager = activityHarness('harvest')
     villager.suggestion = { kind: 'harvest', x: 0, z: 0 }
     villager.targetTree = tree
-    const world = { trees: [tree] } as unknown as World
+    const world = { ...dryTreeWork, trees: [tree] } as unknown as World
 
     villager.performActivity(1 / 30, false, world)
 
@@ -955,7 +1021,7 @@ describe('completion-based suggestions', () => {
       targetTree: null,
       eating: 0.8,
     })
-    const world = { trees: [tree] } as unknown as World
+    const world = { ...dryTreeWork, trees: [tree] } as unknown as World
 
     villager.normalizeSuggestion(world)
 
@@ -1038,7 +1104,7 @@ describe('harvesting', () => {
     const villager = activityHarness('chopTree')
     villager.suggestion = { kind: 'chop', x: 0, z: 0 }
     villager.targetTree = tree
-    const world = { trees: [tree] } as unknown as World
+    const world = { ...dryTreeWork, trees: [tree] } as unknown as World
 
     villager.performActivity(1 / 30, true, world)
 
@@ -1139,7 +1205,7 @@ describe('harvesting', () => {
     const villager = activityHarness('harvest')
     villager.bus = { emit } as unknown as EventBus
     villager.targetTree = tree as unknown as Tree
-    const world = { ponds: [], trees: [tree] } as unknown as World
+    const world = { ...dryTreeWork, ponds: [], trees: [tree] } as unknown as World
 
     villager.performActivity(1.3, true, world)
 
@@ -1216,6 +1282,7 @@ describe('villagers use the world', () => {
     })
     const tree = { state: 'normal', x: 1.5, z: 0 }
     const world = {
+      ...dryTreeWork,
       huts: [{ state: 'built', x: 10, z: 0 }],
       trees: [tree],
     } as unknown as World
@@ -1258,6 +1325,7 @@ describe('villagers use the world', () => {
       enter: vi.fn(),
     })
     const world = {
+      ...dryTreeWork,
       chipsAt: vi.fn(),
       canChopAutomatically: () => true,
     } as unknown as World
@@ -1280,6 +1348,7 @@ describe('villagers use the world', () => {
     const villager = activityHarness('chopTree')
     villager.targetTree = tree
     const world = {
+      ...dryTreeWork,
       chipsAt: vi.fn(),
       canChopAutomatically: () => false,
     } as unknown as World
@@ -1302,6 +1371,7 @@ describe('villagers use the world', () => {
     villager.suggestion = { kind: 'chop', x: 0, z: 0 }
     villager.targetTree = tree
     const world = {
+      ...dryTreeWork,
       chipsAt: vi.fn(),
       canChopAutomatically: () => false,
     } as unknown as World

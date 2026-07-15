@@ -126,6 +126,7 @@ function actorState(
 
   const hutIndex = Math.floor(actor / 2) as 0 | 1 | 2
   const target = huts[hutIndex]
+  if (!target) throw new RangeError(`Missing prologue hut ${hutIndex}`)
   const side = actor % 2 === 0 ? -1 : 1
   const work = workPoint(target, side, 1.45)
 

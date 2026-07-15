@@ -1,4 +1,5 @@
 import { MOMENTS, type Journal, type Moment, type MomentId } from '../discovery/moments'
+import { setModalBackgroundInert } from './modal'
 
 export type JournalUIOptions = {
   lowFx: boolean
@@ -93,24 +94,13 @@ export function createJournalUI(
 
   let open = false
   let closeTimer = 0
-  const trayButtons = [...document.querySelectorAll<HTMLButtonElement>('#tray button')]
-    .filter(button => button !== trigger)
-  const trayTabIndexes = new Map<HTMLButtonElement, string | null>()
+  const backgroundInertState = new Map<HTMLElement, boolean>()
 
   const setBackgroundInert = (value: boolean): void => {
-    for (const button of trayButtons) {
-      if (value) {
-        trayTabIndexes.set(button, button.getAttribute('tabindex'))
-        button.setAttribute('tabindex', '-1')
-        button.setAttribute('aria-hidden', 'true')
-      } else {
-        const previous = trayTabIndexes.get(button)
-        if (previous === null || previous === undefined) button.removeAttribute('tabindex')
-        else button.setAttribute('tabindex', previous)
-        button.removeAttribute('aria-hidden')
-      }
-    }
-    if (!value) trayTabIndexes.clear()
+    const background = [...ui.children].filter((child): child is HTMLElement => (
+      child instanceof HTMLElement && child !== layer
+    ))
+    setModalBackgroundInert(background, backgroundInertState, value)
   }
 
   const setOpen = (value: boolean): void => {
@@ -134,7 +124,10 @@ export function createJournalUI(
     if (open) closeButton.focus({ preventScroll: true })
   }
 
-  trigger.addEventListener('click', () => setOpen(true))
+  trigger.addEventListener('click', () => {
+    if (trigger.inert || trigger.closest('[inert]')) return
+    setOpen(true)
+  })
   closeButton.addEventListener('click', () => setOpen(false))
   backdrop.addEventListener('click', () => setOpen(false))
 
@@ -159,7 +152,7 @@ export function createJournalUI(
       if (event.key === 'ArrowRight') next = row * 3 + (column + 1) % 3
       if (event.key === 'ArrowUp') next = ((row + rows - 1) % rows) * 3 + column
       if (event.key === 'ArrowDown') next = ((row + 1) % rows) * 3 + column
-      tiles[next].focus()
+      tiles[next]?.focus()
       return
     }
 
@@ -171,7 +164,7 @@ export function createJournalUI(
       focusable.at(-1)?.focus()
     } else if (!event.shiftKey && current === focusable.length - 1) {
       event.preventDefault()
-      focusable[0].focus()
+      focusable[0]?.focus()
     }
   })
 
@@ -218,6 +211,7 @@ export function createJournalUI(
     setUnlocked(unlocked) {
       tiles.forEach((button, index) => {
         const moment = MOMENTS[index]
+        if (!moment) return
         const isUnlocked = unlocked.has(moment.id)
         const wasUnlocked = button.classList.contains('unlocked')
         button.classList.toggle('unlocked', isUnlocked)

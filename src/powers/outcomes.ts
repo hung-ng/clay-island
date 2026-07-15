@@ -8,18 +8,20 @@ import type { CastCtx } from './power'
 /** How far a ground nudge "sees" when deciding what the place is for. */
 const NUDGE_SENSE_RADIUS = 5
 
-function suggestionFor(ctx: CastCtx): SuggestionKind | null {
+type ResolvedSuggestion = { kind: SuggestionKind; targetId?: string }
+
+function suggestionFor(ctx: CastCtx): ResolvedSuggestion | null {
   switch (ctx.kind) {
     case 'tree': {
-      const tree = ctx.world.treeAt(ctx.x, ctx.z)
-      return tree ? (tree.hasFruit ? 'harvest' : 'chop') : null
+      const tree = ctx.world.actionableTreeAt(ctx.x, ctx.z)
+      return tree ? { kind: tree.hasFruit ? 'harvest' : 'chop', targetId: tree.id } : null
     }
     case 'pond': {
       const pond = ctx.world.pondAt(ctx.x, ctx.z)
-      return pond ? (pond.hasFish ? 'fish' : 'drink') : null
+      return pond ? { kind: pond.hasFish ? 'fish' : 'drink' } : null
     }
-    case 'hut': return 'build'
-    case 'campfire': return 'gather'
+    case 'hut': return { kind: 'build' }
+    case 'campfire': return { kind: 'gather' }
     case 'ground': {
       const buildable = isBuildable(
         ctx.x,
@@ -46,7 +48,7 @@ function suggestionFor(ctx: CastCtx): SuggestionKind | null {
       })
       // A ground nudge that resolves to `build` must create the site to build on.
       if (kind === 'build') ctx.world.foundHutAt(ctx.x, ctx.z, ctx.rng, ctx.lowFx)
-      return kind
+      return { kind }
     }
     default: return null
   }
@@ -101,8 +103,13 @@ export const OUTCOME_HANDLERS: Record<
   growFruit: (ctx) => { ctx.world.growFruitNear(ctx.x, ctx.z, 4) },
   grumpy: (ctx) => { ctx.world.grumpNear(ctx.x, ctx.z, 4) },
   suggest: (ctx) => {
-    const kind = suggestionFor(ctx)
-    if (kind) ctx.world.suggest(ctx.x, ctx.z, kind)
+    const suggestion = suggestionFor(ctx)
+    if (!suggestion) return
+    if (suggestion.targetId) {
+      ctx.world.suggest(ctx.x, ctx.z, suggestion.kind, suggestion.targetId)
+    } else {
+      ctx.world.suggest(ctx.x, ctx.z, suggestion.kind)
+    }
   },
   startleVillager: (ctx) => {
     ctx.world.villagerAt(ctx.x, ctx.z, 1.2)?.emote('question')

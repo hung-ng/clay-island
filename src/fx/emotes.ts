@@ -22,10 +22,10 @@ function drawBubble(context: CanvasRenderingContext2D, cell: number): void {
   const cy = CELL / 2 - 2
   const radii = [23, 21.8, 23.7]
   context.beginPath()
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < radii.length; i++) {
     const start = (i / 3) * Math.PI * 2
     const end = ((i + 1) / 3) * Math.PI * 2
-    context.arc(cx, cy, radii[i], start, end)
+    context.arc(cx, cy, radii[i]!, start, end)
   }
   context.closePath()
   context.fillStyle = PALETTE.paper
@@ -114,5 +114,10 @@ export class EmoteSprite {
     const pop = frame === 0 ? 0.35 : frame === 1 ? 0.72 : 1
     this.sprite.scale.setScalar(0.86 * pop)
     this.sprite.position.y = 1.42 + (frame % 4 === 1 || frame % 4 === 2 ? 0.045 : 0)
+  }
+
+  dispose(): void {
+    this.map.dispose()
+    this.sprite.material.dispose()
   }
 }

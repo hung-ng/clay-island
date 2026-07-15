@@ -101,9 +101,9 @@ export class Island {
 
       const exposed = 1 - distance / crater.radius
       const colorIndex = index * 3
-      this.baseColors[colorIndex] = blendChannel(this.baseColors[colorIndex], DIRT.r, exposed)
-      this.baseColors[colorIndex + 1] = blendChannel(this.baseColors[colorIndex + 1], DIRT.g, exposed)
-      this.baseColors[colorIndex + 2] = blendChannel(this.baseColors[colorIndex + 2], DIRT.b, exposed)
+      this.baseColors[colorIndex] = blendChannel(this.baseColors[colorIndex]!, DIRT.r, exposed)
+      this.baseColors[colorIndex + 1] = blendChannel(this.baseColors[colorIndex + 1]!, DIRT.g, exposed)
+      this.baseColors[colorIndex + 2] = blendChannel(this.baseColors[colorIndex + 2]!, DIRT.b, exposed)
       this.writeVisibleColor(colors, index)
     })
 
@@ -118,8 +118,9 @@ export class Island {
     let painted = false
 
     this.forEachVertexNear(x, z, radius, (index, _vx, _vz, distance) => {
-      const next = accumulateScorch(this.scorchAmt[index], distance, radius)
-      if (next === this.scorchAmt[index]) return
+      const current = this.scorchAmt[index]!
+      const next = accumulateScorch(current, distance, radius)
+      if (next === current) return
       this.scorchAmt[index] = next
       this.writeVisibleColor(colors, index)
       painted = true
@@ -155,12 +156,12 @@ export class Island {
 
   private writeVisibleColor(colors: THREE.BufferAttribute | THREE.InterleavedBufferAttribute, index: number): void {
     const colorIndex = index * 3
-    const amount = this.scorchAmt[index]
+    const amount = this.scorchAmt[index]!
     colors.setXYZ(
       index,
-      blendChannel(this.baseColors[colorIndex], SCORCH.r, amount),
-      blendChannel(this.baseColors[colorIndex + 1], SCORCH.g, amount),
-      blendChannel(this.baseColors[colorIndex + 2], SCORCH.b, amount),
+      blendChannel(this.baseColors[colorIndex]!, SCORCH.r, amount),
+      blendChannel(this.baseColors[colorIndex + 1]!, SCORCH.g, amount),
+      blendChannel(this.baseColors[colorIndex + 2]!, SCORCH.b, amount),
     )
   }
 }

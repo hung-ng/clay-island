@@ -30,6 +30,11 @@ export type CastCtx = PowerContext & {
   power: PowerId
 }
 
+/** Resolve mutable world state at the instant a delayed power actually lands. */
+export function impactContext(ctx: CastCtx): CastCtx {
+  return { ...ctx, kind: ctx.world.resolveTarget(ctx.x, ctx.z) }
+}
+
 export abstract class Power {
   abstract readonly id: PowerId
   abstract readonly cooldown: number

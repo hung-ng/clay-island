@@ -24,12 +24,6 @@ export const MAX_HUTS = 6
 /** A nudge is a poke, not a proclamation. Villagers past this never hear it. */
 const NUDGE_EARSHOT = 18
 
-function hasPosition(value: unknown): value is Position {
-  if (typeof value !== 'object' || value === null) return false
-  const candidate = value as Partial<Position>
-  return typeof candidate.x === 'number' && typeof candidate.z === 'number'
-}
-
 function within(a: Position, x: number, z: number, radius: number): boolean {
   return Math.hypot(a.x - x, a.z - z) <= radius
 }
@@ -60,6 +54,7 @@ export class World {
   private reseedTimer: number | null = null
   private treeSerial = 1000
   private hutSerial = 1000
+  private villagerSerial = 0
   private pendingHutSite: { source: Hut; site: Hut } | null = null
   private pendingCampfireSite: { source: Campfire | null; site: Campfire } | null = null
   private fireSystem = new FireSystem()
@@ -79,12 +74,24 @@ export class World {
   chipsAt(x: number, z: number): void { this.chipFx?.(x, z) }
 
   choppableTree(): Tree | null {
-    return this.trees.find(tree => tree.state === 'normal' && !tree.hasFruit) ?? null
+    return this.trees.find(tree => this.isTreeActionable(tree) && !tree.hasFruit) ?? null
   }
 
   /** A normal tree currently carrying fruit, for a harvester to walk to. */
   fruitingTree(): Tree | null {
-    return this.trees.find(tree => tree.state === 'normal' && tree.hasFruit) ?? null
+    return this.trees.find(tree => this.isTreeActionable(tree) && tree.hasFruit) ?? null
+  }
+
+  /** Trees are workable only while upright on dry, walkable ground. */
+  isTreeActionable(tree: Tree): boolean {
+    return tree.state === 'normal' && !this.submerged(tree.x, tree.z)
+  }
+
+  actionableTreeAt(x: number, z: number, radius = 1.2): Tree | null {
+    return this.trees
+      .filter(tree => this.isTreeActionable(tree) && within(tree, x, z, radius))
+      .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0]
+      ?? null
   }
 
   /** The fire exists but is dead, so idle villagers drift toward it. */
@@ -282,7 +289,26 @@ export class World {
     const villager = this.villagerAt(x, z, radius)
     if (!villager) return false
     villager.die(cause)
+    this.retireVillager(villager)
     return true
+  }
+
+  addVillager(villager: Villager): void {
+    if (this.villagers.includes(villager)) return
+    this.villagers.push(villager)
+    this.island.group.add(villager.group)
+    const serial = /^villager-(\d+)$/.exec(villager.id)?.[1]
+    if (serial !== undefined) this.villagerSerial = Math.max(this.villagerSerial, Number(serial) + 1)
+  }
+
+  nextVillagerId(): string {
+    return `villager-${this.villagerSerial++}`
+  }
+
+  private retireVillager(villager: Villager): void {
+    const index = this.villagers.indexOf(villager)
+    if (index >= 0) this.villagers.splice(index, 1)
+    villager.dispose()
   }
 
   emptyPondAt(x: number, z: number): boolean {
@@ -304,7 +330,7 @@ export class World {
   /** Bare trees a villager could actually chop, within `radius` of a point. */
   treesNear(x: number, z: number, radius: number): number {
     return this.trees.filter(tree => (
-      tree.state === 'normal'
+      this.isTreeActionable(tree)
       && !tree.hasFruit
       && Math.hypot(tree.x - x, tree.z - z) <= radius
     )).length
@@ -313,7 +339,7 @@ export class World {
   /** Fruiting trees a villager could harvest, within `radius` of a point. */
   fruitTreesNear(x: number, z: number, radius: number): number {
     return this.trees.filter(tree => (
-      tree.state === 'normal'
+      this.isTreeActionable(tree)
       && tree.hasFruit
       && Math.hypot(tree.x - x, tree.z - z) <= radius
     )).length
@@ -526,7 +552,7 @@ export class World {
    * power, and the fix is reach rather than weight — raising SUGGESTION_WEIGHT
    * would only walk the roll toward coercion.
    */
-  suggest(x: number, z: number, kind: SuggestionKind): number {
+  suggest(x: number, z: number, kind: SuggestionKind, targetId?: string): number {
     const idle = this.villagers
       .filter(villager => (
         villager.alive
@@ -537,7 +563,8 @@ export class World {
         Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z)
       ))
       .slice(0, 4)
-    for (const villager of idle) villager.suggest({ kind, x, z })
+    const suggestion = targetId ? { kind, x, z, targetId } : { kind, x, z }
+    for (const villager of idle) villager.suggest(suggestion)
     return idle.length
   }
 
@@ -668,7 +695,13 @@ export class World {
   }
 
   updateGraves(dt: number): void {
-    for (const grave of this.graves) grave.update(dt)
+    for (const grave of [...this.graves]) {
+      grave.update(dt)
+      if (!grave.expired) continue
+      this.graves.splice(this.graves.indexOf(grave), 1)
+      this.island.group.remove(grave.group)
+      grave.dispose()
+    }
   }
 
   updatePonds(dt: number, qt: number): void {

@@ -33,7 +33,7 @@ export class Charring {
 
   private apply(): void {
     for (let i = 0; i < this.materials.length; i++) {
-      this.materials[i].color.copy(this.baseColors[i]).lerp(SCORCH, this.value)
+      this.materials[i]!.color.copy(this.baseColors[i]!).lerp(SCORCH, this.value)
     }
   }
 }

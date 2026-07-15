@@ -178,7 +178,7 @@ class BurningVisual {
     if (!this.group.visible || qt === this.lastQt) return
     const frame = Math.floor(qt * 12)
     for (let i = 0; i < this.flames.length; i++) {
-      const flame = this.flames[i]
+      const flame = this.flames[i]!
       const phase = flame.userData.phase as number
       const jx = hash(frame * 7.1 + phase)
       const jy = hash(frame * 13.7 + phase * 1.7)
@@ -421,7 +421,7 @@ export class Tree {
     const matrix = new THREE.Matrix4()
 
     for (let i = 0; i < 4; i++) {
-      const blob = blobs[i % blobs.length]
+      const blob = blobs[i % blobs.length]!
       const sphere = blob.geometry as THREE.SphereGeometry
       const radius = sphere.parameters.radius
         * Math.max(blob.scale.x, blob.scale.y, blob.scale.z)
@@ -897,7 +897,7 @@ export class Campfire {
     for (let i = 0; i < 3; i++) {
       const flame = new THREE.Mesh(
         wobble(new THREE.SphereGeometry(0.27 - i * 0.035, 10, 8), rng, 0.045),
-        clayMaterial(colors[i]),
+        clayMaterial(colors[i]!),
       )
       flame.name = 'campfire-flame'
       flame.userData.index = i
@@ -1082,7 +1082,9 @@ function bedY(point: Corner): number {
  */
 function pushSlab(top: number[], bed: number[], ring: Corner[]): void {
   for (let i = 1; i + 1 < ring.length; i++) {
-    const [a, b, c] = [ring[0], ring[i], ring[i + 1]]
+    const a = ring[0]!
+    const b = ring[i]!
+    const c = ring[i + 1]!
     // Upward winding: the lid is visible from above, never as a flat underside.
     top.push(a.x, 0, a.z, c.x, 0, c.z, b.x, 0, b.z)
     // The bed is also seen from above, through the translucent water.
@@ -1140,8 +1142,8 @@ function waterBody(
       // corners, and where an edge crosses the waterline, emit the crossing.
       const ring: Corner[] = []
       for (let k = 0; k < 4; k++) {
-        const current = square[k]
-        const next = square[(k + 1) % 4]
+        const current = square[k]!
+        const next = square[(k + 1) % 4]!
         if (current.depth > 0) ring.push(current)
         if ((current.depth > 0) !== (next.depth > 0)) {
           const wet = current.depth > 0 ? current : next
@@ -1238,7 +1240,7 @@ export class Pond {
     const fishGeometry = wobble(new THREE.SphereGeometry(0.19, 8, 6), rng, 0.025)
     const fishMaterial = clayMaterial(PALETTE.fish)
     for (let i = 0; i < MAX_POND_FISH; i++) {
-      const crater = basin.craters[i % basin.craters.length]
+      const crater = basin.craters[i % basin.craters.length]!
       const mesh = new THREE.Mesh(fishGeometry, fishMaterial)
       mesh.name = `pond-fish-${i}`
       mesh.scale.set(1.35, 0.45, 0.72)
@@ -1325,8 +1327,10 @@ export class Pond {
 
   catchFish(): boolean {
     if (this.fishPopulation <= 0) return false
+    const caught = this.fish[this.fishPopulation - 1]
+    if (!caught) return false
     this.fishPopulation--
-    this.fish[this.fishPopulation].mesh.visible = false
+    caught.mesh.visible = false
     if (this.fishPopulation === 0) this.fishStunTime = 0
     return true
   }
@@ -1360,7 +1364,7 @@ export class Pond {
     this.water.material.opacity = 0.69 + Math.sin(frame * 0.32) * 0.035
 
     for (let i = 0; i < this.fish.length; i++) {
-      const fish = this.fish[i]
+      const fish = this.fish[i]!
       if (!fish.mesh.visible) continue
       const angle = fish.phase + frame * 0.035 * fish.direction
       const localX = fish.anchorX + Math.cos(angle) * fish.radius
@@ -1389,6 +1393,8 @@ export class Grave {
 
   private age = 0
 
+  get expired(): boolean { return this.age >= 180 }
+
   constructor(
     public x: number,
     public z: number,
@@ -1412,9 +1418,12 @@ export class Grave {
   }
 
   update(dt: number): void {
-    if (!this.fresh) return
     this.age += dt
     if (this.age >= 60) this.fresh = false
+  }
+
+  dispose(): void {
+    disposeObjectResources(this.group)
   }
 }
 
