@@ -68,7 +68,7 @@ describe('Meteor target outcomes', () => {
     expect(ctx.world.emptyPondAt).toHaveBeenCalledWith(2, 3)
     expect(ctx.fx.particles.burst).toHaveBeenCalledWith(expect.objectContaining({
       x: 2,
-      y: 1.75,
+      y: 1.5,
       z: 3,
     }))
   })

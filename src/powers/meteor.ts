@@ -156,7 +156,7 @@ export class Meteor extends Power {
         rock.remove()
         shadow.remove()
         ctx.fx.shake.add(0.9, 0.6)
-        const particleY = y0 + ctx.island.group.position.y
+        const particleY = y0
         ctx.fx.particles.burst({
           x: ctx.x, y: particleY, z: ctx.z, n: 160,
           color: PALETTE.dirt, speed: 9, gravity: 14, life: 1.4,

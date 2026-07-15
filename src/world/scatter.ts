@@ -4,14 +4,14 @@ export type PlacementKind = 'tree' | 'hut' | 'site' | 'campfire'
 export type Placement = { kind: PlacementKind; x: number; z: number }
 
 /** Footprint radius per kind — two placements must not have overlapping footprints. */
-const CLEARANCE: Record<PlacementKind, number> = {
+export const CLEARANCE: Record<PlacementKind, number> = {
   campfire: 2.0,
   hut: 2.0,
   site: 2.0,
   tree: 1.3,
 }
 
-function fits(p: Placement, placed: Placement[]): boolean {
+export function fitsPlacement(p: Placement, placed: Placement[]): boolean {
   for (const q of placed) {
     const min = CLEARANCE[p.kind] + CLEARANCE[q.kind]
     if (Math.hypot(p.x - q.x, p.z - q.z) < min) return false
@@ -29,7 +29,7 @@ export function placeSites(rng: RNG): Placement[] {
       const a = rng.range(0, Math.PI * 2)
       const r = rng.range(4, 6)
       const p = { kind, x: Math.cos(a) * r, z: Math.sin(a) * r }
-      if (fits(p, placed)) {
+      if (fitsPlacement(p, placed)) {
         placed.push(p)
         break
       }
@@ -41,7 +41,7 @@ export function placeSites(rng: RNG): Placement[] {
     const a = rng.range(0, Math.PI * 2)
     const r = Math.sqrt(rng.next()) * 10.5
     const p: Placement = { kind: 'tree', x: Math.cos(a) * r, z: Math.sin(a) * r }
-    if (fits(p, placed)) {
+    if (fitsPlacement(p, placed)) {
       placed.push(p)
       trees++
     }

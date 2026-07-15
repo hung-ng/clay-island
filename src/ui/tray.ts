@@ -16,6 +16,7 @@ type PowerControl = {
 }
 
 const POWER_IDS: readonly PowerId[] = ['meteor', 'lightning', 'rain', 'nudge']
+export const TRAY_AUXILIARY_CONTROLS = ['journal'] as const
 const COOLDOWN_STEPS = 12
 const POWER_LABELS: Record<PowerId, string> = {
   meteor: 'Meteor',
@@ -50,8 +51,6 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
   setCooldown(id: PowerId, t01: number): void
   setEnabled(id: PowerId, on: boolean): void
   setJournalCount(n: number): void
-  setMuted(muted: boolean): void
-  onMute(handler: () => void): void
 } {
   const tray = document.createElement('div')
   tray.id = 'tray'
@@ -117,16 +116,6 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
   journal.innerHTML = `Journal <b>0/${MOMENTS.length}</b>`
   tray.appendChild(journal)
 
-  const mute = document.createElement('button')
-  mute.type = 'button'
-  mute.id = 'mute-btn'
-  mute.setAttribute('aria-pressed', 'false')
-  mute.textContent = 'Sound on'
-  tray.appendChild(mute)
-
-  let muteHandler: (() => void) | null = null
-  mute.addEventListener('click', () => muteHandler?.())
-
   function sync(control: PowerControl): void {
     const unavailable = !control.enabled || control.cooldown > 0
     const displayedCooldown = control.cooldown <= 0
@@ -180,10 +169,5 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
       void counter.offsetWidth
       counter.classList.add('pop')
     },
-    setMuted(muted) {
-      mute.setAttribute('aria-pressed', String(muted))
-      mute.textContent = muted ? 'Sound off' : 'Sound on'
-    },
-    onMute(handler) { muteHandler = handler },
   }
 }

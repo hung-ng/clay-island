@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { powerGlyphMarkup } from './tray'
+import { powerGlyphMarkup, TRAY_AUXILIARY_CONTROLS } from './tray'
+
+it('keeps only Journal beside the four powers', () => {
+  expect(TRAY_AUXILIARY_CONTROLS).toEqual(['journal'])
+})
 
 describe('power glyph markup', () => {
   it('builds the Nudge hand from explicit decorative clay shapes', () => {

@@ -30,7 +30,7 @@ export class ParticleBurst {
   private readonly size: Float32Array
   private cursor = 0
 
-  constructor(scene: THREE.Scene, private readonly max = 400) {
+  constructor(parent: THREE.Object3D, private readonly max = 400) {
     const geometry = wobble(new THREE.IcosahedronGeometry(0.1, 0), this.rng, 0.035)
     const material = clayMaterial(PALETTE.unmodulated)
     this.mesh = new THREE.InstancedMesh(geometry, material, max)
@@ -51,7 +51,7 @@ export class ParticleBurst {
     this.dummy.updateMatrix()
     for (let i = 0; i < max; i++) this.mesh.setMatrixAt(i, this.dummy.matrix)
     this.mesh.instanceMatrix.needsUpdate = true
-    scene.add(this.mesh)
+    parent.add(this.mesh)
   }
 
   burst(options: BurstOptions): void {

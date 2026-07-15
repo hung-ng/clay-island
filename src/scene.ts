@@ -1,5 +1,4 @@
 import * as THREE from 'three'
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import {
   BlendFunction,
   Effect,
@@ -10,12 +9,11 @@ import {
   TiltShiftEffect,
   VignetteEffect,
 } from 'postprocessing'
-import { QuantizedClock } from './core/loop'
-import { prefersReducedMotion } from './core/motion'
 import { RNG } from './core/rng'
 import { clayMaterial } from './fx/clayMaterial'
+import { VisualQualityController } from './fx/quality'
 import { wobble } from './fx/wobble'
-import { PALETTE, TIMING } from './ui/tokens'
+import { PALETTE } from './ui/tokens'
 
 const heldNoiseFragment = `
 uniform float seed;
@@ -64,9 +62,14 @@ function createSkyTexture(): THREE.CanvasTexture {
   return texture
 }
 
-export function createScene() {
+type SceneOptions = {
+  lowFx: boolean
+  reducedMotion(): boolean
+}
+
+export function createScene(options: SceneOptions) {
+  const { lowFx } = options
   const splash = document.getElementById('splash')!
-  const lowFx = new URLSearchParams(location.search).get('lowfx') === '1'
 
   let renderer: THREE.WebGLRenderer
   try {
@@ -76,7 +79,7 @@ export function createScene() {
     throw new Error('no webgl')
   }
 
-  renderer.setPixelRatio(lowFx ? 1 : Math.min(devicePixelRatio, 1.25))
+  renderer.setPixelRatio(lowFx ? 1 : Math.min(devicePixelRatio, 1.5))
   renderer.setSize(innerWidth, innerHeight)
   renderer.toneMapping = THREE.ACESFilmicToneMapping
   // VSM must be selected before any material compiles.
@@ -87,19 +90,13 @@ export function createScene() {
   const scene = new THREE.Scene()
   scene.background = createSkyTexture()
 
+  const stageRoot = new THREE.Group()
+  stageRoot.name = 'island-stage'
+  scene.add(stageRoot)
+
   const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.1, 200)
   camera.position.set(0, 14, 34)
   camera.lookAt(0, 0, 0)
-
-  const controls = new OrbitControls(camera, renderer.domElement)
-  controls.enablePan = false
-  controls.minDistance = 18
-  controls.maxDistance = 55
-  controls.minPolarAngle = 0.6
-  controls.maxPolarAngle = 1.35
-  controls.enableDamping = true
-  controls.autoRotate = !prefersReducedMotion()
-  controls.autoRotateSpeed = 0.35
 
   const cloudGroup = new THREE.Group()
   const cloudMaterial = clayMaterial(PALETTE.cloud, { flat: true })
@@ -135,7 +132,7 @@ export function createScene() {
   key.position.set(18, 24, 10)
   key.castShadow = true
   key.shadow.mapSize.set(2048, 2048)
-  key.shadow.radius = 7
+  key.shadow.radius = 5
   key.shadow.blurSamples = 16
   key.shadow.camera.left = -18
   key.shadow.camera.right = 18
@@ -148,51 +145,31 @@ export function createScene() {
   const composer = new EffectComposer(renderer)
   composer.addPass(new RenderPass(scene, camera))
 
+  let tilt: TiltShiftEffect | null = null
   let grain: HeldNoiseEffect | null = null
-  const grainClock = new QuantizedClock(TIMING.fps)
   if (!lowFx) {
-    const tilt = new TiltShiftEffect({ focusArea: 0.45, feather: 0.35 })
+    tilt = new TiltShiftEffect({ focusArea: 0.45, feather: 0.35 })
+    tilt.blendMode.opacity.value = 0.45
     const vignette = new VignetteEffect({ darkness: 0.55, offset: 0.3 })
     grain = new HeldNoiseEffect()
-    grain.blendMode.opacity.value = 0.18
+    grain.blendMode.opacity.value = 0.12
     const grade = new HueSaturationEffect({ saturation: 0.12 })
     composer.addPass(new EffectPass(camera, tilt, vignette, grain, grade))
   }
+  const quality = new VisualQualityController(tilt, grain, lowFx)
 
-  const floaters: THREE.Object3D[] = []
   let elapsed = 0
-  let lastInteraction = Number.NEGATIVE_INFINITY
-  let interacting = false
-
-  controls.addEventListener('start', () => {
-    interacting = true
-    lastInteraction = elapsed
-    controls.autoRotate = false
-  })
-  controls.addEventListener('end', () => {
-    interacting = false
-    lastInteraction = elapsed
-  })
 
   function updateSky(dt: number): void {
     elapsed += dt
-    const reduced = prefersReducedMotion()
-    controls.autoRotate = !reduced && !interacting && elapsed - lastInteraction >= 8
-
-    grainClock.advance(dt)
-    if (grain) {
-      grain.blendMode.opacity.value = reduced ? 0.06 : 0.18
-      if (!reduced && grainClock.ticked) grain.seed = grainClock.quantizedTime
-    }
+    const reduced = options.reducedMotion()
 
     if (!reduced) cloudGroup.rotation.y += dt * 0.01
     for (const cloud of clouds) {
       const bob = reduced ? 0 : Math.sin(elapsed * 0.22 + cloud.userData.phase) * 0.25
       cloud.position.y = cloud.userData.baseY + bob
     }
-    for (const floater of floaters) {
-      floater.position.y = reduced ? 0 : Math.sin(elapsed * 0.15) * 0.3
-    }
+    stageRoot.position.y = reduced ? 0 : Math.sin(elapsed * 0.15) * 0.3
   }
 
   addEventListener('resize', () => {
@@ -202,5 +179,5 @@ export function createScene() {
     composer.setSize(innerWidth, innerHeight)
   })
 
-  return { scene, camera, renderer, controls, floaters, updateSky, composer, lowFx }
+  return { scene, stageRoot, camera, renderer, updateSky, quality, composer, lowFx }
 }

@@ -1,43 +1,104 @@
+import * as THREE from 'three'
 import type { PowerId } from './core/events'
 import { Sfx } from './audio/sfx'
+import { CameraController } from './camera/controller'
+import { CAMERA_HOME, type CameraPose } from './camera/policy'
+import {
+  canArmPower,
+  canSkipPrologue,
+  initialAppFlow,
+  simulatesGameplay,
+  transitionAppFlow,
+} from './core/appFlow'
 import { GameLoop, QuantizedClock } from './core/loop'
+import { applyReducedMotion, prefersReducedMotion } from './core/motion'
+import { Preferences } from './core/preferences'
 import { RNG } from './core/rng'
 import { Journal } from './discovery/moments'
 import { ParticleBurst } from './fx/particles'
 import { flash, Shake } from './fx/shake'
-import { Intro } from './intro'
 import { DragTargeting } from './powers/drag'
 import { Lightning } from './powers/lightning'
 import { Meteor } from './powers/meteor'
 import { Nudge } from './powers/nudge'
 import { PowerManager } from './powers/power'
 import { Rain } from './powers/rain'
+import {
+  compareFramebuffers,
+  projectEmberMask,
+  readFramebuffer,
+  type EmberMask,
+  type Framebuffer,
+} from './prologue/audit'
+import { PrologueDirector } from './prologue/prologue'
 import { createScene } from './scene'
-import { createJournalUI } from './ui/journal'
+import { createJournalUI, type JournalUI } from './ui/journal'
+import { createSettingsUI, type SettingsUI } from './ui/settings'
+import { createTitleUI } from './ui/title'
 import { PALETTE, TIMING } from './ui/tokens'
 import { createTray } from './ui/tray'
-import { spawnVillagers } from './villagers/villager'
-import { Island } from './world/island'
-import { scatter, World } from './world/world'
+import { createInitialWorldBlueprint } from './world/blueprint'
+import { buildInitialWorld } from './world/initial'
 
-const splash = document.getElementById('splash')!
 const ui = document.getElementById('ui')!
-const { scene, camera, renderer, controls, floaters, updateSky, composer, lowFx } = createScene()
+const splash = document.getElementById('splash')!
+let storage: Storage | null = null
+try { storage = localStorage } catch { /* Persistence is optional. */ }
+
+const preferences = new Preferences(storage, location.search, prefersReducedMotion())
+const reducedMotion = (): boolean => preferences.snapshot.reducedMotion
+applyReducedMotion(document.documentElement, reducedMotion())
+const startup = preferences.snapshot
+const blueprint = createInitialWorldBlueprint(7)
+const sceneBundle = createScene({ lowFx: startup.lowFx, reducedMotion })
+const {
+  scene,
+  stageRoot,
+  camera,
+  renderer,
+  updateSky,
+  quality,
+  composer,
+  lowFx,
+} = sceneBundle
+const cameraController = new CameraController({
+  camera,
+  dom: renderer.domElement,
+  autoRotate: startup.autoRotate,
+  reducedMotion,
+})
+cameraController.lock('prologue')
+
+const gameplay = buildInitialWorld(blueprint, startup.lowFx)
+const { island, world } = gameplay
+stageRoot.add(island.group)
+island.group.visible = false
+
+let flow = initialAppFlow(startup.introSeen)
+let director: PrologueDirector | null = null
+let pendingNormalHandoff = false
+let renderedFinalPrologue = false
+let normalHandoffSwapped = false
+
+type ReplayRestore = {
+  camera: CameraPose
+  stagePosition: THREE.Vector3
+  stageRotation: THREE.Euler
+}
+
+let replayRestore: ReplayRestore | null = null
+
+const handoffAuditEnabled = new URLSearchParams(location.search).get('handoffAudit') === '1'
+let auditBefore: Framebuffer | null = null
+let auditMask: EmberMask | null = null
 
 const rng = new RNG(7)
 const fireRng = new RNG(13)
-const island = new Island(rng)
-const world = new World(island)
-scatter(world, island, rng, lowFx)
-spawnVillagers(world, island, rng, 6, { lowFx })
-scene.add(island.group)
-floaters.push(island.group)
-
 const powerIds: readonly PowerId[] = ['meteor', 'lightning', 'rain', 'nudge']
-const particles = new ParticleBurst(scene)
+const particles = new ParticleBurst(stageRoot)
 world.setChipFx((x, z) => particles.burst({
   x,
-  y: island.sampleHeight(x, z) + island.group.position.y + 0.8,
+  y: island.sampleHeight(x, z) + 0.8,
   z,
   n: 8,
   color: PALETTE.bark,
@@ -46,21 +107,32 @@ world.setChipFx((x, z) => particles.burst({
   life: 0.5,
   size: 0.6,
 }))
-const shake = new Shake()
+const shake = new Shake(reducedMotion)
 const powers = new PowerManager([new Meteor(), new Lightning(), new Rain(), new Nudge()], {
   world,
   island,
   scene,
-  fx: { particles, shake, flash },
+  fx: {
+    particles,
+    shake,
+    flash: (color, seconds) => flash(color, seconds, reducedMotion()),
+  },
   bus: world.bus,
   rng,
   lowFx,
 })
 const targeting = new DragTargeting(renderer.domElement, camera, island, world, (power, x, z) => {
   powers.cast(power, x, z)
+}, (active) => {
+  if (active) cameraController.lock('targeting')
+  else cameraController.unlock('targeting')
 })
+let settingsOpen = false
+let journalUI: JournalUI | null = null
 const tray = createTray(ui, {
-  onArm: power => targeting.arm(power),
+  onArm: power => {
+    if (canArmPower(flow, settingsOpen || Boolean(journalUI?.isOpen()))) targeting.arm(power)
+  },
   onCancel: () => targeting.cancel(true),
   cooldowns: () => ({
     meteor: powers.cooldown01('meteor'),
@@ -69,23 +141,66 @@ const tray = createTray(ui, {
     nudge: powers.cooldown01('nudge'),
   }),
 })
+const trayElement = document.getElementById('tray')!
+trayElement.classList.add('gameplay-hidden')
+trayElement.inert = true
 
-let storage: Storage | null = null
-try { storage = localStorage } catch { /* Persistence is optional. */ }
 const sfx = new Sfx({ storage })
 sfx.attach(world.bus)
 world.setStepFoley(() => sfx.step())
-const unlockAudio = (): void => { sfx.unlock() }
-addEventListener('pointerdown', unlockAudio, { capture: true, once: true })
-addEventListener('keydown', unlockAudio, { capture: true, once: true })
-tray.setMuted(sfx.muted)
-tray.onMute(() => {
-  sfx.unlock()
-  sfx.setMuted(!sfx.muted)
-  tray.setMuted(sfx.muted)
-})
+
 const journal = new Journal(storage)
-const journalUI = createJournalUI(ui, journal, { lowFx })
+let settingsUI: SettingsUI | null = null
+journalUI = createJournalUI(ui, journal, {
+  lowFx,
+  reducedMotion,
+  onOpenChange: (open) => {
+    if (open) settingsUI?.close()
+    if (open) cameraController.lock('journal')
+    else cameraController.unlock('journal')
+  },
+})
+settingsUI = createSettingsUI(ui, {
+  muted: sfx.muted,
+  quality: startup.quality,
+  forcedLowFx: startup.forcedLowFx,
+  autoRotate: startup.autoRotate,
+  reducedMotion: reducedMotion(),
+  reducedMotionActive: reducedMotion,
+  onOpenChange(open) {
+    settingsOpen = open
+    if (open) {
+      targeting.cancel(true)
+      journalUI?.close()
+      cameraController.lock('settings')
+    } else cameraController.unlock('settings')
+  },
+  onSoundChange(muted) {
+    sfx.unlock()
+    sfx.setMuted(muted)
+    settingsUI?.setMuted(sfx.muted)
+  },
+  onQualityChange(nextQuality, reportFailure) {
+    if (preferences.setQuality(nextQuality)) location.reload()
+    else reportFailure()
+  },
+  onAutoRotateChange(on) {
+    preferences.setAutoRotate(on)
+    cameraController.setAutoRotate(on)
+    settingsUI?.setAutoRotate(on)
+  },
+  onReducedMotionChange(on) {
+    preferences.setReducedMotion(on)
+    applyReducedMotion(document.documentElement, reducedMotion())
+    settingsUI?.setReducedMotion(reducedMotion())
+  },
+  onResetCamera() {
+    settingsUI?.close()
+    cameraController.reset()
+  },
+  onReplayIntro() { beginSettingsReplay() },
+})
+settingsUI.setVisible(false)
 tray.setJournalCount(journal.count())
 world.bus.on((event) => {
   const unlocked = journal.observe(event)
@@ -95,21 +210,219 @@ world.bus.on((event) => {
   journalUI.setUnlocked(journal.unlocked)
   tray.setJournalCount(journal.count())
 })
-const trayElement = document.getElementById('tray')!
-const intro = new Intro({ camera, controls, tray: trayElement, world })
-const skipIntro = (event: Event): void => {
-  if (intro.done) return
-  intro.skip()
-  event.preventDefault()
-  event.stopImmediatePropagation()
+
+function createDirector(generation: number): PrologueDirector {
+  return new PrologueDirector({
+    blueprint,
+    lowFx: startup.lowFx,
+    stageRoot,
+    camera: cameraController,
+    reducedMotion,
+    onCue: cue => sfx.prologue(cue.kind),
+    onFinished: () => {
+      if (flow.generation !== generation || flow.phase !== 'prologue') return
+      if (flow.mode === 'replay') {
+        beginReplayOutboundCover(generation)
+        return
+      }
+      pendingNormalHandoff = true
+    },
+  })
 }
-addEventListener('pointerdown', skipIntro, { capture: true })
-addEventListener('keydown', skipIntro, { capture: true })
+
+function beginSettingsReplay(): void {
+  if (flow.phase !== 'gameplay') return
+  settingsUI?.close()
+  targeting.cancel(true)
+
+  const next = transitionAppFlow(flow, { type: 'requestReplay' })
+  if (next === flow || next.phase !== 'replay-transition') return
+  flow = next
+  const generation = flow.generation
+  replayRestore = {
+    camera: cameraController.pose(),
+    stagePosition: stageRoot.position.clone(),
+    stageRotation: stageRoot.rotation.clone(),
+  }
+  trayElement.classList.add('gameplay-hidden')
+  trayElement.inert = true
+  settingsUI?.setVisible(false)
+
+  titleUI.showCover(() => {
+    if (
+      flow.generation !== generation
+      || flow.phase !== 'replay-transition'
+      || flow.destination !== 'prologue'
+    ) return
+
+    island.group.visible = false
+    particles.mesh.visible = false
+    const prologue = transitionAppFlow(flow, { type: 'coverReady' })
+    if (prologue === flow || prologue.phase !== 'prologue' || prologue.mode !== 'replay') return
+    flow = prologue
+    director = createDirector(flow.generation)
+    titleUI.showPrologue(true)
+  })
+}
+
+function beginReplayOutboundCover(generation: number): void {
+  if (
+    flow.generation !== generation
+    || flow.phase !== 'prologue'
+    || flow.mode !== 'replay'
+  ) return
+
+  const transition = transitionAppFlow(flow, { type: 'finishPrologue' })
+  if (
+    transition === flow
+    || transition.phase !== 'replay-transition'
+    || transition.destination !== 'gameplay'
+  ) return
+  flow = transition
+  const outboundGeneration = flow.generation
+
+  titleUI.showCover(() => {
+    if (
+      flow.generation !== outboundGeneration
+      || flow.phase !== 'replay-transition'
+      || flow.destination !== 'gameplay'
+    ) return
+
+    requestAnimationFrame(() => {
+      if (
+        flow.generation !== outboundGeneration
+        || flow.phase !== 'replay-transition'
+        || flow.destination !== 'gameplay'
+      ) return
+
+      const gameplayFlow = transitionAppFlow(flow, { type: 'coverReady' })
+      if (gameplayFlow === flow || gameplayFlow.phase !== 'gameplay') return
+      director?.dispose()
+      director = null
+      island.group.visible = true
+      particles.mesh.visible = true
+      if (replayRestore) {
+        cameraController.setPose(replayRestore.camera)
+        stageRoot.position.copy(replayRestore.stagePosition)
+        stageRoot.rotation.copy(replayRestore.stageRotation)
+      }
+      flow = gameplayFlow
+      replayRestore = null
+      titleUI.hide()
+      trayElement.classList.remove('gameplay-hidden')
+      trayElement.inert = false
+      settingsUI?.setVisible(true)
+    })
+  })
+}
+
+function beginNormalPrologue(): void {
+  if (flow.phase !== 'title' || !director) return
+  const next = transitionAppFlow(flow, { type: 'begin' })
+  if (next === flow || next.phase !== 'prologue') return
+  flow = next
+  pendingNormalHandoff = false
+  renderedFinalPrologue = false
+  normalHandoffSwapped = false
+  auditBefore = null
+  auditMask = null
+  sfx.unlock()
+  titleUI.showPrologue(canSkipPrologue(flow))
+  island.group.visible = false
+}
+
+function skipNormalPrologue(): void {
+  if (!canSkipPrologue(flow)) return
+  director?.skip()
+}
+
+const titleUI = createTitleUI(ui, {
+  reducedMotion,
+  onBegin: beginNormalPrologue,
+  onSkip: skipNormalPrologue,
+})
+
+function prepareNormalTitle(): void {
+  if (flow.phase !== 'title' || director) return
+  director = createDirector(flow.generation + 1)
+  titleUI.showBegin()
+}
+
+prepareNormalTitle()
+
+function swapToFrozenGameplay(): boolean {
+  if (!director || flow.phase !== 'prologue') return false
+  director.set.group.visible = false
+  island.group.visible = true
+  stageRoot.rotation.set(0, blueprint.stageRotationY, 0)
+  cameraController.setPose(CAMERA_HOME)
+  director.dispose()
+  director = null
+  normalHandoffSwapped = true
+  return true
+}
+
+function captureAuditBefore(): void {
+  if (!handoffAuditEnabled || !director) return
+  auditBefore = readFramebuffer(renderer)
+  auditMask = projectEmberMask(
+    director.set.campfire.group,
+    camera,
+    auditBefore.width,
+    auditBefore.height,
+  )
+}
+
+function reportHandoffAudit(): void {
+  if (!handoffAuditEnabled || !auditBefore) return
+  const after = readFramebuffer(renderer)
+  if (after.width !== auditBefore.width || after.height !== auditBefore.height) {
+    console.error('handoff audit unavailable', {
+      reason: 'framebuffer resized during comparison',
+      before: { width: auditBefore.width, height: auditBefore.height },
+      after: { width: after.width, height: after.height },
+    })
+    return
+  }
+  const result = compareFramebuffers(
+    auditBefore.pixels,
+    after.pixels,
+    after.width,
+    after.height,
+    auditMask,
+  )
+  if (result.pass) console.info('handoff audit pass', result)
+  else console.error('handoff audit fail', result)
+}
+
+function finishNormalHandoff(): void {
+  if (flow.phase !== 'prologue') return
+  const completedMode = flow.mode
+  const next = transitionAppFlow(flow, { type: 'finishPrologue' })
+  if (next === flow || next.phase !== 'gameplay') return
+  flow = next
+  if (completedMode === 'first') preferences.markIntroSeen()
+  titleUI.hide()
+  trayElement.classList.remove('gameplay-hidden')
+  trayElement.inert = false
+  settingsUI?.setVisible(true)
+  pendingNormalHandoff = false
+  renderedFinalPrologue = false
+  normalHandoffSwapped = false
+  auditBefore = null
+  auditMask = null
+}
+
+function renderScene(): void {
+  if (lowFx) renderer.render(scene, camera)
+  else composer.render()
+}
 
 let first = true
 const clock = new QuantizedClock(TIMING.fps)
 const loop = new GameLoop(
   (dt) => {
+    if (!simulatesGameplay(flow)) return
     world.updateFire(dt, fireRng)
     world.updateGraves(dt)
     world.relocateDrownedRuins(rng, lowFx)
@@ -120,25 +433,51 @@ const loop = new GameLoop(
     world.reseedForest(dt, rng, lowFx)
   },
   (dt) => {
-    clock.advance(dt)
-    targeting.update()
-    powers.update(dt)
-    particles.update(dt)
-    for (const power of powerIds) {
-      tray.setCooldown(power, powers.cooldown01(power))
+    const swappedThisFrame = pendingNormalHandoff
+      && renderedFinalPrologue
+      && !normalHandoffSwapped
+      && swapToFrozenGameplay()
+
+    if (flow.phase === 'prologue' && !pendingNormalHandoff && !document.hidden) {
+      director?.update(dt)
     }
-    world.updateTrees(dt, clock.quantizedTime)
-    for (const hut of world.huts) hut.update(dt, clock.quantizedTime)
-    world.campfire.update(dt, clock.quantizedTime)
-    world.updatePonds(dt, clock.quantizedTime)
-    world.updateFireLights(camera.position)
-    shake.beginFrame(camera)
-    intro.update(dt)
-    controls.update()
-    shake.update(dt, camera)
-    updateSky(dt)
-    if (lowFx) renderer.render(scene, camera)
-    else composer.render()
+
+    const gameplayActive = simulatesGameplay(flow)
+    if (gameplayActive) {
+      clock.advance(dt)
+      targeting.update()
+      powers.update(dt)
+      particles.update(dt)
+      for (const power of powerIds) tray.setCooldown(power, powers.cooldown01(power))
+      world.updateTrees(dt, clock.quantizedTime)
+      for (const hut of world.huts) hut.update(dt, clock.quantizedTime)
+      world.campfire.update(dt, clock.quantizedTime)
+      world.updatePonds(dt, clock.quantizedTime)
+      world.updateFireLights(camera.position)
+    }
+
+    const auditingHandoff = handoffAuditEnabled
+      && (pendingNormalHandoff || renderedFinalPrologue)
+    const freezeCamera = auditingHandoff || swappedThisFrame
+    if (!freezeCamera) {
+      shake.beginFrame(camera)
+      cameraController.update(dt)
+      shake.update(dt, camera)
+    }
+
+    const ambientDt = auditingHandoff || flow.phase === 'title' ? 0 : dt
+    updateSky(ambientDt)
+    quality.update(ambientDt, cameraController.distance(), reducedMotion())
+    renderScene()
+
+    if (pendingNormalHandoff && !renderedFinalPrologue) {
+      captureAuditBefore()
+      renderedFinalPrologue = true
+    } else if (normalHandoffSwapped) {
+      reportHandoffAudit()
+      finishNormalHandoff()
+    }
+
     if (first) {
       first = false
       splash.classList.add('gone')

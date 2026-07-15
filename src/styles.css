@@ -44,6 +44,167 @@ body {
   pointer-events: auto;
 }
 
+/* The title is one hand-molded object, not a conventional dialog card. */
+#title-layer {
+  --title-clay: color-mix(in srgb, var(--skin) 82%, var(--terracotta));
+  --title-clay-light: color-mix(in srgb, var(--skin) 84%, var(--cloud));
+  --title-clay-shadow: color-mix(in srgb, var(--terracotta) 68%, var(--ink-soft));
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 28px;
+  background: transparent;
+  opacity: 1;
+  transition: background-color 320ms ease, opacity 320ms ease;
+}
+
+#ui > #title-layer[data-mode='begin'] {
+  background-color: rgb(245 228 200 / 22%);
+}
+
+#ui > #title-layer[data-mode='cover'] {
+  background-color: var(--paper);
+}
+
+#ui > #title-layer[data-mode='prologue'] {
+  pointer-events: none;
+}
+
+#ui > #title-layer[data-mode='hidden'] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#title-plaque {
+  position: relative;
+  display: grid;
+  width: min(590px, calc(100vw - 56px));
+  min-height: 250px;
+  box-sizing: border-box;
+  place-items: center;
+  align-content: center;
+  gap: 32px;
+  padding: 50px 54px 44px;
+  transform: rotate(-0.7deg) translateY(-2vh);
+  border: 3px solid color-mix(in srgb, var(--ink-soft) 76%, var(--title-clay));
+  border-radius: 44% 56% 47% 53% / 17% 23% 19% 25%;
+  background: var(--title-clay);
+  box-shadow:
+    inset 8px 9px 0 color-mix(in srgb, var(--title-clay-light) 48%, transparent),
+    inset -10px -11px 0 color-mix(in srgb, var(--title-clay-shadow) 38%, transparent),
+    0 13px 0 color-mix(in srgb, var(--title-clay-shadow) 74%, var(--ink-soft)),
+    0 19px 32px color-mix(in srgb, var(--ink) 18%, transparent);
+  isolation: isolate;
+  transition: transform 320ms cubic-bezier(0.2, 0.8, 0.3, 1), opacity 240ms ease;
+}
+
+#title-plaque[hidden] {
+  display: none;
+}
+
+#title-layer[data-mode='prologue'] #title-plaque {
+  opacity: 0;
+  transform: rotate(-0.7deg) translateY(-3vh) scale(0.98);
+  pointer-events: none;
+}
+
+/* Two shallow thumb marks make the plaque read as pressed clay at a glance. */
+#title-plaque::before,
+#title-plaque::after {
+  position: absolute;
+  z-index: -1;
+  width: 58px;
+  height: 26px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--title-clay-shadow) 28%, transparent);
+  box-shadow: inset 2px 3px 4px color-mix(in srgb, var(--ink-soft) 18%, transparent);
+  content: '';
+  opacity: 0.5;
+}
+
+#title-plaque::before {
+  top: 24px;
+  left: 42px;
+  transform: rotate(-17deg);
+}
+
+#title-plaque::after {
+  right: 38px;
+  bottom: 26px;
+  transform: rotate(12deg);
+}
+
+#title-heading {
+  margin: 0;
+  color: var(--ink);
+  font-family: ui-rounded, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif;
+  font-size: clamp(48px, 8vw, 86px);
+  font-weight: 900;
+  letter-spacing: 0.035em;
+  line-height: 0.88;
+  text-align: center;
+  text-transform: uppercase;
+  text-shadow:
+    2px 3px 0 var(--title-clay-light),
+    -2px -2px 0 color-mix(in srgb, var(--title-clay-shadow) 72%, var(--ink));
+}
+
+#begin-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 142px;
+  padding: 15px 27px 13px;
+  transform: rotate(1.4deg) translateY(-2px);
+  border: 2px solid color-mix(in srgb, var(--ink-soft) 82%, var(--terracotta));
+  border-radius: 48% 52% 44% 56% / 55% 43% 57% 45%;
+  background: var(--terracotta);
+  box-shadow:
+    inset 3px 3px 0 color-mix(in srgb, var(--skin) 62%, var(--cloud)),
+    inset -3px -3px 0 color-mix(in srgb, var(--terracotta) 72%, var(--ink-soft)),
+    0 6px 0 color-mix(in srgb, var(--terracotta) 52%, var(--ink-soft));
+  color: var(--ink);
+  cursor: pointer;
+  font: 800 16px/1 var(--ui-font);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  transition: transform 110ms ease, box-shadow 110ms ease;
+}
+
+#begin-btn:hover {
+  transform: rotate(0.7deg) translateY(-4px);
+}
+
+#begin-btn:active {
+  transform: rotate(1.4deg) translateY(4px) scale(0.985);
+  box-shadow:
+    inset 3px 3px 0 color-mix(in srgb, var(--terracotta) 68%, var(--ink-soft)),
+    inset -1px -1px 0 color-mix(in srgb, var(--skin) 56%, var(--cloud)),
+    0 1px 0 color-mix(in srgb, var(--terracotta) 52%, var(--ink-soft));
+}
+
+#intro-skip {
+  position: fixed;
+  top: max(18px, env(safe-area-inset-top));
+  right: max(20px, env(safe-area-inset-right));
+  padding: 8px 4px 6px;
+  border: 0;
+  border-bottom: 2px solid color-mix(in srgb, var(--ink-soft) 52%, transparent);
+  background: color-mix(in srgb, var(--paper) 74%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  font: 700 12px/1 var(--ui-font);
+  letter-spacing: var(--ui-track);
+  pointer-events: auto;
+  text-transform: uppercase;
+}
+
+#intro-skip:hover {
+  border-bottom-color: var(--terracotta);
+}
+
 #tray {
   position: fixed;
   left: 50%;
@@ -62,14 +223,14 @@ body {
   transition: opacity 320ms ease, transform 320ms ease, visibility 0s linear 320ms;
 }
 
-#tray.intro-hidden {
+#tray.gameplay-hidden {
   transform: translate(-50%, 20px);
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
 }
 
-#tray:not(.intro-hidden) {
+#tray:not(.gameplay-hidden) {
   transition: opacity 320ms ease, transform 320ms ease, visibility 0s;
 }
 
@@ -369,8 +530,7 @@ body {
   opacity: 0.5;
 }
 
-#journal-btn,
-#mute-btn {
+#journal-btn {
   height: 54px;
   padding: 9px 10px;
   border: 2px solid var(--ink-soft);
@@ -384,19 +544,12 @@ body {
   transition: transform 140ms ease;
 }
 
-#journal-btn:hover,
-#mute-btn:hover {
+#journal-btn:hover {
   transform: translateY(-2px);
 }
 
-#journal-btn:active,
-#mute-btn:active {
+#journal-btn:active {
   transform: translateY(1px) scale(0.98);
-}
-
-#mute-btn[aria-pressed='true'] {
-  opacity: 0.6;
-  filter: saturate(0.4);
 }
 
 #journal-btn b {
@@ -787,6 +940,252 @@ body {
   transition: none;
 }
 
+/* Settings is a pocket-sized clay tool: useful, tactile, and deliberately quieter
+   than the ceremonial title plaque. */
+#settings-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  position: fixed;
+  top: max(16px, env(safe-area-inset-top));
+  right: max(18px, env(safe-area-inset-right));
+  z-index: 20;
+  display: grid;
+  width: 46px;
+  height: 43px;
+  place-items: center;
+  transform: rotate(1.5deg);
+  border: 2px solid var(--ink-soft);
+  border-radius: 47% 53% 43% 57% / 55% 44% 56% 45%;
+  background: color-mix(in srgb, var(--paper) 78%, var(--skin));
+  box-shadow:
+    inset 3px 3px 0 color-mix(in srgb, var(--cloud) 72%, transparent),
+    inset -3px -3px 0 color-mix(in srgb, var(--skin) 68%, var(--ink-soft)),
+    0 4px 0 var(--ink-soft);
+  color: var(--ink);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+#settings-btn::before {
+  content: '⚙';
+  font: 900 23px/1 var(--ui-font);
+}
+
+#settings-btn > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+#settings-btn:hover {
+  transform: rotate(0.5deg) translateY(-2px);
+}
+
+#settings-btn:active {
+  transform: rotate(1.5deg) translateY(3px);
+  box-shadow:
+    inset 3px 3px 0 color-mix(in srgb, var(--skin) 68%, var(--ink-soft)),
+    0 1px 0 var(--ink-soft);
+}
+
+#settings-btn[hidden],
+#settings-layer[hidden],
+.settings-body[hidden],
+.settings-confirmation[hidden] {
+  display: none;
+}
+
+#settings-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-items: start end;
+  box-sizing: border-box;
+  padding:
+    calc(max(16px, env(safe-area-inset-top)) + 55px)
+    max(18px, env(safe-area-inset-right))
+    16px
+    16px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease;
+}
+
+#settings-layer.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.settings-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgb(61 52 54 / 20%);
+}
+
+#settings-dialog {
+  position: relative;
+  display: grid;
+  width: min(330px, calc(100vw - 40px));
+  max-height: calc(100vh - max(16px, env(safe-area-inset-top)) - 82px);
+  box-sizing: border-box;
+  gap: 14px;
+  padding: 24px 22px 22px;
+  overflow-y: auto;
+  transform: translateX(18px) rotate(0.5deg);
+  border: 3px solid var(--ink-soft);
+  border-radius: 22px 15px 24px 17px / 17px 24px 16px 23px;
+  background:
+    radial-gradient(ellipse at 14% 12%, rgb(255 250 242 / 25%), transparent 24%),
+    radial-gradient(ellipse at 82% 76%, rgb(61 52 54 / 5%), transparent 28%),
+    var(--paper);
+  box-shadow:
+    inset 3px 3px 0 var(--cloud),
+    inset -5px -4px 0 color-mix(in srgb, var(--skin) 70%, transparent),
+    0 7px 0 var(--ink-soft),
+    0 15px 28px rgb(61 52 54 / 26%);
+  transition: transform 220ms cubic-bezier(0.2, 0.85, 0.3, 1);
+}
+
+#settings-layer.open #settings-dialog {
+  transform: translateX(0) rotate(-0.3deg);
+}
+
+#settings-heading {
+  margin: 0 48px 2px 0;
+  font-family: ui-rounded, 'Arial Rounded MT Bold', 'Trebuchet MS', sans-serif;
+  font-size: 23px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-close {
+  appearance: none;
+  -webkit-appearance: none;
+  position: absolute;
+  top: 18px;
+  right: 17px;
+  padding: 5px 3px;
+  border: 0;
+  border-bottom: 2px solid var(--ink-soft);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font: 700 10px/1 var(--ui-font);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-body {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-toggle,
+.settings-action,
+.settings-confirmation button {
+  appearance: none;
+  -webkit-appearance: none;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 2px solid var(--ink-soft);
+  border-radius: 11px 8px 12px 7px / 8px 12px 7px 11px;
+  background: var(--paper);
+  box-shadow: inset 2px 2px 0 var(--cloud), inset -3px -3px 0 var(--skin);
+  color: var(--ink);
+  cursor: pointer;
+  font: 700 12px/1.2 var(--ui-font);
+  letter-spacing: 0.035em;
+  text-align: left;
+}
+
+.settings-toggle[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--paper) 76%, var(--skin));
+  box-shadow:
+    inset 3px 3px 0 color-mix(in srgb, var(--ink-soft) 28%, transparent),
+    inset -1px -1px 0 var(--cloud);
+}
+
+.settings-action:hover,
+.settings-toggle:hover,
+.settings-confirmation button:hover {
+  transform: translateY(-1px);
+}
+
+.settings-replay {
+  color: color-mix(in srgb, var(--terracotta) 74%, var(--ink));
+}
+
+.settings-quality {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin: 0;
+  padding: 9px 10px 10px;
+  border: 2px solid color-mix(in srgb, var(--ink-soft) 58%, transparent);
+  border-radius: 9px 13px 8px 12px / 12px 8px 13px 9px;
+}
+
+.settings-quality legend {
+  padding: 0 4px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-quality label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.settings-quality input {
+  flex: 0 0 auto;
+  accent-color: var(--terracotta);
+}
+
+.settings-quality:disabled {
+  opacity: 0.62;
+}
+
+.settings-status {
+  min-height: 1.2em;
+  margin: 0;
+  color: color-mix(in srgb, var(--terracotta) 74%, var(--ink));
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.settings-confirmation {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-confirmation p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.settings-confirmation-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.settings-confirmation button:last-child {
+  background: color-mix(in srgb, var(--paper) 60%, var(--terracotta));
+}
+
 .target-readout {
   position: fixed;
   left: 50%;
@@ -839,36 +1238,84 @@ body {
   pointer-events: none;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
+:root[data-reduced-motion='true'] * {
+  animation-duration: 0.01ms !important;
+  transition-duration: 0.01ms !important;
+}
 
-  .moment-toast {
-    transform: translate(-50%, 0) rotate(-1deg);
-    transition: opacity 140ms ease !important;
-  }
+:root[data-reduced-motion='true'] .moment-toast {
+  transform: translate(-50%, 0) rotate(-1deg);
+  transition: opacity 140ms ease !important;
+}
 
-  #journal-layer {
-    transition: opacity 140ms ease !important;
-  }
+:root[data-reduced-motion='true'] #journal-layer {
+  transition: opacity 140ms ease !important;
+}
 
-  #journal-dialog,
-  #journal-layer.open #journal-dialog {
-    transform: rotate(-0.4deg);
-  }
+:root[data-reduced-motion='true'] #journal-dialog,
+:root[data-reduced-motion='true'] #journal-layer.open #journal-dialog {
+  transform: rotate(-0.4deg);
+}
 
-  #tray.intro-hidden {
-    transform: translateX(-50%);
-  }
+:root[data-reduced-motion='true'] #tray.gameplay-hidden {
+  transform: translateX(-50%);
+}
 
-  #tray {
-    transition: opacity 200ms ease !important;
-  }
+:root[data-reduced-motion='true'] #tray {
+  transition: opacity 200ms ease !important;
+}
+
+:root[data-reduced-motion='true'] #title-layer {
+  transition-property: background-color, opacity !important;
+}
+
+:root[data-reduced-motion='true'] #settings-layer {
+  transition-property: opacity !important;
+}
+
+:root[data-reduced-motion='true'] #settings-dialog,
+:root[data-reduced-motion='true'] #settings-layer.open #settings-dialog,
+:root[data-reduced-motion='true'] #settings-btn,
+:root[data-reduced-motion='true'] #settings-btn:hover,
+:root[data-reduced-motion='true'] #settings-btn:active {
+  transform: none;
+}
+
+:root[data-reduced-motion='true'] #title-plaque,
+:root[data-reduced-motion='true'] #title-layer[data-mode='prologue'] #title-plaque,
+:root[data-reduced-motion='true'] #begin-btn,
+:root[data-reduced-motion='true'] #begin-btn:hover,
+:root[data-reduced-motion='true'] #begin-btn:active {
+  transform: none;
 }
 
 @media (max-width: 560px) {
+  #title-layer {
+    padding: 18px;
+  }
+
+  #title-plaque {
+    width: min(440px, calc(100vw - 36px));
+    min-height: 206px;
+    gap: 26px;
+    padding: 40px 24px 35px;
+    border-radius: 42% 58% 45% 55% / 15% 21% 18% 24%;
+  }
+
+  #title-heading {
+    font-size: clamp(40px, 15vw, 64px);
+  }
+
+  #begin-btn {
+    min-width: 126px;
+    padding: 14px 23px 12px;
+  }
+
+  #intro-skip {
+    top: max(12px, env(safe-area-inset-top));
+    right: max(14px, env(safe-area-inset-right));
+  }
+
   #tray {
     bottom: 10px;
     gap: 5px;
@@ -876,7 +1323,7 @@ body {
   }
 
   .power-shell {
-    width: 62px;
+    width: clamp(46px, calc((100vw - 136px) / 4), 62px);
     height: 58px;
   }
 
@@ -892,8 +1339,7 @@ body {
     width: 3px;
   }
 
-  #journal-btn,
-  #mute-btn {
+  #journal-btn {
     height: 50px;
     padding-inline: 2px;
     font-size: 11px;
@@ -906,5 +1352,31 @@ body {
   #journal-dialog {
     width: calc(100vw - 16px);
     height: calc(100vh - 24px);
+  }
+
+  #settings-btn {
+    top: max(12px, env(safe-area-inset-top));
+    right: max(12px, env(safe-area-inset-right));
+  }
+
+  #settings-layer {
+    place-items: start end;
+    padding:
+      calc(max(12px, env(safe-area-inset-top)) + 55px)
+      max(12px, env(safe-area-inset-right))
+      10px
+      8px;
+  }
+
+  #settings-dialog {
+    width: min(330px, calc(100vw - 20px));
+    max-height: calc(100vh - max(12px, env(safe-area-inset-top)) - 77px);
+    overflow-y: auto;
+    padding-bottom: 22px;
+    transform: translateY(-8px) rotate(0.2deg);
+  }
+
+  #settings-layer.open #settings-dialog {
+    transform: translateY(0) rotate(-0.2deg);
   }
 }

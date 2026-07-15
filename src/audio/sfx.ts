@@ -4,6 +4,22 @@ import { RNG } from '../core/rng'
 type SfxStorage = Pick<Storage, 'getItem' | 'setItem'>
 type Voice = { sources: AudioScheduledSourceNode[]; nodes: AudioNode[]; stop(): void }
 
+export type PrologueSoundCue = 'growth' | 'step' | 'hammer' | 'place' | 'ignite'
+export type PrologueSoundProfile =
+  | { kind: 'step' }
+  | { kind: 'knock'; pitch: number; seconds: number; volume: number }
+  | { kind: 'tone'; from: number; to: number; seconds: number; volume: number }
+
+export function prologueSoundProfile(cue: PrologueSoundCue): PrologueSoundProfile {
+  if (cue === 'step') return { kind: 'step' }
+  if (cue === 'hammer') return { kind: 'knock', pitch: 150, seconds: 0.10, volume: 0.028 }
+  if (cue === 'place') return { kind: 'knock', pitch: 95, seconds: 0.14, volume: 0.032 }
+  if (cue === 'growth') {
+    return { kind: 'tone', from: 150, to: 230, seconds: 0.15, volume: 0.012 }
+  }
+  return { kind: 'tone', from: 180, to: 520, seconds: 0.4, volume: 0.026 }
+}
+
 const MUTE_KEY = 'clayisland.muted'
 const MAX_VOICES = 6
 
@@ -85,6 +101,19 @@ export class Sfx {
     this.trackVoice([noise], [filter, gain])
   }
 
+  prologue(cue: PrologueSoundCue): void {
+    const profile = prologueSoundProfile(cue)
+    if (profile.kind === 'step') {
+      this.step()
+      return
+    }
+    if (profile.kind === 'knock') {
+      this.knock(profile.pitch, profile.seconds, profile.volume)
+      return
+    }
+    this.oscillator('sine', profile.from, profile.to, profile.seconds, profile.volume)
+  }
+
   reward(): void {
     this.oscillator('sine', 116, 82, 0.18, 0.022)
   }
@@ -157,6 +186,39 @@ export class Sfx {
     source.start(now)
     source.stop(now + seconds)
     this.trackVoice([source], [gain])
+  }
+
+  private knock(pitch: number, seconds: number, volume: number): void {
+    const audio = this.ready()
+    if (!audio) return
+    const { context } = audio
+    const now = context.currentTime
+
+    const tone = context.createOscillator()
+    tone.type = 'sine'
+    tone.frequency.setValueAtTime(pitch * 1.08, now)
+    tone.frequency.exponentialRampToValueAtTime(pitch, now + seconds)
+    const toneGain = context.createGain()
+    toneGain.gain.setValueAtTime(volume, now)
+    toneGain.gain.exponentialRampToValueAtTime(0.0001, now + seconds)
+
+    const noise = context.createBufferSource()
+    noise.buffer = this.noiseBuffer
+    const noiseFilter = context.createBiquadFilter()
+    noiseFilter.type = 'bandpass'
+    noiseFilter.frequency.value = pitch * 3.2
+    noiseFilter.Q.value = 0.9
+    const noiseGain = context.createGain()
+    noiseGain.gain.setValueAtTime(volume * 0.42, now)
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + seconds * 0.65)
+
+    tone.connect(toneGain).connect(audio.master)
+    noise.connect(noiseFilter).connect(noiseGain).connect(audio.master)
+    tone.start(now)
+    tone.stop(now + seconds)
+    noise.start(now)
+    noise.stop(now + seconds)
+    this.trackVoice([tone, noise], [toneGain, noiseFilter, noiseGain])
   }
 
   private thud(): void {

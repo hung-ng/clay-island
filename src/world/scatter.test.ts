@@ -1,6 +1,18 @@
 import { describe, it, expect } from 'vitest'
 import { RNG } from '../core/rng'
-import { placeSites } from './scatter'
+import { CLEARANCE, fitsPlacement, placeSites, type Placement } from './scatter'
+
+describe('placement policy', () => {
+  it('exposes the canonical footprint clearances', () => {
+    expect(CLEARANCE).toEqual({ campfire: 2, hut: 2, site: 2, tree: 1.3 })
+  })
+
+  it('accepts touching footprints and rejects overlapping ones', () => {
+    const placed: Placement[] = [{ kind: 'hut', x: 0, z: 0 }]
+    expect(fitsPlacement({ kind: 'tree', x: 3.3, z: 0 }, placed)).toBe(true)
+    expect(fitsPlacement({ kind: 'tree', x: 3.29, z: 0 }, placed)).toBe(false)
+  })
+})
 
 describe('placeSites', () => {
   const p = placeSites(new RNG(1))

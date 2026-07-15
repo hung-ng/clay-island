@@ -80,7 +80,7 @@ export const OUTCOME_HANDLERS: Record<
   steam: (ctx, y0) => {
     ctx.fx.particles.burst({
       x: ctx.x,
-      y: y0 + ctx.island.group.position.y,
+      y: y0,
       z: ctx.z,
       n: 36,
       color: PALETTE.cloud,

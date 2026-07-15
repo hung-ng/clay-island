@@ -390,6 +390,16 @@ export class Tree {
     this.fireVisual.setLightEnabled(on)
   }
 
+  /** Seek the authored sapling presentation without advancing gameplay systems. */
+  setGrowthProgress(value: number): void {
+    if (this.state !== 'sapling' && this.state !== 'normal') return
+    const growth = THREE.MathUtils.clamp(value, 0, 1)
+    this.phase = growth * GROW_SECONDS
+    this.state = growth >= 1 ? 'normal' : 'sapling'
+    this.setGrowth(growth)
+    this.syncAppearance()
+  }
+
   /** Struck but not felled: the canopy jolts. */
   shudder(): void {
     if (this.state !== 'normal') return

@@ -16,6 +16,9 @@ import {
   type Suggestion,
   type VillagerState,
 } from './fsm'
+import { MODEL_SCALE, VillagerModel } from './model'
+
+export { MODEL_SCALE } from './model'
 
 type Point = { x: number; z: number }
 type GraveLike = Point & { fresh: boolean }
@@ -27,7 +30,12 @@ type SpawnOptions = {
   animateIn?: boolean
 }
 
-export const MODEL_SCALE = 0.75
+export type VillagerOptions = {
+  lowFx?: boolean
+  animateIn?: boolean
+  visualSeed: number
+}
+
 /** Seconds of unbroken labour before a villager wants a drink. */
 export const THIRST_LIMIT = 16
 /** How long they kneel at the water. Long enough to read as an action. */
@@ -93,17 +101,13 @@ export class Villager {
   alive = true
   group = new THREE.Group()
 
-  private model = new THREE.Group()
-  private arms: THREE.Mesh[] = []
-  private head: THREE.Mesh
+  private readonly rig: VillagerModel
+  private readonly lowFx: boolean
   private emoteSprite = new EmoteSprite()
-  private visualMaterials: THREE.MeshToonMaterial[] = []
-  private visualColors: THREE.Color[] = []
   private rainLeaf: THREE.Mesh
   private rod: THREE.Group
   private rodTip = new THREE.Vector3()
   private heldFruit: THREE.Mesh
-  private axe: THREE.Group
   private rainTime = 0
   private zapTime = -1
   private zapLastQt = Number.NEGATIVE_INFINITY
@@ -146,51 +150,16 @@ export class Villager {
     private rng: RNG,
     private world: World,
     private bus: EventBus,
-    private readonly lowFx = false,
-    animateIn = false,
+    options: VillagerOptions,
   ) {
+    this.lowFx = options.lowFx ?? false
+    this.rig = new VillagerModel(id, options.visualSeed, this.lowFx)
     this.tx = x
     this.tz = z
-    this.spawnFrames = animateIn ? 0 : 4
+    this.spawnFrames = options.animateIn ? 0 : 4
     this.group.position.set(x, island.sampleHeight(x, z), z)
-    this.group.scale.setScalar(animateIn ? 0.01 : 1)
+    this.group.scale.setScalar(options.animateIn ? 0.01 : 1)
 
-    const smock = rng.pick([PALETTE.smockA, PALETTE.smockB, PALETTE.smockC])
-    const body = new THREE.Mesh(
-      wobble(new THREE.CapsuleGeometry(0.22, 0.34, 5, 10), rng, 0.035),
-      clayMaterial(smock),
-    )
-    body.position.y = 0.44
-    this.addPart(body, lowFx)
-
-    this.head = new THREE.Mesh(
-      wobble(new THREE.SphereGeometry(0.22, 12, 9), rng, 0.035),
-      clayMaterial(PALETTE.skin),
-    )
-    this.head.position.y = 0.94
-    this.head.scale.set(1, 0.96, 0.94)
-    this.addPart(this.head, lowFx)
-
-    for (const side of [-1, 1]) {
-      const arm = new THREE.Mesh(
-        wobble(new THREE.CapsuleGeometry(0.065, 0.2, 4, 8), rng, 0.018),
-        clayMaterial(PALETTE.skin),
-      )
-      arm.position.set(side * 0.28, 0.51, 0)
-      arm.rotation.z = side * -0.28
-      arm.userData.baseRotation = arm.rotation.z
-      this.arms.push(arm)
-      this.addPart(arm, lowFx)
-
-      const leg = new THREE.Mesh(
-        wobble(new THREE.CapsuleGeometry(0.075, 0.13, 4, 8), rng, 0.018),
-        clayMaterial(PALETTE.skin),
-      )
-      leg.position.set(side * 0.11, 0.12, 0)
-      this.addPart(leg, lowFx)
-    }
-
-    this.model.scale.setScalar(MODEL_SCALE)
     const propRng = new RNG([...id].reduce((seed, character) => seed * 31 + character.charCodeAt(0), 17))
     this.rainLeaf = new THREE.Mesh(
       wobble(new THREE.SphereGeometry(0.3, 9, 6), propRng, 0.035),
@@ -201,7 +170,7 @@ export class Villager {
     this.rainLeaf.scale.set(1.25, 0.16, 0.9)
     this.rainLeaf.rotation.z = -0.22
     this.rainLeaf.visible = false
-    this.rainLeaf.castShadow = !lowFx
+    this.rainLeaf.castShadow = !this.lowFx
 
     this.rod = new THREE.Group()
     this.rod.name = 'fishing-rig'
@@ -214,7 +183,7 @@ export class Villager {
     // leads out over the water, and the butt sits back at the hip.
     rod.position.set(0.3, 0.8, 0.42)
     rod.rotation.set(1.05, 0, -0.18)
-    rod.castShadow = !lowFx
+    rod.castShadow = !this.lowFx
     const line = new THREE.Mesh(
       new THREE.CylinderGeometry(0.006, 0.006, 1, 4),
       clayMaterial(PALETTE.inkSoft, { flat: true }),
@@ -241,27 +210,8 @@ export class Villager {
     this.heldFruit.name = 'held-fruit'
     this.heldFruit.position.set(0, -0.18, 0.06)
     this.heldFruit.visible = false
-    this.heldFruit.castShadow = !lowFx
+    this.heldFruit.castShadow = !this.lowFx
     this.arms[0].add(this.heldFruit)
-
-    this.axe = new THREE.Group()
-    this.axe.name = 'villager-axe'
-    const handle = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.025, 0.03, 0.62, 5),
-      clayMaterial(PALETTE.bark),
-    )
-    const head = new THREE.Mesh(
-      new THREE.BoxGeometry(0.24, 0.12, 0.07),
-      clayMaterial(PALETTE.stone),
-    )
-    head.position.y = 0.3
-    handle.castShadow = !lowFx
-    head.castShadow = !lowFx
-    this.axe.add(handle, head)
-    this.axe.position.set(-0.27, 0.62, 0.05)
-    this.axe.rotation.z = -0.7
-    this.axe.visible = false
-    this.model.add(this.axe)
 
     const ghostMaterial = clayMaterial(PALETTE.ghost)
     ghostMaterial.transparent = true
@@ -292,9 +242,15 @@ export class Villager {
     island.group.add(this.ghost)
 
     this.group.add(this.model, this.emoteSprite.sprite, this.rainLeaf, this.rod)
-    if (lowFx) this.addBlobShadow()
+    if (this.lowFx) this.addBlobShadow()
     this.enter('wander', world)
   }
+
+  private get model(): THREE.Group { return this.rig.group }
+  private get head(): THREE.Mesh { return this.rig.head }
+  private get arms(): [THREE.Mesh, THREE.Mesh] { return this.rig.arms }
+  private get axe(): THREE.Group { return this.rig.axe }
+  private get visualMaterials(): THREE.MeshToonMaterial[] { return this.rig.materials }
 
   update(dt: number, qt: number, world: World, island: Island): void {
     if (!this.alive) return
@@ -631,15 +587,6 @@ export class Villager {
     }
   }
 
-  private addPart(mesh: THREE.Mesh, lowFx: boolean): void {
-    mesh.castShadow = !lowFx
-    if (mesh.material instanceof THREE.MeshToonMaterial) {
-      this.visualMaterials.push(mesh.material)
-      this.visualColors.push(mesh.material.color.clone())
-    }
-    this.model.add(mesh)
-  }
-
   private updateZap(dt: number, qt: number): void {
     this.zapTime += dt
     const ticked = qt !== this.zapLastQt
@@ -672,7 +619,7 @@ export class Villager {
     this.zapTime = -1
     this.ghost.visible = false
     for (const material of this.ghostMaterials) material.opacity = 1
-    this.visualMaterials.forEach((material, index) => material.color.copy(this.visualColors[index]))
+    this.rig.restoreColors()
     this.resetPose()
     this.enter('wander', this.world)
   }
@@ -1371,10 +1318,8 @@ export class Villager {
   }
 
   private resetPose(): void {
-    this.model.scale.setScalar(MODEL_SCALE)
+    this.rig.resetPose()
     this.group.rotation.z = 0
-    this.head.rotation.set(0, 0, 0)
-    for (const arm of this.arms) arm.rotation.z = arm.userData.baseRotation
   }
 
   private updatePerformance(dt: number, qt: number, island: Island): boolean {
@@ -1457,6 +1402,7 @@ export function spawnVillagers(
       }
     }
 
+    const visualSeed = rng.int(1, 0x7fffffff)
     const villager = new Villager(
       `villager-${world.villagers.length}`,
       point.x,
@@ -1465,8 +1411,11 @@ export function spawnVillagers(
       rng,
       world,
       world.bus,
-      options.lowFx,
-      options.animateIn,
+      {
+        lowFx: options.lowFx,
+        animateIn: options.animateIn,
+        visualSeed,
+      },
     )
     world.villagers.push(villager)
     island.group.add(villager.group)

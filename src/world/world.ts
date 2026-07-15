@@ -7,7 +7,6 @@ import { FIRE_CONFIG, FireSystem, type FireEvent, type Flammable } from './fire'
 import { MAX_TREES, seedSite, type Seedling } from './forest'
 import { Island, WALK_RADIUS, islandSurfaceY } from './island'
 import { Campfire, FlowerPatch, Grave, Hut, MAX_POND_FISH, Pond, Tree } from './objects'
-import { placeSites } from './scatter'
 import {
   BUILD_CLEARANCE,
   groupBasins,
@@ -887,36 +886,5 @@ export class World {
     if (kind === 'tree') return this.trees.find(tree => tree.id === id) ?? null
     if (kind === 'hut') return this.huts.find(hut => hut.id === id) ?? null
     return this.campfire?.id === id ? this.campfire : null
-  }
-}
-
-export function scatter(world: World, island: Island, rng: RNG, lowFx = false): void {
-  let treeIndex = 0
-  let hutIndex = 0
-  for (const placement of placeSites(rng)) {
-    const y = island.sampleHeight(placement.x, placement.z)
-    if (placement.kind === 'tree') {
-      const tree = new Tree(`tree-${treeIndex++}`, placement.x, placement.z, y, rng, lowFx)
-      world.trees.push(tree)
-      island.group.add(tree.group)
-      continue
-    }
-    if (placement.kind === 'hut' || placement.kind === 'site') {
-      const hut = new Hut(
-        `hut-${hutIndex++}`,
-        placement.x,
-        placement.z,
-        placement.kind === 'site' ? 'site' : 'built',
-        y,
-        rng,
-        lowFx,
-      )
-      world.huts.push(hut)
-      island.group.add(hut.group)
-      continue
-    }
-    const campfire = new Campfire(placement.x, placement.z, y, rng, lowFx)
-    world.campfire = campfire
-    island.group.add(campfire.group)
   }
 }

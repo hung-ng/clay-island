@@ -15,6 +15,47 @@ import {
   Villager,
 } from './villager'
 
+type RigStub = {
+  group: THREE.Group
+  head: THREE.Mesh
+  arms: [THREE.Mesh, THREE.Mesh]
+  axe: THREE.Group
+  materials: THREE.MeshToonMaterial[]
+  cleanColors: THREE.Color[]
+  resetPose: ReturnType<typeof vi.fn>
+  restoreColors: ReturnType<typeof vi.fn>
+}
+
+function createRigStub(): RigStub {
+  const group = new THREE.Group()
+  const head = new THREE.Mesh()
+  const arms: [THREE.Mesh, THREE.Mesh] = [new THREE.Mesh(), new THREE.Mesh()]
+  arms[0].userData.baseRotation = -0.28
+  arms[1].userData.baseRotation = 0.28
+  const axe = new THREE.Group()
+  const resetPose = vi.fn(() => {
+    group.scale.setScalar(MODEL_SCALE)
+    head.rotation.set(0, 0, 0)
+    arms[0].rotation.z = arms[0].userData.baseRotation
+    arms[1].rotation.z = arms[1].userData.baseRotation
+    axe.rotation.z = -0.7
+    axe.visible = false
+  })
+  group.add(head, ...arms, axe)
+  resetPose()
+  resetPose.mockClear()
+  return {
+    group,
+    head,
+    arms,
+    axe,
+    materials: [],
+    cleanColors: [],
+    resetPose,
+    restoreColors: vi.fn(),
+  }
+}
+
 type ActivityHarness = {
   state: 'sitAtFire' | 'fish' | 'harvest' | 'drink' | 'gather' | 'chopTree'
   suggestion: Suggestion | null
@@ -33,6 +74,7 @@ type ActivityHarness = {
   x: number
   z: number
   bus: EventBus
+  rig: RigStub
   model: THREE.Object3D
   head: THREE.Object3D
   arms: THREE.Object3D[]
@@ -64,15 +106,12 @@ function activityHarness(
   villager.gatheringBySuggestion = false
   villager.x = 0
   villager.z = 0
-  villager.model = bone()
-  villager.head = bone()
-  villager.arms = [bone(), bone()]
+  villager.rig = createRigStub()
   villager.group = bone()
   villager.head.position.y = 0.94
   villager.arms[0].position.set(-0.28, 0.51, 0)
   villager.arms[1].position.set(0.28, 0.51, 0)
   villager.group.add(villager.model)
-  villager.model.add(villager.head, ...villager.arms)
   villager.model.scale.setScalar(MODEL_SCALE)
   villager.emote = vi.fn()
   villager.enter = vi.fn()
@@ -521,6 +560,7 @@ describe('completion-based suggestions', () => {
       state: 'wander'
       x: number
       z: number
+      rig: RigStub
       rainLeaf: { visible: boolean }
       arms: Array<{ rotation: { z: number } }>
       resetPose: ReturnType<typeof vi.fn>
@@ -536,8 +576,8 @@ describe('completion-based suggestions', () => {
       state: 'wander',
       x: 0,
       z: 0,
+      rig: createRigStub(),
       rainLeaf: { visible: false },
-      arms: [{ rotation: { z: 0 } }],
       resetPose: vi.fn(),
       emote: vi.fn(),
       setTarget: vi.fn(),
@@ -1153,6 +1193,7 @@ describe('villagers use the world', () => {
       zapTime: number
       x: number
       z: number
+      rig: RigStub
       rainLeaf: { visible: boolean }
       arms: Array<{ rotation: { z: number } }>
       resetPose: ReturnType<typeof vi.fn>
@@ -1165,8 +1206,8 @@ describe('villagers use the world', () => {
       zapTime: -1,
       x: 0,
       z: 0,
+      rig: createRigStub(),
       rainLeaf: { visible: true },
-      arms: [{ rotation: { z: 0 } }],
       resetPose: vi.fn(),
       emote: vi.fn(),
       setTarget: vi.fn(),
@@ -1198,6 +1239,7 @@ describe('villagers use the world', () => {
       arrived: boolean
       chopFrames: number
       targetTree: Tree
+      rig: RigStub
       arms: Array<{ rotation: { z: number }; userData: { baseRotation: number } }>
       axe: { rotation: { z: number } }
       enter: ReturnType<typeof vi.fn>
@@ -1210,11 +1252,7 @@ describe('villagers use the world', () => {
       arrived: false,
       chopFrames: 0,
       targetTree: tree,
-      arms: [
-        { rotation: { z: 0 }, userData: { baseRotation: 0 } },
-        { rotation: { z: 0 }, userData: { baseRotation: 0 } },
-      ],
-      axe: { rotation: { z: 0 } },
+      rig: createRigStub(),
       enter: vi.fn(),
     })
     const world = { chipsAt: vi.fn() } as unknown as World
@@ -1269,6 +1307,7 @@ describe('villager deferred construction', () => {
     rebuildingRuin: boolean
     targetHut: Hut | null
     targetCampfire: Campfire | null
+    rig: RigStub
     arms: Array<{ rotation: { z: number }; userData: { baseRotation: number } }>
     enter: ReturnType<typeof vi.fn>
     performActivity(dt: number, ticked: boolean, world: World): void
@@ -1285,10 +1324,7 @@ describe('villager deferred construction', () => {
       rebuildingRuin: false,
       targetHut: null,
       targetCampfire: null,
-      arms: [
-        { rotation: { z: 0 }, userData: { baseRotation: 0 } },
-        { rotation: { z: 0 }, userData: { baseRotation: 0 } },
-      ],
+      rig: createRigStub(),
       enter: vi.fn(),
     })
     return villager
@@ -1337,6 +1373,7 @@ describe('villager performance outcomes', () => {
     zapLastQt: number
     x: number
     z: number
+    rig: RigStub
     model: { scale: { setScalar: ReturnType<typeof vi.fn> } }
     arms: Array<{ rotation: { z: number } }>
     group: { rotation: { z: number } }
@@ -1344,8 +1381,6 @@ describe('villager performance outcomes', () => {
     ghostArm: { rotation: { z: number } }
     ghostMaterials: Array<{ opacity: number }>
     island: { sampleHeight(): number }
-    visualMaterials: Array<{ color: { copy: ReturnType<typeof vi.fn> } }>
-    visualColors: unknown[]
     resetPose: ReturnType<typeof vi.fn>
     enter: ReturnType<typeof vi.fn>
     world: World
@@ -1354,21 +1389,19 @@ describe('villager performance outcomes', () => {
 
   it('recovers alive after the full comic lightning zap', () => {
     const villager = Object.create(Villager.prototype) as ZapHarness
+    const rig = createRigStub()
     Object.assign(villager, {
       alive: true,
       zapTime: 2.4,
       zapLastQt: Number.NEGATIVE_INFINITY,
       x: 1,
       z: 2,
-      model: { scale: { setScalar: vi.fn() } },
-      arms: [{ rotation: { z: 0 } }, { rotation: { z: 0 } }],
+      rig,
       group: { rotation: { z: 0 } },
       ghost: { visible: true, position: { set: vi.fn() } },
       ghostArm: { rotation: { z: 0 } },
       ghostMaterials: [{ opacity: 1 }],
       island: { sampleHeight: () => 0 },
-      visualMaterials: [{ color: { copy: vi.fn() } }],
-      visualColors: [{}],
       resetPose: vi.fn(),
       enter: vi.fn(),
       world: {} as World,
@@ -1378,6 +1411,7 @@ describe('villager performance outcomes', () => {
 
     expect(villager.alive).toBe(true)
     expect(villager.zapTime).toBe(-1)
+    expect(rig.restoreColors).toHaveBeenCalledOnce()
     expect(villager.enter).toHaveBeenCalledWith('wander', villager.world)
   })
 })

@@ -1,15 +1,13 @@
 import * as THREE from 'three'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { Shake } from './shake'
-
-afterEach(() => vi.unstubAllGlobals())
 
 describe('Shake', () => {
   it('can clear its prior offset before orbit controls consume camera state', () => {
     const camera = new THREE.PerspectiveCamera()
     camera.position.set(2, 3, 4)
     const origin = camera.position.clone()
-    const shake = new Shake()
+    const shake = new Shake(() => false)
 
     shake.add(0.8, 0.5)
     shake.update(0.1, camera)
@@ -26,7 +24,7 @@ describe('Shake', () => {
     const camera = new THREE.PerspectiveCamera()
     camera.position.set(2, 3, 4)
     const origin = camera.position.clone()
-    const shake = new Shake()
+    const shake = new Shake(() => false)
 
     shake.add(0.8, 0.5)
     shake.update(0.1, camera)
@@ -38,15 +36,16 @@ describe('Shake', () => {
     expect(camera.position.z).toBeCloseTo(origin.z)
   })
 
-  it('removes any active offset and stops shaking under reduced motion', () => {
+  it('removes any active offset and stops shaking when live reduced motion turns on', () => {
     const camera = new THREE.PerspectiveCamera()
     camera.position.set(2, 3, 4)
     const origin = camera.position.clone()
-    const shake = new Shake()
+    let reduced = false
+    const shake = new Shake(() => reduced)
 
     shake.add(0.8, 0.5)
     shake.update(0.1, camera)
-    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    reduced = true
     shake.update(0.1, camera)
 
     expect(camera.position.x).toBeCloseTo(origin.x)

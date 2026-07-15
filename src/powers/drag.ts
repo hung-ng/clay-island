@@ -99,6 +99,7 @@ export class DragTargeting {
     private readonly island: Island,
     private readonly world: World,
     private readonly onFire: (id: PowerId, x: number, z: number, kind: TargetKind) => void,
+    private readonly onActiveChange?: (active: boolean) => void,
   ) {
     const geometry = new THREE.RingGeometry(0.7, 0.94, 32)
     const material = clayMaterial(PALETTE.paper, { flat: true })
@@ -138,6 +139,7 @@ export class DragTargeting {
     this.previousCursor = this.dom.style.cursor
     this.dom.style.cursor = 'crosshair'
     this.liveRegion.classList.add('active')
+    this.onActiveChange?.(true)
 
     if (pointerArm) {
       this.keyboardMode = false
@@ -166,6 +168,7 @@ export class DragTargeting {
     this.liveRegion.textContent = ''
     if (returnFocus) this.focusOrigin?.focus({ preventScroll: true })
     this.focusOrigin = null
+    this.onActiveChange?.(false)
   }
 
   update(): void {

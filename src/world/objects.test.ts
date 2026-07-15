@@ -190,6 +190,29 @@ describe('Tree lifecycle', () => {
     expect(sapling.state).toBe('normal')
   })
 
+  it('lets authored presentation seek tree growth without advancing gameplay time', () => {
+    const sapling = new Tree('tree-1', 0, 0, 0, new RNG(1), false, 'sapling')
+    const trunk = sapling.group.getObjectByName('tree-trunk')!
+    const crown = sapling.group.getObjectByName('tree-crown')!
+
+    sapling.setGrowthProgress(0)
+    expect(trunk.scale.x).toBeCloseTo(0.25)
+    expect(crown.scale.x).toBeCloseTo(0.25)
+    expect(sapling.state).toBe('sapling')
+
+    sapling.setGrowthProgress(0.5)
+    expect(trunk.scale.x).toBeCloseTo(0.625)
+    expect(crown.scale.x).toBeCloseTo(0.625)
+    expect(trunk.position.y).toBeCloseTo(0.55 * 0.625)
+    expect(crown.position.y).toBeCloseTo(1.45 * 0.625)
+    expect(sapling.state).toBe('sapling')
+
+    sapling.setGrowthProgress(1)
+    expect(trunk.scale.x).toBe(1)
+    expect(crown.scale.x).toBe(1)
+    expect(sapling.state).toBe('normal')
+  })
+
   it('a sapling is visibly SMALLER than a grown tree — growth is not a shrunk crown', () => {
     const sapling = new Tree('tree-2', 0, 0, 0, new RNG(1), false, 'sapling')
     const grown = tree()

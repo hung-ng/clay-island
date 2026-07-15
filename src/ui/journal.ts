@@ -1,14 +1,16 @@
-import { prefersReducedMotion } from '../core/motion'
 import { MOMENTS, type Journal, type Moment, type MomentId } from '../discovery/moments'
 
-type JournalUIOptions = {
+export type JournalUIOptions = {
   lowFx: boolean
+  reducedMotion(): boolean
+  onOpenChange?(open: boolean): void
 }
 
 export type JournalUI = {
   toast(moment: Moment): void
   setUnlocked(unlocked: ReadonlySet<MomentId>): void
   close(): void
+  isOpen(): boolean
 }
 
 export function createJournalUI(
@@ -23,7 +25,7 @@ export function createJournalUI(
   const layer = document.createElement('div')
   layer.id = 'journal-layer'
   layer.hidden = true
-  layer.classList.toggle('lowfx', options.lowFx || prefersReducedMotion())
+  layer.classList.toggle('lowfx', options.lowFx)
 
   const backdrop = document.createElement('div')
   backdrop.className = 'journal-backdrop'
@@ -122,13 +124,14 @@ export function createJournalUI(
       hint.textContent = ''
       layer.hidden = false
       requestAnimationFrame(() => layer.classList.add('open'))
-      closeButton.focus({ preventScroll: true })
     } else {
       layer.classList.remove('open')
       trigger.focus({ preventScroll: true })
-      if (prefersReducedMotion()) layer.hidden = true
+      if (options.reducedMotion()) layer.hidden = true
       else closeTimer = window.setTimeout(() => { layer.hidden = true }, 340)
     }
+    options.onOpenChange?.(open)
+    if (open) closeButton.focus({ preventScroll: true })
   }
 
   trigger.addEventListener('click', () => setOpen(true))
@@ -193,7 +196,7 @@ export function createJournalUI(
       requestAnimationFrame(() => toastHost.classList.add('show'))
       toastTimer = window.setTimeout(() => {
         toastHost.classList.remove('show')
-        window.setTimeout(() => { toastHost.hidden = true }, prefersReducedMotion() ? 0 : 320)
+        window.setTimeout(() => { toastHost.hidden = true }, options.reducedMotion() ? 0 : 320)
       }, 3000)
     },
     setUnlocked(unlocked) {
@@ -208,7 +211,7 @@ export function createJournalUI(
         )
         button.style.setProperty('--moment-color', moment.color)
         button.textContent = isUnlocked ? moment.title : ''
-        if (isUnlocked && !wasUnlocked && !prefersReducedMotion()) {
+        if (isUnlocked && !wasUnlocked && !options.reducedMotion()) {
           button.classList.remove('pop')
           // Force a reflow so re-adding the class restarts the animation.
           void button.offsetWidth
@@ -218,6 +221,7 @@ export function createJournalUI(
       count.textContent = `${unlocked.size} of ${MOMENTS.length} moments`
     },
     close() { setOpen(false) },
+    isOpen() { return open },
   }
 
   api.setUnlocked(journal.unlocked)
