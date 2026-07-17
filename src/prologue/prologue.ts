@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { CameraController } from '../camera/controller'
-import { CAMERA_HOME } from '../camera/policy'
+import { CAMERA_HOME, type CameraPose } from '../camera/policy'
 import { RNG } from '../core/rng'
 import { clayMaterial } from '../fx/clayMaterial'
 import { PALETTE } from '../ui/tokens'
@@ -136,6 +136,21 @@ function setPresentationOpacity(root: THREE.Object3D, amount: number): void {
       material.opacity = authored.opacity * amount
     }
   })
+}
+
+function rotateCameraPose(pose: CameraPose, yaw: number): CameraPose {
+  const dx = pose.position.x - pose.target.x
+  const dz = pose.position.z - pose.target.z
+  const cosine = Math.cos(yaw)
+  const sine = Math.sin(yaw)
+  return {
+    position: {
+      x: pose.target.x + dx * cosine + dz * sine,
+      y: pose.position.y,
+      z: pose.target.z - dx * sine + dz * cosine,
+    },
+    target: { ...pose.target },
+  }
 }
 
 function materialPile(
@@ -434,6 +449,9 @@ export class PrologueDirector {
   readonly set: PrologueSet
   private elapsed = 0
   private previous = 0
+  private titleYaw = 0
+  private titlePreviewActive = false
+  private readonly initialCamera: CameraPose
   private finished = false
   private disposed = false
 
@@ -442,8 +460,19 @@ export class PrologueDirector {
     options.stageRoot.add(this.set.group)
     options.camera.lock('prologue')
     const initial = prologueStateAt(0, options.blueprint, options.reducedMotion())
+    this.initialCamera = initial.camera
     this.set.apply(initial)
     options.camera.setPose(initial.camera)
+  }
+
+  updateTitlePreview(dt: number): void {
+    if (this.finished || this.disposed || this.options.reducedMotion()) return
+    this.titlePreviewActive = true
+    this.titleYaw = THREE.MathUtils.euclideanModulo(
+      this.titleYaw - Math.max(0, dt) * Math.PI / PROLOGUE_DURATION + Math.PI,
+      Math.PI * 2,
+    ) - Math.PI
+    this.options.camera.setPose(this.presentCamera(this.initialCamera))
   }
 
   update(dt: number): void {
@@ -456,7 +485,7 @@ export class PrologueDirector {
       this.options.reducedMotion(),
     )
     this.set.apply(state)
-    this.options.camera.setPose(state.camera)
+    this.options.camera.setPose(this.presentCamera(state.camera))
     for (const cue of crossedPrologueCues(this.previous, this.elapsed)) this.options.onCue(cue)
     if (state.finished) this.finish()
   }
@@ -469,7 +498,7 @@ export class PrologueDirector {
   finish(): void {
     if (this.finished || this.disposed) return
     this.set.seekFinal()
-    this.options.camera.setPose(CAMERA_HOME)
+    this.options.camera.setPose(this.presentCamera(CAMERA_HOME))
     this.finished = true
     this.options.onFinished()
   }
@@ -479,5 +508,10 @@ export class PrologueDirector {
     this.disposed = true
     this.set.dispose()
     this.options.camera.unlock('prologue')
+  }
+
+  private presentCamera(pose: CameraPose): CameraPose {
+    if (!this.titlePreviewActive || this.options.reducedMotion()) return pose
+    return rotateCameraPose(pose, this.titleYaw)
   }
 }

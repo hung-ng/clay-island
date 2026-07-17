@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { PowerId } from './core/events'
 import { Sfx } from './audio/sfx'
 import { CameraController } from './camera/controller'
-import { CAMERA_HOME, celebrationCameraPose, type CameraPose } from './camera/policy'
+import { celebrationCameraPose, type CameraPose } from './camera/policy'
 import { CelebrationDirector } from './celebration/director'
 import { CelebrationFireworks } from './celebration/fireworks'
 import { shouldRequestAutomaticCelebration } from './celebration/state'
@@ -398,7 +398,6 @@ function swapToFrozenGameplay(): boolean {
   director.set.group.visible = false
   island.group.visible = true
   stageRoot.rotation.set(0, blueprint.stageRotationY, 0)
-  cameraController.setPose(CAMERA_HOME)
   director.dispose()
   director = null
   normalHandoffSwapped = true
@@ -481,7 +480,9 @@ const loop = new GameLoop(
       && !normalHandoffSwapped
       && swapToFrozenGameplay()
 
-    if (flow.phase === 'prologue' && !pendingNormalHandoff && !document.hidden) {
+    if (flow.phase === 'title' && !document.hidden) {
+      director?.updateTitlePreview(dt)
+    } else if (flow.phase === 'prologue' && !pendingNormalHandoff && !document.hidden) {
       director?.update(dt)
     }
 
@@ -509,7 +510,7 @@ const loop = new GameLoop(
       shake.update(dt, camera)
     }
 
-    const ambientDt = auditingHandoff || flow.phase === 'title' ? 0 : dt
+    const ambientDt = auditingHandoff ? 0 : dt
     updateSky(ambientDt)
     quality.update(ambientDt, cameraController.distance(), reducedMotion())
     renderScene()

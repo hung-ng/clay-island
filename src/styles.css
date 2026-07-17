@@ -61,10 +61,6 @@ body {
   transition: background-color 320ms ease, opacity 320ms ease;
 }
 
-#ui > #title-layer[data-mode='begin'] {
-  background-color: rgb(245 228 200 / 22%);
-}
-
 #ui > #title-layer[data-mode='cover'] {
   background-color: var(--paper);
 }

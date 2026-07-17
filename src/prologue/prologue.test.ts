@@ -3,7 +3,7 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { CAMERA_HOME, type CameraPose } from '../camera/policy'
 import { createInitialWorldBlueprint } from '../world/blueprint'
 import { buildInitialWorld } from '../world/initial'
-import { HUT_BEATS, PROLOGUE_CUES, prologueStateAt } from './choreography'
+import { HUT_BEATS, PROLOGUE_CUES, PROLOGUE_DURATION, prologueStateAt } from './choreography'
 import {
   gameplayHandoffRecords,
   PrologueDirector,
@@ -242,6 +242,35 @@ describe('PrologueSet', () => {
 })
 
 describe('PrologueDirector', () => {
+  it('continues the title orbit through Begin and carries its view into handoff', () => {
+    const blueprint = createInitialWorldBlueprint(7)
+    const camera = fakeCamera()
+    const onFinished = vi.fn()
+    const director = new PrologueDirector({
+      blueprint,
+      lowFx: false,
+      stageRoot: new THREE.Group(),
+      camera: camera as never,
+      reducedMotion: () => false,
+      onCue: vi.fn(),
+      onFinished,
+    })
+
+    director.updateTitlePreview(PROLOGUE_DURATION / 2)
+    const titlePose = camera.pose()
+    expect(titlePose.position.x).toBeCloseTo(34)
+    expect(titlePose.position.z).toBeCloseTo(0)
+
+    director.update(0)
+    expect(camera.pose()).toEqual(titlePose)
+    director.update(PROLOGUE_DURATION)
+
+    expect(onFinished).toHaveBeenCalledOnce()
+    expect(camera.pose().position.x).toBeCloseTo(-34)
+    expect(camera.pose().position.z).toBeCloseTo(0)
+    expect(camera.pose()).not.toEqual(CAMERA_HOME)
+  })
+
   it('owns one isolated session, crosses uneven updates once, and cleans up safely', () => {
     const blueprint = createInitialWorldBlueprint(7)
     const stageRoot = new THREE.Group()
