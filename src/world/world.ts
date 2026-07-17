@@ -1,3 +1,9 @@
+import {
+  findCelebrationSite,
+  findCelebrationSlots,
+  type CelebrationPoint,
+  type CelebrationSite,
+} from '../celebration/slots'
 import { EventBus, type TargetKind } from '../core/events'
 import { RNG } from '../core/rng'
 import type { SuggestionKind } from '../villagers/fsm'
@@ -526,6 +532,68 @@ export class World {
       craters: this.island.craters,
       occupied,
     }
+  }
+
+  hasDangerousFire(): boolean {
+    return this.trees.some(tree => tree.burning)
+      || this.huts.some(hut => hut.burning)
+  }
+
+  isCelebrationGround(x: number, z: number, ignored?: Position): boolean {
+    if (this.submerged(x, z)) return false
+    const query = this.groundQuery()
+    const ground: GroundQuery = ignored
+      ? { ...query, occupied: query.occupied.filter(object => object !== ignored) }
+      : query
+    return isBuildable(
+      x,
+      z,
+      ground,
+      (px, pz) => this.island.sampleHeight(px, pz),
+    )
+  }
+
+  private isCelebrationLaunchGround(
+    centre: CelebrationPoint,
+    ignored?: Position,
+  ): boolean {
+    return this.isCelebrationGround(centre.x, centre.z, ignored)
+      && this.isCelebrationGround(centre.x, centre.z + 1.1, ignored)
+  }
+
+  celebrationSite(count: number): CelebrationSite | null {
+    const campfire = this.campfire
+    const oldCentre = campfire ? { x: campfire.x, z: campfire.z } : null
+    const usableCampfire = campfire
+      && (campfire.state === 'lit' || campfire.state === 'doused')
+      && this.isCelebrationLaunchGround(oldCentre!, campfire)
+
+    if (usableCampfire && oldCentre) {
+      return {
+        centre: oldCentre,
+        slots: findCelebrationSlots(
+          oldCentre,
+          count,
+          point => this.isCelebrationGround(point.x, point.z),
+        ),
+      }
+    }
+
+    const anchors = [oldCentre, this.villageCentre(), { x: 0, z: 0 }]
+      .filter((point): point is CelebrationPoint => point !== null)
+    const avoidsOldFootprint = (point: CelebrationPoint): boolean => (
+      !oldCentre || Math.hypot(point.x - oldCentre.x, point.z - oldCentre.z) >= BUILD_CLEARANCE
+    )
+    const launchFootprintAvoidsOld = (point: CelebrationPoint): boolean => (
+      avoidsOldFootprint(point)
+      && avoidsOldFootprint({ x: point.x, z: point.z + 1.1 })
+    )
+    return findCelebrationSite(
+      anchors,
+      count,
+      point => launchFootprintAvoidsOld(point) && this.isCelebrationLaunchGround(point),
+      point => avoidsOldFootprint(point) && this.isCelebrationGround(point.x, point.z),
+    )
   }
 
   /** Whether this point lies under a pond's surface. Walkers must stay out. */

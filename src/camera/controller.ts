@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import {
   CAMERA_HOME,
   CAMERA_LIMITS,
+  CELEBRATION_CAMERA,
   clampCameraTarget,
   maxPolarAngleAt,
   smooth01,
@@ -10,6 +11,7 @@ import {
 } from './policy'
 
 export type CameraLockReason = 'prologue' | 'targeting' | 'journal' | 'settings'
+export type CameraAutoMotionReason = 'celebration'
 
 export type CameraControlsPort = {
   target: THREE.Vector3
@@ -46,7 +48,7 @@ export type CameraControllerOptions = {
 }
 
 type CameraTween = {
-  kind: 'reset' | 'recenter'
+  kind: 'reset' | 'recenter' | 'suggestion'
   start: CameraPose
   end: CameraPose
   elapsed: number
@@ -70,11 +72,13 @@ export class CameraController {
   private readonly dom: HTMLElement
   private readonly reducedMotion: () => boolean
   private readonly locks = new Set<CameraLockReason>()
+  private readonly autoMotionSuppressions = new Set<CameraAutoMotionReason>()
   private autoRotateEnabled: boolean
   private interacting = false
   private idleElapsed = 0
   private tween: CameraTween | null = null
   private suppressNextContextMenu = false
+  private interactionRevision = 0
 
   constructor(options: CameraControllerOptions) {
     this.camera = options.camera
@@ -120,6 +124,19 @@ export class CameraController {
     this.idleElapsed = 0
   }
 
+  suppressAutoMotion(reason: CameraAutoMotionReason): void {
+    this.autoMotionSuppressions.add(reason)
+    this.controls.autoRotate = false
+    this.idleElapsed = 0
+    if (this.tween?.kind === 'recenter') this.tween = null
+  }
+
+  releaseAutoMotion(reason: CameraAutoMotionReason): void {
+    if (!this.autoMotionSuppressions.delete(reason)) return
+    this.controls.autoRotate = false
+    this.idleElapsed = 0
+  }
+
   setAutoRotate(on: boolean): void {
     this.autoRotateEnabled = on
     if (!on) {
@@ -133,6 +150,24 @@ export class CameraController {
   setPose(pose: CameraPose): void {
     this.tween = null
     this.applyPose(pose)
+  }
+
+  get userInteractionRevision(): number { return this.interactionRevision }
+
+  suggestPose(pose: CameraPose, sinceRevision: number): boolean {
+    if (this.reducedMotion()
+      || this.locks.size > 0
+      || this.interacting
+      || this.interactionRevision !== sinceRevision) return false
+    this.controls.autoRotate = false
+    this.tween = {
+      kind: 'suggestion',
+      start: this.pose(),
+      end: copyPose(pose),
+      elapsed: 0,
+      seconds: CELEBRATION_CAMERA.seconds,
+    }
+    return true
   }
 
   pose(): CameraPose {
@@ -151,6 +186,7 @@ export class CameraController {
   }
 
   reset(): void {
+    this.interactionRevision++
     if (this.reducedMotion()) {
       this.controls.autoRotate = false
       this.flushControlsMotion()
@@ -169,7 +205,10 @@ export class CameraController {
 
   update(dt: number): void {
     const reduced = this.reducedMotion()
-    if (reduced || this.locks.size > 0 || !this.autoRotateEnabled) {
+    if (reduced
+      || this.autoMotionSuppressions.size > 0
+      || this.locks.size > 0
+      || !this.autoRotateEnabled) {
       this.controls.autoRotate = false
     }
 
@@ -205,7 +244,7 @@ export class CameraController {
   }
 
   private advanceIdle(dt: number, reduced: boolean): void {
-    if (reduced || !this.autoRotateEnabled) return
+    if (reduced || this.autoMotionSuppressions.size > 0 || !this.autoRotateEnabled) return
     if (this.controls.autoRotate) return
     this.idleElapsed += dt
     if (this.idleElapsed < CAMERA_LIMITS.idleSeconds) return
@@ -252,6 +291,7 @@ export class CameraController {
     if (tween.kind === 'recenter'
       && this.autoRotateEnabled
       && !this.reducedMotion()
+      && this.autoMotionSuppressions.size === 0
       && this.locks.size === 0) {
       this.controls.autoRotate = true
     }
@@ -283,6 +323,7 @@ export class CameraController {
   }
 
   private readonly handleControlsStart = (): void => {
+    this.interactionRevision++
     this.interacting = true
     this.tween = null
     this.controls.autoRotate = false

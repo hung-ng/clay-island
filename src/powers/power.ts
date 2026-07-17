@@ -53,6 +53,8 @@ export class PowerManager {
     }
   }
 
+  get effectsActive(): boolean { return this.timelines.length > 0 }
+
   cast(id: PowerId, x: number, z: number): void {
     const power = this.powers.get(id)
     if (!power || !this.ready(id)) return

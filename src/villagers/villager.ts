@@ -21,6 +21,31 @@ import { MODEL_SCALE, VillagerModel } from './model'
 export { MODEL_SCALE } from './model'
 
 type Point = { x: number; z: number }
+export type VillagerCelebrationPhase = 'gathering' | 'fireworks' | 'finale'
+
+export type CelebrationAssignment = {
+  slot: Point
+  centre: Point
+  order: number
+}
+
+type CelebrationOverride = {
+  assignment: CelebrationAssignment
+  phase: VillagerCelebrationPhase
+  reducedMotion: boolean
+  snapshot: {
+    tx: number
+    tz: number
+    arrived: boolean
+    speed: number
+    lastQt: number
+    rodVisible: boolean
+    heldFruitVisible: boolean
+    axeVisible: boolean
+    emoteVisible: boolean
+  }
+}
+
 type GraveLike = Point & { fresh: boolean }
 type DeathCause = 'meteor' | 'lightning'
 
@@ -155,6 +180,7 @@ export class Villager {
   private suggestion: Suggestion | null = null
   private graveGlance = 0
   private gatheringBySuggestion = false
+  private celebration: CelebrationOverride | null = null
 
   constructor(
     public id: string,
@@ -266,8 +292,83 @@ export class Villager {
   private get axe(): THREE.Group { return this.rig.axe }
   private get visualMaterials(): THREE.MeshToonMaterial[] { return this.rig.materials }
 
+  get celebrating(): boolean { return this.celebration !== null }
+
+  canCelebrate(): boolean {
+    return this.alive
+      && (this.celebrating || (
+        this.zapTime < 0
+        && this.rainTime <= 0
+        && this.performance === 'none'
+        && this.state !== 'flee'
+      ))
+  }
+
+  beginCelebration(assignment: CelebrationAssignment): boolean {
+    if (this.celebrating || !this.canCelebrate()) return false
+    this.celebration = {
+      assignment,
+      phase: 'gathering',
+      reducedMotion: false,
+      snapshot: {
+        tx: this.tx,
+        tz: this.tz,
+        arrived: this.arrived,
+        speed: this.speed,
+        lastQt: this.lastQt,
+        rodVisible: this.rod.visible,
+        heldFruitVisible: this.heldFruit.visible,
+        axeVisible: this.axe.visible,
+        emoteVisible: this.emoteSprite.sprite.visible,
+      },
+    }
+    this.speed = 1.35
+    this.setTarget(assignment.slot)
+    this.resetPose()
+    this.rod.visible = false
+    this.heldFruit.visible = false
+    this.axe.visible = false
+    this.emoteSprite.sprite.visible = false
+    return true
+  }
+
+  setCelebrationPhase(
+    phase: VillagerCelebrationPhase,
+    reducedMotion: boolean,
+  ): void {
+    if (!this.celebration) return
+    this.celebration.phase = phase
+    this.celebration.reducedMotion = reducedMotion
+  }
+
+  endCelebration(): void {
+    const current = this.celebration
+    if (!current) return
+    this.celebration = null
+    this.tx = current.snapshot.tx
+    this.tz = current.snapshot.tz
+    this.arrived = current.snapshot.arrived
+    this.speed = current.snapshot.speed
+    this.lastQt = current.snapshot.lastQt
+    this.resetPose()
+    this.rod.visible = current.snapshot.rodVisible
+    this.heldFruit.visible = current.snapshot.heldFruitVisible
+    this.axe.visible = current.snapshot.axeVisible
+    this.emoteSprite.sprite.visible = current.snapshot.emoteVisible
+  }
+
   update(dt: number, qt: number, world: World, island: Island): void {
     if (!this.alive) return
+    if (this.celebration) {
+      if (world.hasDangerousFire()) {
+        this.endCelebration()
+        const fire = world.nearestBurning(this.x, this.z, 8)
+        if (fire) this.panic(fire)
+      } else {
+        this.updateCelebration(dt, qt, world, island)
+        return
+      }
+    }
     this.normalizeSuggestion(world)
     this.huddleTime = Math.max(0, this.huddleTime - dt)
     const ticked = qt !== this.lastQt
@@ -1352,6 +1453,47 @@ export class Villager {
       if (!world.submerged(point.x, point.z)) return point
     }
     return { x: this.x, z: this.z }
+  }
+
+  private updateCelebration(dt: number, qt: number, world: World, island: Island): void {
+    const current = this.celebration
+    if (!current) return
+    if (!this.arrived) this.steer(dt, world)
+    if (this.targetDistance() <= 0.24) this.arrived = true
+    if (qt === this.lastQt) return
+
+    this.lastQt = qt
+    this.resetPose()
+    this.rod.visible = false
+    this.heldFruit.visible = false
+    this.axe.visible = false
+    this.group.position.set(this.x, island.sampleHeight(this.x, this.z), this.z)
+    this.group.rotation.y = Math.atan2(
+      current.assignment.centre.x - this.x,
+      current.assignment.centre.z - this.z,
+    )
+
+    const frame = (Math.floor(qt * TIMING.fps) + current.assignment.order) % 4
+    if (!this.arrived) {
+      this.group.rotation.z = frame === 0 ? 0.09 : frame === 2 ? -0.09 : 0
+      if (frame % 2 === 0) world.playStepFoley()
+      return
+    }
+
+    this.group.rotation.z = 0
+    this.head.rotation.x = -0.32
+    if (current.phase === 'gathering') return
+    if (current.phase === 'fireworks') {
+      const clap = frame < 2 ? 1.42 : 0.72
+      this.arms[0].rotation.z = -clap
+      this.arms[1].rotation.z = clap
+      if (!current.reducedMotion && frame === 1) this.group.position.y += 0.08
+      return
+    }
+
+    this.arms[0].rotation.z = -2.05
+    this.arms[1].rotation.z = 2.05
+    if (!current.reducedMotion && frame % 2 === 0) this.group.position.y += 0.12
   }
 
   private setTarget(point: Point): void {

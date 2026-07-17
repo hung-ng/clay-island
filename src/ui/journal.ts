@@ -1,17 +1,44 @@
 import { MOMENTS, type Journal, type Moment, type MomentId } from '../discovery/moments'
 import { setModalBackgroundInert } from './modal'
 
+export type CelebrationRewardStatus = 'ready' | 'queued' | 'active'
+
+export type CelebrationRewardView = {
+  hidden: boolean
+  disabled: boolean
+  label: string
+}
+
+export function celebrationRewardView(
+  unlockedCount: number,
+  status: CelebrationRewardStatus,
+): CelebrationRewardView {
+  if (unlockedCount < MOMENTS.length) {
+    return { hidden: true, disabled: true, label: 'Celebrate Again' }
+  }
+  if (status === 'queued') {
+    return { hidden: false, disabled: true, label: 'Celebration waiting…' }
+  }
+  if (status === 'active') {
+    return { hidden: false, disabled: true, label: 'Celebrating…' }
+  }
+  return { hidden: false, disabled: false, label: 'Celebrate Again' }
+}
+
 export type JournalUIOptions = {
   lowFx: boolean
   reducedMotion(): boolean
   onOpenChange?(open: boolean): void
+  onCelebrate?(): void
 }
 
 export type JournalUI = {
   toast(moment: Moment): void
   setUnlocked(unlocked: ReadonlySet<MomentId>): void
+  setCelebrationStatus(status: CelebrationRewardStatus): void
   close(): void
   isOpen(): boolean
+  isToastIdle(): boolean
 }
 
 export function createJournalUI(
@@ -65,6 +92,12 @@ export function createJournalUI(
   hint.className = 'journal-hint'
   hint.setAttribute('aria-live', 'polite')
 
+  const celebrateButton = document.createElement('button')
+  celebrateButton.type = 'button'
+  celebrateButton.className = 'journal-celebrate'
+  celebrateButton.hidden = true
+  celebrateButton.setAttribute('aria-live', 'polite')
+
   const tiles = MOMENTS.map((moment, index) => {
     const button = document.createElement('button')
     button.type = 'button'
@@ -87,14 +120,24 @@ export function createJournalUI(
     return button
   })
 
-  slab.append(heading, count, closeButton, grid, hint)
+  slab.append(heading, count, closeButton, grid, celebrateButton, hint)
   dialog.append(slab)
   layer.append(backdrop, dialog)
   ui.appendChild(layer)
 
   let open = false
   let closeTimer = 0
+  let unlockedCount = journal.count()
+  let celebrationStatus: CelebrationRewardStatus = 'ready'
   const backgroundInertState = new Map<HTMLElement, boolean>()
+
+  const syncCelebrationReward = (): void => {
+    const view = celebrationRewardView(unlockedCount, celebrationStatus)
+    celebrateButton.hidden = view.hidden
+    celebrateButton.disabled = view.disabled
+    celebrateButton.textContent = view.label
+    slab.classList.toggle('journal-complete', !view.hidden)
+  }
 
   const setBackgroundInert = (value: boolean): void => {
     const background = [...ui.children].filter((child): child is HTMLElement => (
@@ -130,6 +173,11 @@ export function createJournalUI(
   })
   closeButton.addEventListener('click', () => setOpen(false))
   backdrop.addEventListener('click', () => setOpen(false))
+  celebrateButton.addEventListener('click', () => {
+    if (celebrateButton.disabled) return
+    setOpen(false)
+    options.onCelebrate?.()
+  })
 
   dialog.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
@@ -157,7 +205,11 @@ export function createJournalUI(
     }
 
     if (event.key !== 'Tab') return
-    const focusable = [closeButton, ...tiles]
+    const focusable = [
+      closeButton,
+      ...tiles,
+      ...(celebrateButton.hidden || celebrateButton.disabled ? [] : [celebrateButton]),
+    ]
     const current = focusable.indexOf(document.activeElement as HTMLButtonElement)
     if (event.shiftKey && current <= 0) {
       event.preventDefault()
@@ -209,6 +261,7 @@ export function createJournalUI(
       if (!toastShowing) showNextToast()
     },
     setUnlocked(unlocked) {
+      unlockedCount = unlocked.size
       tiles.forEach((button, index) => {
         const moment = MOMENTS[index]
         if (!moment) return
@@ -229,9 +282,15 @@ export function createJournalUI(
         }
       })
       count.textContent = `${unlocked.size} of ${MOMENTS.length} moments`
+      syncCelebrationReward()
+    },
+    setCelebrationStatus(status) {
+      celebrationStatus = status
+      syncCelebrationReward()
     },
     close() { setOpen(false) },
     isOpen() { return open },
+    isToastIdle() { return !toastShowing && toastQueue.length === 0 },
   }
 
   api.setUnlocked(journal.unlocked)

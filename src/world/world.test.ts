@@ -131,6 +131,122 @@ describe('World targeting', () => {
   })
 })
 
+describe('celebration ground and safety', () => {
+  it('treats tree and hut fire as dangerous but ignores the ordinary campfire', () => {
+    const world = makeWorld()
+    world.campfire = { x: 0, z: 0, burning: true } as Campfire
+    expect(world.hasDangerousFire()).toBe(false)
+    world.trees.push({ burning: true } as Tree)
+    expect(world.hasDangerousFire()).toBe(true)
+    world.trees = []
+    world.huts.push({ burning: true } as Hut)
+    expect(world.hasDangerousFire()).toBe(true)
+  })
+
+  it('keeps celebration slots dry, on-island, and away from solid props', () => {
+    const world = makeWorld()
+    world.campfire = { x: 0, z: 0, state: 'lit', scattered: false } as Campfire
+    world.submerged = vi.fn((x: number) => x > 0)
+    addTree(world, 'tree-blocker', -2.2, 0)
+    const slots = world.celebrationSite(4)?.slots ?? []
+    expect(slots).toHaveLength(4)
+    for (const point of slots) {
+      if (!point) continue
+      expect(world.submerged(point.x, point.z)).toBe(false)
+      expect(Math.hypot(point.x, point.z)).toBeLessThanOrEqual(12)
+      expect(Math.hypot(point.x + 2.2, point.z)).toBeGreaterThanOrEqual(1.6)
+    }
+  })
+
+  it.each(['lit', 'doused'] as const)('keeps a valid %s campfire as the shared site', (state) => {
+    const world = makeWorld()
+    world.campfire = { x: 1, z: -1, state, scattered: false } as Campfire
+
+    const site = world.celebrationSite(4)
+
+    expect(site?.centre).toEqual({ x: 1, z: -1 })
+    expect(site?.slots).toHaveLength(4)
+  })
+
+  it.each(['site', 'building', 'scattered'] as const)(
+    'relocates away from a %s campfire state',
+    (state) => {
+      const world = makeWorld()
+      world.campfire = {
+        x: 0,
+        z: 0,
+        state,
+        scattered: state === 'scattered',
+      } as Campfire
+
+      const site = world.celebrationSite(3)
+
+      expect(site).not.toBeNull()
+      expect(site?.centre).not.toEqual({ x: 0, z: 0 })
+      expect(world.isCelebrationGround(site!.centre.x, site!.centre.z)).toBe(true)
+    },
+  )
+
+  it('relocates from a cratered and submerged old campfire footprint', () => {
+    const world = makeWorld()
+    const crater = { x: 0, z: 0, radius: 3, depth: 1.5 }
+    world.island.craters.push(crater)
+    world.ponds.push({
+      basin: { craters: [crater], waterLevel: 0.5, x: 0, z: 0, radius: 3 },
+    } as Pond)
+    world.campfire = { x: 0, z: 0, state: 'lit', scattered: false } as Campfire
+
+    const site = world.celebrationSite(4)
+
+    expect(site).not.toBeNull()
+    expect(site?.centre).not.toEqual({ x: 0, z: 0 })
+    expect(world.submerged(site!.centre.x, site!.centre.z)).toBe(false)
+    expect(world.submerged(site!.centre.x, site!.centre.z + 1.1)).toBe(false)
+    expect(site?.slots.filter(Boolean).every(point => (
+      !world.submerged(point!.x, point!.z)
+    ))).toBe(true)
+  })
+
+  it('relocates when a visible prop obstructs the launch-tube footprint', () => {
+    const world = makeWorld()
+    world.campfire = { x: 0, z: 0, state: 'doused', scattered: false } as Campfire
+    addTree(world, 'tree-over-launcher', 0, 1.1)
+
+    const site = world.celebrationSite(3)
+
+    expect(site).not.toBeNull()
+    expect(site?.centre).not.toEqual({ x: 0, z: 0 })
+    expect(world.isCelebrationGround(site!.centre.x, site!.centre.z)).toBe(true)
+  })
+
+  it('finds a deterministic safe site when the campfire is missing', () => {
+    const world = makeWorld()
+    world.campfire = undefined as unknown as Campfire
+    addHut(world, 'hut-home', 4, 0)
+
+    const a = world.celebrationSite(2)
+    const b = world.celebrationSite(2)
+
+    expect(a).toEqual(b)
+    expect(a).not.toBeNull()
+    expect(a?.centre).not.toEqual({ x: 4, z: 0 })
+  })
+
+  it('respects an invisible pending rebuild without using it as the anchor', () => {
+    const world = makeWorld()
+    world.campfire = { x: 0, z: 0, state: 'scattered', scattered: true } as Campfire
+    vi.spyOn(world, 'findBuildSite').mockReturnValue({ x: 4, z: 0 })
+    const reservation = world.claimCampfireSite(new RNG(2))
+
+    const site = world.celebrationSite(3)
+
+    expect(reservation).not.toBeNull()
+    expect(world.isCelebrationGround(4, 0)).toBe(false)
+    expect(site).not.toBeNull()
+    expect(site?.centre).not.toEqual({ x: 4, z: 0 })
+  })
+})
+
 describe('World villager registry', () => {
   it('keeps replacement ids monotonic after live entries are retired', () => {
     const world = makeWorld()

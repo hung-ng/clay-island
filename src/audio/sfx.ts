@@ -5,6 +5,14 @@ type SfxStorage = Pick<Storage, 'getItem' | 'setItem'>
 type Voice = { sources: AudioScheduledSourceNode[]; nodes: AudioNode[]; stop(): void }
 
 export type PrologueSoundCue = 'growth' | 'step' | 'hammer' | 'place' | 'ignite'
+export type CelebrationSoundCue = 'launch' | 'pop' | 'finale' | 'cheer'
+export type CelebrationSoundProfile = {
+  kind: 'tone' | 'knock'
+  from: number
+  to: number
+  seconds: number
+  volume: number
+}
 export type PrologueSoundProfile =
   | { kind: 'step' }
   | { kind: 'knock'; pitch: number; seconds: number; volume: number }
@@ -18,6 +26,19 @@ export function prologueSoundProfile(cue: PrologueSoundCue): PrologueSoundProfil
     return { kind: 'tone', from: 150, to: 230, seconds: 0.15, volume: 0.012 }
   }
   return { kind: 'tone', from: 180, to: 520, seconds: 0.4, volume: 0.026 }
+}
+
+export function celebrationSoundProfile(cue: CelebrationSoundCue): CelebrationSoundProfile {
+  if (cue === 'launch') {
+    return { kind: 'tone', from: 240, to: 920, seconds: 0.42, volume: 0.018 }
+  }
+  if (cue === 'pop') {
+    return { kind: 'knock', from: 120, to: 82, seconds: 0.18, volume: 0.038 }
+  }
+  if (cue === 'finale') {
+    return { kind: 'knock', from: 92, to: 54, seconds: 0.32, volume: 0.052 }
+  }
+  return { kind: 'tone', from: 330, to: 520, seconds: 0.28, volume: 0.022 }
 }
 
 const MUTE_KEY = 'clayisland.muted'
@@ -109,6 +130,15 @@ export class Sfx {
     }
     if (profile.kind === 'knock') {
       this.knock(profile.pitch, profile.seconds, profile.volume)
+      return
+    }
+    this.oscillator('sine', profile.from, profile.to, profile.seconds, profile.volume)
+  }
+
+  celebration(cue: CelebrationSoundCue): void {
+    const profile = celebrationSoundProfile(cue)
+    if (profile.kind === 'knock') {
+      this.knock(profile.from, profile.seconds, profile.volume)
       return
     }
     this.oscillator('sine', profile.from, profile.to, profile.seconds, profile.volume)

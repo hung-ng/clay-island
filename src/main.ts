@@ -2,7 +2,10 @@ import * as THREE from 'three'
 import type { PowerId } from './core/events'
 import { Sfx } from './audio/sfx'
 import { CameraController } from './camera/controller'
-import { CAMERA_HOME, type CameraPose } from './camera/policy'
+import { CAMERA_HOME, celebrationCameraPose, type CameraPose } from './camera/policy'
+import { CelebrationDirector } from './celebration/director'
+import { CelebrationFireworks } from './celebration/fireworks'
+import { shouldRequestAutomaticCelebration } from './celebration/state'
 import {
   canArmPower,
   canSkipPrologue,
@@ -14,7 +17,7 @@ import { GameLoop, QuantizedClock } from './core/loop'
 import { applyReducedMotion, prefersReducedMotion } from './core/motion'
 import { Preferences } from './core/preferences'
 import { RNG } from './core/rng'
-import { Journal } from './discovery/moments'
+import { Journal, MOMENTS } from './discovery/moments'
 import { ParticleBurst } from './fx/particles'
 import { flash, Shake } from './fx/shake'
 import { DragTargeting } from './powers/drag'
@@ -129,9 +132,14 @@ const targeting = new DragTargeting(renderer.domElement, camera, island, world, 
 })
 let settingsOpen = false
 let journalUI: JournalUI | null = null
+let celebration: CelebrationDirector | null = null
 const tray = createTray(ui, {
   onArm: power => {
-    if (canArmPower(flow, settingsOpen || Boolean(journalUI?.isOpen()))) targeting.arm(power)
+    const celebrationActive = celebration?.active ?? false
+    if (!celebrationActive
+      && canArmPower(flow, settingsOpen || Boolean(journalUI?.isOpen()))) {
+      targeting.arm(power)
+    }
   },
   onCancel: () => targeting.cancel(true),
   cooldowns: () => ({
@@ -159,6 +167,7 @@ journalUI = createJournalUI(ui, journal, {
     if (open) cameraController.lock('journal')
     else cameraController.unlock('journal')
   },
+  onCelebrate: () => { celebration?.request() },
 })
 settingsUI = createSettingsUI(ui, {
   muted: sfx.muted,
@@ -201,14 +210,47 @@ settingsUI = createSettingsUI(ui, {
   onReplayIntro() { beginSettingsReplay() },
 })
 settingsUI.setVisible(false)
+const celebrationFireworks = new CelebrationFireworks(stageRoot, { lowFx, reducedMotion })
+let celebrationCameraRevision = 0
+celebration = new CelebrationDirector({
+  world,
+  fireworks: celebrationFireworks,
+  isGameplay: () => flow.phase === 'gameplay',
+  toastsIdle: () => journalUI?.isToastIdle() ?? true,
+  modalsClosed: () => !settingsOpen && !(journalUI?.isOpen() ?? false),
+  powerEffectsIdle: () => !powers.effectsActive,
+  reducedMotion,
+  onStatusChange: status => journalUI?.setCelebrationStatus(status),
+  onActiveChange: active => {
+    if (active) {
+      celebrationCameraRevision = cameraController.userInteractionRevision
+      targeting.cancel(false)
+      cameraController.suppressAutoMotion('celebration')
+    } else {
+      cameraController.releaseAutoMotion('celebration')
+    }
+    for (const power of powerIds) tray.setEnabled(power, !active)
+  },
+  onCameraSuggestion: centre => {
+    cameraController.suggestPose(
+      celebrationCameraPose(cameraController.pose(), centre),
+      celebrationCameraRevision,
+    )
+  },
+  onSound: cue => sfx.celebration(cue),
+})
 tray.setJournalCount(journal.count())
 world.bus.on((event) => {
+  const before = journal.count()
   const unlocked = journal.observe(event)
   if (!unlocked) return
-  journalUI.toast(unlocked)
+  journalUI?.toast(unlocked)
   sfx.reward()
-  journalUI.setUnlocked(journal.unlocked)
+  journalUI?.setUnlocked(journal.unlocked)
   tray.setJournalCount(journal.count())
+  if (shouldRequestAutomaticCelebration(before, journal.count(), MOMENTS.length)) {
+    celebration?.request()
+  }
 })
 
 function createDirector(generation: number): PrologueDirector {
@@ -232,6 +274,7 @@ function createDirector(generation: number): PrologueDirector {
 
 function beginSettingsReplay(): void {
   if (flow.phase !== 'gameplay') return
+  celebration?.cancel()
   settingsUI?.close()
   targeting.cancel(true)
 
@@ -447,6 +490,7 @@ const loop = new GameLoop(
       clock.advance(dt)
       targeting.update()
       powers.update(dt)
+      celebration?.update(dt)
       particles.update(dt)
       for (const power of powerIds) tray.setCooldown(power, powers.cooldown01(power))
       world.updateTrees(dt, clock.quantizedTime)

@@ -935,6 +935,55 @@ body {
   pointer-events: none;
 }
 
+.journal-slab.journal-complete .moment-grid {
+  bottom: 96px;
+}
+
+.journal-slab.journal-complete .journal-hint {
+  bottom: 70px;
+}
+
+.journal-celebrate {
+  position: absolute;
+  z-index: 3;
+  bottom: 28px;
+  left: 50%;
+  min-width: 156px;
+  padding: 9px 15px;
+  transform: translateX(-50%) rotate(-1deg);
+  border: 2px solid var(--ink-soft);
+  border-radius: 11px 7px 12px 8px / 8px 12px 7px 11px;
+  background: var(--paper);
+  box-shadow:
+    inset 1px 1px 0 var(--cloud),
+    inset -2px -2px 0 var(--skin),
+    0 4px 0 var(--terracotta);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.journal-celebrate[hidden] {
+  display: none;
+}
+
+.journal-celebrate:not(:disabled):hover,
+.journal-celebrate:focus-visible {
+  transform: translateX(-50%) translateY(-2px) rotate(-1deg);
+}
+
+.journal-celebrate:not(:disabled):active {
+  transform: translateX(-50%) translateY(1px) scale(0.98) rotate(-1deg);
+  box-shadow: inset 1px 1px 0 var(--cloud), 0 2px 0 var(--terracotta);
+}
+
+.journal-celebrate:disabled {
+  cursor: wait;
+  opacity: 0.64;
+}
+
 /* lowfx keeps the same tablet and only skips the press-in motion. */
 #journal-layer.lowfx #journal-dialog {
   transform: rotate(-0.4deg);
@@ -1353,6 +1402,15 @@ body {
   #journal-dialog {
     width: calc(100vw - 16px);
     height: calc(100vh - 24px);
+  }
+
+  .journal-slab.journal-complete .moment-grid {
+    bottom: 90px;
+  }
+
+  .journal-celebrate {
+    bottom: 25px;
+    padding-block: 7px;
   }
 
   #settings-btn {

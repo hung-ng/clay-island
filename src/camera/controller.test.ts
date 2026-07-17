@@ -200,6 +200,99 @@ describe('CameraController', () => {
     expect(controls.autoRotate).toBe(false)
   })
 
+  it('suppresses automatic motion without locking manual controls', () => {
+    const camera = new THREE.PerspectiveCamera()
+    const controls = fakeControls()
+    const subject = new CameraController({
+      camera,
+      dom: new EventTarget() as HTMLElement,
+      autoRotate: true,
+      reducedMotion: () => false,
+      controls,
+    })
+
+    subject.suppressAutoMotion('celebration')
+    subject.update(20)
+    expect(controls.enabled).toBe(true)
+    expect(controls.update).toHaveBeenCalled()
+    expect(controls.autoRotate).toBe(false)
+
+    subject.releaseAutoMotion('celebration')
+    subject.update(8)
+    expect(controls.autoRotate).toBe(true)
+  })
+
+  it('suggests a pose only while the user-interaction revision is current', () => {
+    const camera = new THREE.PerspectiveCamera()
+    camera.position.set(0, 14, 34)
+    const controls = fakeControls()
+    const subject = new CameraController({
+      camera,
+      dom: new EventTarget() as HTMLElement,
+      autoRotate: true,
+      reducedMotion: () => false,
+      controls,
+    })
+    const revision = subject.userInteractionRevision
+    const suggested = {
+      position: { x: 10, y: 12, z: 24 },
+      target: { x: 2, y: 0, z: 1 },
+    }
+
+    expect(subject.suggestPose(suggested, revision)).toBe(true)
+    subject.update(0.4)
+    const interruptedPosition = camera.position.toArray()
+    const interruptedTarget = controls.target.toArray()
+    controls.emit('start')
+    subject.update(1)
+
+    expect(controls.enabled).toBe(true)
+    expect(camera.position.toArray()).toEqual(interruptedPosition)
+    expect(controls.target.toArray()).toEqual(interruptedTarget)
+    expect(subject.userInteractionRevision).toBe(revision + 1)
+    expect(subject.suggestPose(suggested, revision)).toBe(false)
+  })
+
+  it('treats Reset Camera as input and skips suggestions for motion or modal locks', () => {
+    let reduced = true
+    const controls = fakeControls()
+    const subject = new CameraController({
+      camera: new THREE.PerspectiveCamera(),
+      dom: new EventTarget() as HTMLElement,
+      autoRotate: true,
+      reducedMotion: () => reduced,
+      controls,
+    })
+    const suggested = { position: { x: 0, y: 12, z: 26 }, target: { x: 0, y: 0, z: 0 } }
+    const revision = subject.userInteractionRevision
+
+    expect(subject.suggestPose(suggested, revision)).toBe(false)
+    reduced = false
+    subject.lock('journal')
+    expect(subject.suggestPose(suggested, revision)).toBe(false)
+    subject.unlock('journal')
+    subject.reset()
+    expect(subject.userInteractionRevision).toBe(revision + 1)
+    expect(subject.suggestPose(suggested, revision)).toBe(false)
+  })
+
+  it('composes duplicate auto-motion reasons idempotently', () => {
+    const controls = fakeControls()
+    const subject = new CameraController({
+      camera: new THREE.PerspectiveCamera(),
+      dom: new EventTarget() as HTMLElement,
+      autoRotate: true,
+      reducedMotion: () => false,
+      controls,
+    })
+    subject.suppressAutoMotion('celebration')
+    subject.suppressAutoMotion('celebration')
+    subject.releaseAutoMotion('celebration')
+    subject.update(8)
+    expect(controls.enabled).toBe(true)
+    expect(controls.autoRotate).toBe(true)
+  })
+
   it('suppresses only the context menu paired with a canvas right-button press', () => {
     const dom = new EventTarget()
     const subject = new CameraController({

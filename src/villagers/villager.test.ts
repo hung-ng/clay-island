@@ -152,6 +152,84 @@ const dryTreeWork = {
   },
 }
 
+describe('villager celebration override', () => {
+  it('suspends and restores navigation, task timers, suggestions, and props', () => {
+    const villager = activityHarness('harvest') as ActivityHarness & {
+      tx: number
+      tz: number
+      speed: number
+      lastQt: number
+      performance: 'none'
+      performanceTime: number
+      rainTime: number
+      zapTime: number
+      emoteSprite: { sprite: THREE.Object3D; update(qt: number): void }
+      celebration: unknown
+      canCelebrate(): boolean
+      beginCelebration(assignment: {
+        slot: { x: number; z: number }
+        centre: { x: number; z: number }
+        order: number
+      }): boolean
+      endCelebration(): void
+    }
+    Object.assign(villager, {
+      alive: true,
+      tx: 7,
+      tz: -4,
+      speed: 0.86,
+      lastQt: 3,
+      performance: 'none',
+      performanceTime: 0,
+      rainTime: 0,
+      zapTime: -1,
+      emoteSprite: { sprite: new THREE.Object3D(), update: vi.fn() },
+      celebration: null,
+    })
+    villager.suggestion = { kind: 'harvest', x: 2, z: 3 }
+    villager.timer = 5
+    villager.actionTimer = 1.2
+    villager.heldFruit.visible = true
+
+    expect(villager.beginCelebration({
+      slot: { x: 1, z: 2 }, centre: { x: 0, z: 0 }, order: 0,
+    })).toBe(true)
+    expect(villager.timer).toBe(5)
+    expect(villager.actionTimer).toBe(1.2)
+    expect(villager.suggestion).toEqual({ kind: 'harvest', x: 2, z: 3 })
+    expect(villager.heldFruit.visible).toBe(false)
+
+    villager.endCelebration()
+    expect(villager.tx).toBe(7)
+    expect(villager.tz).toBe(-4)
+    expect(villager.speed).toBe(0.86)
+    expect(villager.timer).toBe(5)
+    expect(villager.actionTimer).toBe(1.2)
+    expect(villager.suggestion).toEqual({ kind: 'harvest', x: 2, z: 3 })
+    expect(villager.heldFruit.visible).toBe(true)
+  })
+
+  it('rejects danger performances and fleeing villagers', () => {
+    const villager = activityHarness('harvest') as ActivityHarness & {
+      alive: boolean
+      performance: 'none' | 'startle'
+      rainTime: number
+      zapTime: number
+      celebration: unknown
+      canCelebrate(): boolean
+    }
+    Object.assign(villager, {
+      alive: true, performance: 'startle', rainTime: 0, zapTime: -1, celebration: null,
+    })
+    expect(villager.canCelebrate()).toBe(false)
+    villager.performance = 'none'
+    villager.state = 'chopTree'
+    expect(villager.canCelebrate()).toBe(true)
+    villager.state = 'flee' as ActivityHarness['state']
+    expect(villager.canCelebrate()).toBe(false)
+  })
+})
+
 describe('villager fleeing', () => {
   it('moves directly away from a nearby danger', () => {
     expect(fleeTarget({ x: 2, z: 0 }, { x: 1, z: 0 }, new RNG(1))).toEqual({ x: 7, z: 0 })

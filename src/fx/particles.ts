@@ -14,11 +14,13 @@ export type BurstOptions = {
   gravity: number
   size?: number
   life: number
+  shape?: 'fountain' | 'sphere'
 }
 
 export class ParticleBurst {
   readonly mesh: THREE.InstancedMesh
-  private readonly rng = new RNG(83)
+  private rng: RNG
+  private readonly seed: number
   private readonly dummy = new THREE.Object3D()
   private readonly position: Float32Array
   private readonly velocity: Float32Array
@@ -29,8 +31,11 @@ export class ParticleBurst {
   private readonly gravity: Float32Array
   private readonly size: Float32Array
   private cursor = 0
+  private disposed = false
 
-  constructor(parent: THREE.Object3D, private readonly max = 400) {
+  constructor(parent: THREE.Object3D, private readonly max = 400, seed = 83) {
+    this.seed = seed
+    this.rng = new RNG(seed)
     const geometry = wobble(new THREE.IcosahedronGeometry(0.1, 0), this.rng, 0.035)
     const material = clayMaterial(PALETTE.unmodulated)
     this.mesh = new THREE.InstancedMesh(geometry, material, max)
@@ -54,8 +59,14 @@ export class ParticleBurst {
     parent.add(this.mesh)
   }
 
+  get activeCount(): number {
+    let count = 0
+    for (const life of this.lifetime) if (life > 0) count++
+    return count
+  }
+
   burst(options: BurstOptions): void {
-    if (options.n <= 0 || options.life <= 0) return
+    if (this.disposed || options.n <= 0 || options.life <= 0) return
     const color = new THREE.Color(options.color)
     const baseSize = options.size ?? 1
     let spawned = 0
@@ -80,6 +91,7 @@ export class ParticleBurst {
   }
 
   update(dt: number): void {
+    if (this.disposed) return
     let changed = false
     for (let i = 0; i < this.max; i++) {
       const life = this.lifetime[i]!
@@ -108,16 +120,50 @@ export class ParticleBurst {
     if (changed) this.mesh.instanceMatrix.needsUpdate = true
   }
 
+  clear(): void {
+    if (this.disposed) return
+    this.rng = new RNG(this.seed)
+    this.cursor = 0
+    this.age.fill(0)
+    this.lifetime.fill(0)
+    this.dummy.scale.setScalar(0)
+    this.dummy.updateMatrix()
+    for (let index = 0; index < this.max; index++) {
+      this.mesh.setMatrixAt(index, this.dummy.matrix)
+    }
+    this.mesh.instanceMatrix.needsUpdate = true
+  }
+
+  dispose(): void {
+    if (this.disposed) return
+    this.clear()
+    this.disposed = true
+    this.mesh.removeFromParent()
+    this.mesh.geometry.dispose()
+    const materials = Array.isArray(this.mesh.material) ? this.mesh.material : [this.mesh.material]
+    for (const material of materials) material.dispose()
+  }
+
   private spawn(index: number, options: BurstOptions, baseSize: number): void {
     const offset = index * 3
-    const angle = this.rng.range(0, Math.PI * 2)
-    const horizontalSpeed = options.speed * this.rng.range(0.25, 0.8)
     this.position[offset] = options.x + this.rng.range(-0.12, 0.12) * baseSize
     this.position[offset + 1] = options.y + this.rng.range(0, 0.16) * baseSize
     this.position[offset + 2] = options.z + this.rng.range(-0.12, 0.12) * baseSize
-    this.velocity[offset] = Math.cos(angle) * horizontalSpeed
-    this.velocity[offset + 1] = options.speed * this.rng.range(0.55, 1.1)
-    this.velocity[offset + 2] = Math.sin(angle) * horizontalSpeed
+    if (options.shape === 'sphere') {
+      const azimuth = this.rng.range(0, Math.PI * 2)
+      const vertical = this.rng.range(-1, 1)
+      const horizontal = Math.sqrt(1 - vertical * vertical)
+      const speed = options.speed * this.rng.range(0.72, 1.08)
+      this.velocity[offset] = Math.cos(azimuth) * horizontal * speed
+      this.velocity[offset + 1] = vertical * speed
+      this.velocity[offset + 2] = Math.sin(azimuth) * horizontal * speed
+    } else {
+      const angle = this.rng.range(0, Math.PI * 2)
+      const horizontalSpeed = options.speed * this.rng.range(0.25, 0.8)
+      this.velocity[offset] = Math.cos(angle) * horizontalSpeed
+      this.velocity[offset + 1] = options.speed * this.rng.range(0.55, 1.1)
+      this.velocity[offset + 2] = Math.sin(angle) * horizontalSpeed
+    }
     this.rotation[offset] = this.rng.range(0, Math.PI * 2)
     this.rotation[offset + 1] = this.rng.range(0, Math.PI * 2)
     this.rotation[offset + 2] = this.rng.range(0, Math.PI * 2)

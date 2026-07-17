@@ -40,7 +40,9 @@ describe('PowerManager', () => {
 
     expect(manager.ready('meteor')).toBe(true)
     expect(manager.ready('lightning')).toBe(false)
+    expect(manager.effectsActive).toBe(false)
     manager.cast('meteor', 2, 3)
+    expect(manager.effectsActive).toBe(true)
     manager.cast('meteor', 2, 3)
 
     expect(power.casts).toBe(1)
@@ -48,10 +50,13 @@ describe('PowerManager', () => {
     expect(manager.cooldown01('meteor')).toBe(1)
 
     manager.update(0.01)
+    expect(manager.effectsActive).toBe(true)
     expect(power.hits).toEqual(['anticipation'])
     manager.update(0.49)
+    expect(manager.effectsActive).toBe(true)
     expect(power.hits).toEqual(['anticipation', 'impact'])
     manager.update(0.5)
+    expect(manager.effectsActive).toBe(false)
     expect(power.hits).toEqual(['anticipation', 'impact', 'aftermath'])
     expect(manager.cooldown01('meteor')).toBeCloseTo(0.5)
 
