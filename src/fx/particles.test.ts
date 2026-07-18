@@ -58,6 +58,25 @@ describe('ParticleBurst stage coordinates', () => {
     expect(sphere.activeCount).toBe(32)
   })
 
+  it('supports a horizontally expanding ring emission', () => {
+    const parent = new THREE.Group()
+    const ring = new ParticleBurst(parent, 32, 117)
+    ring.burst({
+      x: 0, y: 5, z: 0, n: 32, color: 0xffffff,
+      speed: 3, gravity: 0, life: 1, shape: 'ring',
+    })
+    ring.update(0.1)
+
+    const matrix = new THREE.Matrix4()
+    for (let index = 0; index < 32; index++) {
+      ring.mesh.getMatrixAt(index, matrix)
+      const point = new THREE.Vector3().setFromMatrixPosition(matrix)
+      const radius = Math.hypot(point.x, point.z)
+      expect(radius).toBeGreaterThan(0.2)
+      expect(Math.abs(point.y - 5)).toBeLessThan(radius)
+    }
+  })
+
   it('clears deterministically and disposes owned resources', () => {
     const parent = new THREE.Group()
     const particles = new ParticleBurst(parent, 2, 12)

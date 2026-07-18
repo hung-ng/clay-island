@@ -141,9 +141,9 @@ export class CelebrationDirector {
       for (const participant of this.participants) {
         participant.setCelebrationPhase(phase, this.options.reducedMotion())
       }
+      if (signal === 'finale') this.options.onSound('cheer')
       return
     }
-    this.options.onSound('cheer')
     this.releaseActiveWork()
     this.options.onStatusChange('ready')
   }

@@ -1694,18 +1694,25 @@ export class Villager {
 
     this.group.rotation.z = 0
     this.head.rotation.x = -0.32
-    if (current.phase === 'gathering') return
+    if (current.phase === 'gathering') {
+      if (current.assignment.order % 2 === 0) this.arms[0].rotation.z = -1.72
+      else this.arms[1].rotation.z = 1.72
+      if (!current.reducedMotion && frame === 1) this.group.position.y += 0.04
+      return
+    }
     if (current.phase === 'fireworks') {
       const clap = frame < 2 ? 1.42 : 0.72
       this.arms[0].rotation.z = -clap
       this.arms[1].rotation.z = clap
-      if (!current.reducedMotion && frame === 1) this.group.position.y += 0.08
+      this.group.rotation.z = (frame < 2 ? -0.035 : 0.035)
+        * (current.assignment.order % 2 === 0 ? 1 : -1)
+      if (!current.reducedMotion && frame === 1) this.group.position.y += 0.1
       return
     }
 
     this.arms[0].rotation.z = -2.05
     this.arms[1].rotation.z = 2.05
-    if (!current.reducedMotion && frame % 2 === 0) this.group.position.y += 0.12
+    if (!current.reducedMotion && frame % 2 === 0) this.group.position.y += 0.18
   }
 
   private setTarget(point: Point): void {

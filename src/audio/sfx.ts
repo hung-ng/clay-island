@@ -1,11 +1,11 @@
 import type { EventBus, GameEvent } from '../core/events'
 import { RNG } from '../core/rng'
+import type { CelebrationSoundCue } from '../celebration/fireworks'
 
 type SfxStorage = Pick<Storage, 'getItem' | 'setItem'>
 type Voice = { sources: AudioScheduledSourceNode[]; nodes: AudioNode[]; stop(): void }
 
 export type PrologueSoundCue = 'growth' | 'step' | 'hammer' | 'place' | 'ignite'
-export type CelebrationSoundCue = 'launch' | 'pop' | 'finale' | 'cheer'
 export type CelebrationSoundProfile = {
   kind: 'tone' | 'knock'
   from: number
@@ -30,15 +30,18 @@ export function prologueSoundProfile(cue: PrologueSoundCue): PrologueSoundProfil
 
 export function celebrationSoundProfile(cue: CelebrationSoundCue): CelebrationSoundProfile {
   if (cue === 'launch') {
-    return { kind: 'tone', from: 240, to: 920, seconds: 0.42, volume: 0.018 }
+    return { kind: 'tone', from: 210, to: 1040, seconds: 0.46, volume: 0.021 }
   }
   if (cue === 'pop') {
-    return { kind: 'knock', from: 120, to: 82, seconds: 0.18, volume: 0.038 }
+    return { kind: 'knock', from: 118, to: 72, seconds: 0.22, volume: 0.044 }
+  }
+  if (cue === 'crackle') {
+    return { kind: 'tone', from: 980, to: 620, seconds: 0.11, volume: 0.012 }
   }
   if (cue === 'finale') {
-    return { kind: 'knock', from: 92, to: 54, seconds: 0.32, volume: 0.052 }
+    return { kind: 'knock', from: 88, to: 46, seconds: 0.36, volume: 0.058 }
   }
-  return { kind: 'tone', from: 330, to: 520, seconds: 0.28, volume: 0.022 }
+  return { kind: 'tone', from: 310, to: 620, seconds: 0.34, volume: 0.026 }
 }
 
 const MUTE_KEY = 'clayisland.muted'

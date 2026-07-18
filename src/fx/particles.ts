@@ -14,7 +14,7 @@ export type BurstOptions = {
   gravity: number
   size?: number
   life: number
-  shape?: 'fountain' | 'sphere'
+  shape?: 'fountain' | 'sphere' | 'ring'
 }
 
 export class ParticleBurst {
@@ -146,10 +146,18 @@ export class ParticleBurst {
 
   private spawn(index: number, options: BurstOptions, baseSize: number): void {
     const offset = index * 3
-    this.position[offset] = options.x + this.rng.range(-0.12, 0.12) * baseSize
-    this.position[offset + 1] = options.y + this.rng.range(0, 0.16) * baseSize
-    this.position[offset + 2] = options.z + this.rng.range(-0.12, 0.12) * baseSize
-    if (options.shape === 'sphere') {
+    const horizontalSpread = options.shape === 'ring' ? 0.025 : 0.12
+    const verticalSpread = options.shape === 'ring' ? 0.04 : 0.16
+    this.position[offset] = options.x + this.rng.range(-horizontalSpread, horizontalSpread) * baseSize
+    this.position[offset + 1] = options.y + this.rng.range(0, verticalSpread) * baseSize
+    this.position[offset + 2] = options.z + this.rng.range(-horizontalSpread, horizontalSpread) * baseSize
+    if (options.shape === 'ring') {
+      const angle = this.rng.range(0, Math.PI * 2)
+      const speed = options.speed * this.rng.range(0.82, 1.08)
+      this.velocity[offset] = Math.cos(angle) * speed
+      this.velocity[offset + 1] = options.speed * this.rng.range(-0.08, 0.14)
+      this.velocity[offset + 2] = Math.sin(angle) * speed
+    } else if (options.shape === 'sphere') {
       const azimuth = this.rng.range(0, Math.PI * 2)
       const vertical = this.rng.range(-1, 1)
       const horizontal = Math.sqrt(1 - vertical * vertical)

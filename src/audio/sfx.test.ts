@@ -12,8 +12,11 @@ describe('prologue sound profiles', () => {
 })
 
 it('keeps every celebration cue bounded and distinct', () => {
-  expect(celebrationSoundProfile('launch')).toMatchObject({ kind: 'tone', seconds: 0.42 })
-  expect(celebrationSoundProfile('pop')).toMatchObject({ kind: 'knock', from: 120 })
-  expect(celebrationSoundProfile('finale')).toMatchObject({ kind: 'knock', from: 92 })
-  expect(celebrationSoundProfile('cheer')).toMatchObject({ kind: 'tone', to: 520 })
+  expect(celebrationSoundProfile('launch')).toMatchObject({ kind: 'tone', seconds: 0.46 })
+  expect(celebrationSoundProfile('pop')).toMatchObject({ kind: 'knock', from: 118, seconds: 0.22 })
+  expect(celebrationSoundProfile('crackle')).toMatchObject({
+    kind: 'tone', from: 980, seconds: 0.11,
+  })
+  expect(celebrationSoundProfile('finale')).toMatchObject({ kind: 'knock', from: 88, seconds: 0.36 })
+  expect(celebrationSoundProfile('cheer')).toMatchObject({ kind: 'tone', to: 620 })
 })
