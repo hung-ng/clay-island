@@ -12,6 +12,18 @@ vi.mock('../fx/clayMaterial', async () => {
   return { clayMaterial: vi.fn(() => new THREE.MeshToonMaterial()) }
 })
 
+vi.mock('../fx/emotes', async () => {
+  const THREE = await import('three')
+  return {
+    EmoteSprite: class {
+      sprite = new THREE.Sprite()
+      show(): void {}
+      update(): void {}
+      dispose(): void {}
+    },
+  }
+})
+
 function makeWorld(): World {
   const island = {
     craters: [],
@@ -992,6 +1004,18 @@ describe('housing caps the population', () => {
 
     expect(world.living()).toBe(4)
     expect(world.villagers).toHaveLength(4)
+  })
+
+  it('admits an arrival within eighteen seconds and never before ten', () => {
+    const world = makeWorld()
+    addHut(world, 'hut-0', 0, 0)
+    const before = world.living()
+
+    world.repopulate(9, new RNG(1))
+    expect(world.living()).toBe(before)
+
+    world.repopulate(9, new RNG(1))
+    expect(world.living()).toBe(before + 1)
   })
 })
 

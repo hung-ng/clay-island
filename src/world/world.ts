@@ -66,6 +66,8 @@ export class World {
   private fireSystem = new FireSystem()
   private stepFoley: (() => void) | null = null
   private chipFx: ((x: number, z: number) => void) | null = null
+  /** Hidden tabs simulate silently; footsteps would leak into other tabs. */
+  foleyMuted = false
 
   constructor(public island: Island, public bus = new EventBus()) {
     this.bus.on((event) => {
@@ -75,7 +77,7 @@ export class World {
   }
 
   setStepFoley(handler: (() => void) | null): void { this.stepFoley = handler }
-  playStepFoley(): void { this.stepFoley?.() }
+  playStepFoley(): void { if (!this.foleyMuted) this.stepFoley?.() }
   setChipFx(handler: ((x: number, z: number) => void) | null): void { this.chipFx = handler }
   chipsAt(x: number, z: number): void { this.chipFx?.(x, z) }
 
@@ -863,7 +865,7 @@ export class World {
 
     const hut = repopulationHome(living, this.huts)
     if (!hut) return
-    if (this.repopulateTimer === null) this.repopulateTimer = rng.range(20, 30)
+    if (this.repopulateTimer === null) this.repopulateTimer = rng.range(10, 18)
     this.repopulateTimer -= dt
     if (this.repopulateTimer > 0) return
 

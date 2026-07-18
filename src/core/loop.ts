@@ -1,28 +1,67 @@
 export class GameLoop {
+  /** Longest stretch of sim time drained in one visible frame or hidden tick. */
+  static readonly MAX_CATCH_UP = 30
+
   private acc = 0; private last = 0; private raf = 0; private running = false
+  private background = false
   constructor(
     private onSim: (dt: number) => void,
     private onRender: (dt: number) => void,
     private simDt = 1 / 30,
+    private now: () => number = () => performance.now(),
   ) {}
+
   start(): void {
     if (this.running) return
-    this.running = true; this.last = performance.now(); this.acc = 0
+    this.running = true; this.last = this.now(); this.acc = 0
+    this.scheduleFrame()
+  }
+
+  /** Hidden tabs swap the rAF drive for external ticks; sim time keeps flowing. */
+  setBackground(active: boolean): void {
+    if (!this.running || this.background === active) return
+    // A fully-frozen tab may never have ticked: bank the elapsed time before
+    // switching drives so the catch-up happens on return.
+    if (!active) this.backgroundTick()
+    this.background = active
+    cancelAnimationFrame(this.raf)
+    this.last = this.now()
+    if (!active) this.scheduleFrame()
+  }
+
+  /** One hidden-tab tick: advance sim by real elapsed time, render nothing. */
+  backgroundTick(): void {
+    if (!this.running || !this.background) return
+    const now = this.now()
+    this.acc += (now - this.last) / 1000
+    this.last = now
+    this.drainSim()
+  }
+
+  stop(): void { this.running = false; cancelAnimationFrame(this.raf) }
+
+  private scheduleFrame(): void {
     const frame = (now: number) => {
-      if (!this.running) return
+      if (!this.running || this.background) return
       const dt = Math.min((now - this.last) / 1000, 0.1)
       this.last = now; this.acc += dt
-      while (this.running && this.acc >= this.simDt) {
-        this.onSim(this.simDt)
-        this.acc -= this.simDt
-      }
+      this.drainSim()
       if (!this.running) return
       this.onRender(dt)
-      if (this.running) this.raf = requestAnimationFrame(frame)
+      if (this.running && !this.background) this.raf = requestAnimationFrame(frame)
     }
     this.raf = requestAnimationFrame(frame)
   }
-  stop(): void { this.running = false; cancelAnimationFrame(this.raf) }
+
+  private drainSim(): void {
+    // The clamp intentionally drops older backlog after long throttling.
+    this.acc = Math.min(this.acc, GameLoop.MAX_CATCH_UP)
+    const epsilon = this.simDt * 1e-9
+    while (this.running && this.acc + epsilon >= this.simDt) {
+      this.onSim(this.simDt)
+      this.acc = Math.max(0, this.acc - this.simDt)
+    }
+  }
 }
 
 export class QuantizedClock {

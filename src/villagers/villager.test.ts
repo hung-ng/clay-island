@@ -23,6 +23,7 @@ type RigStub = {
   materials: THREE.MeshToonMaterial[]
   cleanColors: THREE.Color[]
   resetPose: ReturnType<typeof vi.fn>
+  setNapPose: ReturnType<typeof vi.fn>
   restoreColors: ReturnType<typeof vi.fn>
 }
 
@@ -34,6 +35,8 @@ function createRigStub(): RigStub {
   arms[1].userData.baseRotation = 0.28
   const axe = new THREE.Group()
   const resetPose = vi.fn(() => {
+    group.position.set(0, 0, 0)
+    group.rotation.set(0, 0, 0)
     group.scale.setScalar(MODEL_SCALE)
     head.rotation.set(0, 0, 0)
     arms[0].rotation.z = arms[0].userData.baseRotation
@@ -52,15 +55,32 @@ function createRigStub(): RigStub {
     materials: [],
     cleanColors: [],
     resetPose,
+    setNapPose: vi.fn(),
     restoreColors: vi.fn(),
   }
 }
 
 type ActivityHarness = {
-  state: 'sitAtFire' | 'fish' | 'harvest' | 'drink' | 'gather' | 'chopTree'
+  state:
+    | 'sitAtFire'
+    | 'fish'
+    | 'harvest'
+    | 'drink'
+    | 'gather'
+    | 'chopTree'
+    | 'wander'
+    | 'nap'
+    | 'watchSea'
+    | 'dance'
+    | 'chat'
+  alive: boolean
   suggestion: Suggestion | null
   targetPond: Pond | null
   targetTree: Tree | null
+  targetHut: Hut | null
+  targetGrave: null
+  targetMourningPond: Pond | null
+  targetCampfire: Campfire | null
   rod: THREE.Object3D
   rodTip: THREE.Vector3
   heldFruit: THREE.Object3D
@@ -72,8 +92,17 @@ type ActivityHarness = {
   thirst: number
   resumeState: string | null
   gatheringBySuggestion: boolean
+  rebuildingRuin: boolean
+  graveGlance: number
+  wanderPauseAt: number
+  lookAround: number
+  chatPartner: ActivityHarness | null
+  huddleTime: number
   x: number
   z: number
+  tx: number
+  tz: number
+  rng: RNG
   bus: EventBus
   rig: RigStub
   model: THREE.Object3D
@@ -82,6 +111,7 @@ type ActivityHarness = {
   group: THREE.Object3D
   emote: ReturnType<typeof vi.fn>
   enter: ReturnType<typeof vi.fn>
+  setTarget(point: { x: number; z: number }): void
   targetDistance(): number
   alignFishingRig(pond: Pond): void
   updateHeldFruit(dt: number, ticked: boolean): boolean
@@ -95,9 +125,14 @@ function activityHarness(
   const villager = Object.create(Villager.prototype) as ActivityHarness
   const bone = (): THREE.Object3D => new THREE.Object3D()
   villager.state = state
+  villager.alive = true
   villager.suggestion = null
   villager.targetPond = targetPond
   villager.targetTree = null
+  villager.targetHut = null
+  villager.targetGrave = null
+  villager.targetMourningPond = null
+  villager.targetCampfire = null
   villager.eating = 0
   villager.arrived = false
   villager.actionTimer = 0
@@ -106,8 +141,17 @@ function activityHarness(
   villager.thirst = 0
   villager.resumeState = null
   villager.gatheringBySuggestion = false
+  villager.rebuildingRuin = false
+  villager.graveGlance = 0
+  villager.wanderPauseAt = -1
+  villager.lookAround = 0
+  villager.chatPartner = null
+  villager.huddleTime = 0
   villager.x = 0
   villager.z = 0
+  villager.tx = 0
+  villager.tz = 0
+  villager.rng = new RNG(5)
   villager.rig = createRigStub()
   villager.group = bone()
   villager.head.position.y = 0.94
@@ -151,6 +195,164 @@ const dryTreeWork = {
       ?? null
   },
 }
+
+describe('wander pause', () => {
+  it('stops mid-stroll when the pause moment arrives, then resumes', () => {
+    const villager = activityHarness('wander')
+    villager.x = 1
+    villager.z = 1
+    villager.tx = 5
+    villager.tz = 5
+    villager.arrived = false
+    villager.targetDistance = () => Math.hypot(
+      villager.tx - villager.x,
+      villager.tz - villager.z,
+    )
+    villager.timer = 3
+    villager.wanderPauseAt = 4
+    const world = {
+      graves: [],
+      submerged: () => false,
+    } as unknown as World
+
+    villager.performActivity(0.1, true, world)
+
+    expect(villager.tx).toBe(1)
+    expect(villager.tz).toBe(1)
+    expect(villager.wanderPauseAt).toBe(-1)
+    expect(villager.lookAround).toBeGreaterThan(0)
+
+    villager.performActivity(2, true, world)
+
+    expect(villager.lookAround).toBeLessThanOrEqual(0)
+    expect(villager.tx !== 1 || villager.tz !== 1).toBe(true)
+  })
+})
+
+describe('nap', () => {
+  it('delegates an authored curl without rotating or breathing the complete rig', () => {
+    const villager = activityHarness('nap')
+    villager.x = 2
+    villager.z = 3
+    villager.tx = 2
+    villager.tz = 3
+    villager.timer = 15
+
+    villager.performActivity(0.1, true, {} as unknown as World)
+
+    expect(villager.arrived).toBe(true)
+    expect(villager.model.rotation.z).toBe(0)
+    expect(villager.model.position.y).toBe(0)
+    expect(villager.model.scale.toArray()).toEqual([MODEL_SCALE, MODEL_SCALE, MODEL_SCALE])
+    expect(villager.rig.setNapPose).toHaveBeenCalledOnce()
+    expect(villager.rig.setNapPose).toHaveBeenCalledWith(expect.toSatisfy(
+      (breathe: number) => breathe === 1 || breathe === 1.04,
+    ))
+  })
+})
+
+describe('watchSea', () => {
+  it('targets the shoreline in the villager\'s outward direction', () => {
+    const villager = activityHarness('watchSea')
+    villager.x = 3
+    villager.z = 4
+    villager.rng = new RNG(2)
+    const enter = Villager.prototype['enter'] as unknown as (
+      this: ActivityHarness,
+      state: 'watchSea',
+      world: World,
+    ) => void
+
+    enter.call(villager, 'watchSea', { submerged: () => false } as unknown as World)
+
+    const radius = Math.hypot(villager.tx, villager.tz)
+    expect(radius).toBeCloseTo(WALK_RADIUS, 1)
+    expect(villager.tx / radius).toBeCloseTo(0.6, 1)
+    expect(villager.tz / radius).toBeCloseTo(0.8, 1)
+  })
+
+  it('sits once it reaches the shore', () => {
+    const villager = activityHarness('watchSea')
+    villager.x = 10
+    villager.z = 0
+    villager.tx = 10
+    villager.tz = 0
+
+    villager.performActivity(0.1, true, {} as unknown as World)
+
+    expect(villager.arrived).toBe(true)
+  })
+})
+
+describe('dance', () => {
+  const world = (lit: boolean): World => ({
+    campfire: { x: 0, z: 0, lit },
+  } as unknown as World)
+
+  it('bounces by the lit fire with arms raised', () => {
+    const villager = activityHarness('dance')
+    villager.x = 1.7
+    villager.z = 0
+    villager.tx = 1.7
+    villager.tz = 0
+    villager.timer = 5
+
+    villager.performActivity(0.1, true, world(true))
+
+    expect(villager.arrived).toBe(true)
+    expect(Math.abs(villager.arms[0].rotation.z)).toBeGreaterThan(1)
+  })
+
+  it('stops when the fire goes out', () => {
+    const villager = activityHarness('dance')
+
+    villager.performActivity(0.1, true, world(false))
+
+    expect(villager.enter).toHaveBeenCalledWith('wander', expect.anything())
+  })
+})
+
+describe('chat', () => {
+  it('drops back to wander when the partner is lost', () => {
+    const villager = activityHarness('chat')
+    const partner = activityHarness('chat')
+    villager.chatPartner = partner
+    partner.chatPartner = villager
+    partner.alive = false
+
+    villager.performActivity(0.1, true, {} as unknown as World)
+
+    expect(villager.enter).toHaveBeenCalledWith('wander', expect.anything())
+  })
+
+  it('drops back to wander when the partner changed activity', () => {
+    const villager = activityHarness('chat')
+    const partner = activityHarness('fish')
+    villager.chatPartner = partner
+
+    villager.performActivity(0.1, true, {} as unknown as World)
+
+    expect(villager.enter).toHaveBeenCalledWith('wander', expect.anything())
+  })
+
+  it('bobs once both have met', () => {
+    const villager = activityHarness('chat')
+    const partner = activityHarness('chat')
+    villager.chatPartner = partner
+    partner.chatPartner = villager
+    partner.alive = true
+    villager.x = 1
+    villager.z = 0
+    villager.tx = 1
+    villager.tz = 0
+    villager.timer = 5
+
+    villager.performActivity(0.1, true, {} as unknown as World)
+
+    expect(villager.arrived).toBe(true)
+    expect(villager.emote).toHaveBeenCalledWith('question')
+  })
+})
 
 describe('villager celebration override', () => {
   it('suspends and restores navigation, task timers, suggestions, and props', () => {
@@ -227,6 +429,78 @@ describe('villager celebration override', () => {
     expect(villager.canCelebrate()).toBe(true)
     villager.state = 'flee' as ActivityHarness['state']
     expect(villager.canCelebrate()).toBe(false)
+  })
+})
+
+describe('FSM context plumbing', () => {
+  type ContextHarness = {
+    state: 'wander' | 'sitAtFire' | 'fish'
+    alive: boolean
+    x: number
+    z: number
+    zapTime: number
+    rainTime: number
+    performance: 'none' | 'cower'
+    celebration: null
+    suggestion: Suggestion | null
+    personality: Record<string, number>
+    chatPartner: null
+    othersByState(world: World): Record<string, number>
+    findChatPartner(world: World): Villager | null
+    canJoinChat(): boolean
+  }
+
+  const contextHarness = (o: Partial<ContextHarness> = {}): ContextHarness => {
+    const villager = Object.create(Villager.prototype) as ContextHarness
+    villager.state = 'wander'
+    villager.alive = true
+    villager.x = 0
+    villager.z = 0
+    villager.zapTime = -1
+    villager.rainTime = 0
+    villager.performance = 'none'
+    villager.celebration = null
+    villager.suggestion = null
+    villager.personality = {}
+    villager.chatPartner = null
+    return Object.assign(villager, o)
+  }
+
+  it('counts other living villagers by state, excluding itself', () => {
+    const me = contextHarness({ state: 'fish' })
+    const world = {
+      villagers: [
+        me,
+        contextHarness({ state: 'fish' }),
+        contextHarness({ state: 'wander' }),
+        contextHarness({ state: 'wander', alive: false }),
+      ],
+    } as unknown as World
+
+    expect(me.othersByState(world)).toEqual({ fish: 1, wander: 1 })
+  })
+
+  it('finds the nearest interruptible chat partner within range', () => {
+    const me = contextHarness()
+    const near = contextHarness({ x: 2, z: 0 })
+    const nearer = contextHarness({ x: 1, z: 0, state: 'sitAtFire' })
+    const busy = contextHarness({ x: 0.5, z: 0, state: 'fish' })
+    const far = contextHarness({ x: 30, z: 0 })
+    const world = { villagers: [me, near, nearer, busy, far] } as unknown as World
+
+    expect(me.findChatPartner(world)).toBe(nearer)
+  })
+
+  it('refuses chat while busy, frightened, celebrating, or nudged', () => {
+    expect(contextHarness().canJoinChat()).toBe(true)
+    expect(contextHarness({ state: 'fish' }).canJoinChat()).toBe(false)
+    expect(contextHarness({ alive: false }).canJoinChat()).toBe(false)
+    expect(contextHarness({ zapTime: 0.5 }).canJoinChat()).toBe(false)
+    expect(contextHarness({ rainTime: 1 }).canJoinChat()).toBe(false)
+    expect(contextHarness({ performance: 'cower' }).canJoinChat()).toBe(false)
+    expect(contextHarness({
+      suggestion: { kind: 'fish', x: 0, z: 0 },
+    }).canJoinChat()).toBe(false)
   })
 })
 

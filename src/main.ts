@@ -13,6 +13,7 @@ import {
   simulatesGameplay,
   transitionAppFlow,
 } from './core/appFlow'
+import { createBackgroundTicker } from './core/backgroundTicker'
 import { GameLoop, QuantizedClock } from './core/loop'
 import { applyReducedMotion, prefersReducedMotion } from './core/motion'
 import { Preferences } from './core/preferences'
@@ -465,9 +466,15 @@ const clock = new QuantizedClock(TIMING.fps)
 const loop = new GameLoop(
   (dt) => {
     if (!simulatesGameplay(flow)) return
+    clock.advance(dt)
+    powers.update(dt)
     world.updateFire(dt, fireRng)
     world.updateGraves(dt)
     world.relocateDrownedRuins(rng, lowFx)
+    world.updateTrees(dt, clock.quantizedTime)
+    for (const hut of world.huts) hut.update(dt, clock.quantizedTime)
+    world.campfire.update(dt, clock.quantizedTime)
+    world.updatePonds(dt, clock.quantizedTime)
     for (const villager of world.villagers) {
       villager.update(dt, clock.quantizedTime, world, island)
     }
@@ -488,16 +495,10 @@ const loop = new GameLoop(
 
     const gameplayActive = simulatesGameplay(flow)
     if (gameplayActive) {
-      clock.advance(dt)
       targeting.update()
-      powers.update(dt)
       celebration?.update(dt)
       particles.update(dt)
       for (const power of powerIds) tray.setCooldown(power, powers.cooldown01(power))
-      world.updateTrees(dt, clock.quantizedTime)
-      for (const hut of world.huts) hut.update(dt, clock.quantizedTime)
-      world.campfire.update(dt, clock.quantizedTime)
-      world.updatePonds(dt, clock.quantizedTime)
       world.updateFireLights(camera.position)
     }
 
@@ -530,3 +531,14 @@ const loop = new GameLoop(
   },
 )
 loop.start()
+const backgroundTicker = createBackgroundTicker(() => loop.backgroundTick())
+document.addEventListener('visibilitychange', () => {
+  world.foleyMuted = document.hidden
+  if (document.hidden && simulatesGameplay(flow)) {
+    loop.setBackground(true)
+    backgroundTicker.start()
+  } else {
+    backgroundTicker.stop()
+    loop.setBackground(false)
+  }
+})

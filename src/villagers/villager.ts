@@ -69,6 +69,13 @@ export const DRINK_TIME = 2.6
 export const FISH_CAST_TIME = 4
 /** Time spent visibly tending a Nudge location after arriving there. */
 const SUGGESTED_GATHER_TIME = 2.5
+/** Activities that develop per-villager habits. Emergencies stay uniform. */
+const PERSONALITY_STATES: VillagerState[] = [
+  'wander', 'sitAtFire', 'chopTree', 'buildHut', 'fish', 'harvest',
+  'gather', 'chat', 'watchSea', 'dance', 'nap',
+]
+/** How far two villagers will spot each other for a chat. */
+const CHAT_RANGE = 7
 
 function isGrave(value: unknown): value is GraveLike {
   if (typeof value !== 'object' || value === null) return false
@@ -181,6 +188,10 @@ export class Villager {
   private graveGlance = 0
   private gatheringBySuggestion = false
   private celebration: CelebrationOverride | null = null
+  private chatPartner: Villager | null = null
+  private readonly personality: Partial<Record<VillagerState, number>> = {}
+  private wanderPauseAt = -1
+  private lookAround = 0
 
   constructor(
     public id: string,
@@ -283,6 +294,9 @@ export class Villager {
 
     this.group.add(this.model, this.emoteSprite.sprite, this.rainLeaf, this.rod)
     if (this.lowFx) this.addBlobShadow()
+    for (const state of PERSONALITY_STATES) {
+      this.personality[state] = rng.range(0.7, 1.3)
+    }
     this.enter('wander', world)
   }
 
@@ -450,16 +464,37 @@ export class Villager {
         this.targetGrave.x - this.x,
         this.targetGrave.z - this.z,
       )
+    } else if (this.arrived && this.state === 'watchSea') {
+      // Face out to sea: away from the island centre.
+      this.group.rotation.y = Math.atan2(this.x, this.z)
+    } else if (this.arrived && this.state === 'dance') {
+      this.group.rotation.y = Math.atan2(
+        world.campfire.x - this.x,
+        world.campfire.z - this.z,
+      )
+    } else if (this.arrived && this.state === 'chat' && this.chatPartner) {
+      this.group.rotation.y = Math.atan2(
+        this.chatPartner.x - this.x,
+        this.chatPartner.z - this.z,
+      )
     }
 
     const frame = Math.floor(qt * TIMING.fps) % 4
     const sitting = this.arrived
-      && (this.state === 'sitAtFire' || this.state === 'fish' || this.state === 'drink')
-    if (this.state !== 'drink') {
+      && (
+        this.state === 'sitAtFire'
+        || this.state === 'fish'
+        || this.state === 'drink'
+        || this.state === 'watchSea'
+      )
+    if (this.state !== 'drink' && this.state !== 'nap') {
       this.model.scale.set(MODEL_SCALE, MODEL_SCALE * (sitting ? 0.8 : 1), MODEL_SCALE)
     }
     this.group.rotation.z = this.arrived ? 0 : frame === 0 ? 0.09 : frame === 2 ? -0.09 : 0
     this.group.position.y += !this.arrived && frame % 2 === 0 ? 0.03 : 0
+    if (this.arrived && this.state === 'dance' && frame % 2 === 0) {
+      this.group.position.y += 0.1
+    }
     if (!this.arrived && frame % 2 === 0) world.playStepFoley()
     this.emoteSprite.update(qt)
   }
@@ -608,6 +643,13 @@ export class Villager {
       return
     }
     this.timer = Math.min(this.timer, 0.4)
+  }
+
+  /** Pulled into a conversation by an initiator who has already chosen us. */
+  joinChat(initiator: Villager, duration: number): void {
+    if (!this.canJoinChat()) return
+    this.enter('chat', this.world, null, null, initiator)
+    this.timer = duration
   }
 
   private suggestionForState(state: VillagerState): Suggestion | null {
@@ -843,6 +885,23 @@ export class Villager {
           if (!this.arrived && this.rng.chance(0.22)) this.emote('sleep')
           this.arrived = true
         }
+        if (this.wanderPauseAt > 0 && this.timer <= this.wanderPauseAt && !this.arrived) {
+          this.wanderPauseAt = -1
+          this.lookAround = 1.4
+          this.setTarget({ x: this.x, z: this.z })
+        }
+        if (this.lookAround > 0) {
+          this.lookAround -= dt
+          if (ticked) {
+            this.head.rotation.y = Math.floor(this.timer * TIMING.fps / 3) % 2 === 0
+              ? 0.55
+              : -0.55
+          }
+          if (this.lookAround <= 0) {
+            this.head.rotation.y = 0
+            this.setTarget(this.randomWalkPoint(world))
+          }
+        }
         if (this.graveGlance <= 0 && !this.arrived) {
           const grave = world.graves.find(candidate => (
             isGrave(candidate) && !candidate.fresh && distance(this, candidate) < 1.1
@@ -856,6 +915,59 @@ export class Villager {
         if (this.graveGlance > 0) {
           this.graveGlance -= dt
           if (this.graveGlance <= 0) this.setTarget(this.randomWalkPoint(world))
+        }
+        return
+      }
+      case 'nap': {
+        if (this.targetDistance() < 0.3) this.arrived = true
+        if (this.arrived && ticked) {
+          const breathe = Math.floor(this.timer * TIMING.fps / 2) % 2 === 0 ? 1.04 : 1
+          this.rig.setNapPose(breathe)
+        }
+        return
+      }
+      case 'watchSea': {
+        if (this.targetDistance() < 0.35 && !this.arrived) {
+          this.arrived = true
+          this.emote('sleep')
+        }
+        return
+      }
+      case 'dance': {
+        if (!world.campfire?.lit) {
+          this.enter('wander', world)
+          return
+        }
+        if (this.targetDistance() < 0.25) {
+          this.arrived = true
+          if (ticked) {
+            const frame = Math.floor(this.timer * TIMING.fps) % 4
+            const lift = frame < 2 ? 2.05 : 1.2
+            this.arms[0].rotation.z = -lift
+            this.arms[1].rotation.z = lift
+          }
+        }
+        return
+      }
+      case 'chat': {
+        const partner = this.chatPartner
+        if (!partner || !partner.alive || partner.state !== 'chat') {
+          this.enter('wander', world)
+          return
+        }
+        if (this.targetDistance() < 0.3) {
+          if (!this.arrived) {
+            this.arrived = true
+            this.emote('question')
+          }
+          if (ticked) {
+            // Nodding along: head bows on the beat, one arm gestures.
+            const frame = Math.floor(this.timer * TIMING.fps) % 4
+            this.head.rotation.x = frame < 2 ? 0.18 : -0.06
+            this.arms[0].rotation.z = frame === 1
+              ? -0.9
+              : this.arms[0].userData.baseRotation
+          }
         }
         return
       }
@@ -1282,6 +1394,7 @@ export class Villager {
     world: World,
     preferredPond: Pond | null = null,
     preferredTree: Tree | null = null,
+    chatWith: Villager | null = null,
   ): void {
     const suggestion = this.suggestionForState(state)
     if (state !== 'drink') this.resumeState = null
@@ -1306,11 +1419,59 @@ export class Villager {
     this.rebuildingRuin = false
     this.graveGlance = 0
     this.gatheringBySuggestion = false
+    this.chatPartner = null
+    this.wanderPauseAt = -1
+    this.lookAround = 0
 
     switch (state) {
       case 'wander':
+        // Half of all strolls include a stop to look around partway through.
+        this.wanderPauseAt = this.rng.chance(0.5)
+          ? this.timer * this.rng.range(0.35, 0.65)
+          : -1
         this.setTarget(this.randomWalkPoint(world))
         return
+      case 'nap':
+        this.setTarget({ x: this.x, z: this.z })
+        this.emote('sleep')
+        return
+      case 'watchSea': {
+        let angle = Math.atan2(this.z, this.x)
+        if (Math.hypot(this.x, this.z) < 0.5) {
+          angle = this.rng.range(0, Math.PI * 2)
+        }
+        this.setTarget({
+          x: Math.cos(angle) * WALK_RADIUS,
+          z: Math.sin(angle) * WALK_RADIUS,
+        })
+        return
+      }
+      case 'dance': {
+        if (!world.campfire?.lit) return this.enter('wander', world)
+        // Outside the sitters' ring (1.25) so dancers weave between them.
+        const angle = this.rng.range(0, Math.PI * 2)
+        this.setTarget({
+          x: world.campfire.x + Math.cos(angle) * 1.7,
+          z: world.campfire.z + Math.sin(angle) * 1.7,
+        })
+        return
+      }
+      case 'chat': {
+        this.chatPartner = chatWith ?? this.findChatPartner(world)
+        if (!this.chatPartner) return this.enter('wander', world)
+        if (chatWith) {
+          // The joiner waits where they are; the initiator walks over.
+          this.setTarget({ x: this.x, z: this.z })
+          return
+        }
+        this.chatPartner.joinChat(this, this.timer)
+        if (this.chatPartner.state !== 'chat') {
+          this.chatPartner = null
+          return this.enter('wander', world)
+        }
+        this.setTarget(this.meetingPoint(this.chatPartner))
+        return
+      }
       case 'chopTree': {
         this.targetTree = this.selectChopTree(world)
         if (!this.targetTree) {
@@ -1434,8 +1595,54 @@ export class Villager {
       needsFire: world.needsFire(),
       hasFruitTree: world.fruitingTree() !== null,
       fireOut: world.fireOut(),
+      hasChatPartner: this.findChatPartner(world) !== null,
+      stateCounts: this.othersByState(world),
+      personality: this.personality,
       suggestion: this.suggestion,
       rng: this.rng,
+    }
+  }
+
+  private othersByState(world: World): Partial<Record<VillagerState, number>> {
+    const counts: Partial<Record<VillagerState, number>> = {}
+    for (const other of world.villagers) {
+      if (other === this || !other.alive) continue
+      counts[other.state] = (counts[other.state] ?? 0) + 1
+    }
+    return counts
+  }
+
+  /** Free enough to be pulled into a conversation. */
+  private canJoinChat(): boolean {
+    return this.alive
+      && this.zapTime < 0
+      && this.rainTime <= 0
+      && this.performance === 'none'
+      && this.celebration === null
+      && this.suggestion === null
+      && (this.state === 'wander' || this.state === 'sitAtFire')
+  }
+
+  private findChatPartner(world: World): Villager | null {
+    let best: Villager | null = null
+    for (const other of world.villagers) {
+      if (other === this || !other.canJoinChat()) continue
+      const candidateDistance = distance(this, other)
+      if (candidateDistance > CHAT_RANGE) continue
+      if (!best || candidateDistance < distance(this, best)) best = other
+    }
+    return best
+  }
+
+  /** A spot just short of the partner, so the pair stand face to face. */
+  private meetingPoint(partner: Villager): Point {
+    const dx = partner.x - this.x
+    const dz = partner.z - this.z
+    const length = Math.hypot(dx, dz)
+    if (length <= 0.7) return { x: this.x, z: this.z }
+    return {
+      x: partner.x - dx / length * 0.7,
+      z: partner.z - dz / length * 0.7,
     }
   }
 

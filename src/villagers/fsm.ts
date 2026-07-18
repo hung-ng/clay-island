@@ -3,6 +3,7 @@ import type { RNG } from '../core/rng'
 export const STATES = [
   'wander', 'chopTree', 'buildHut', 'sitAtFire', 'flee', 'mourn', 'rebuild',
   'fish', 'makeFire', 'drink', 'harvest', 'gather',
+  'chat', 'watchSea', 'dance', 'nap',
 ] as const
 
 export type VillagerState = (typeof STATES)[number]
@@ -30,13 +31,18 @@ export type FsmCtx = {
   needsFire: boolean
   hasFruitTree: boolean
   fireOut: boolean
+  hasChatPartner: boolean
+  /** Living villagers other than the decider currently in each state. */
+  stateCounts: Partial<Record<VillagerState, number>>
+  /** Per-villager habit multipliers rolled at spawn; missing entries mean 1. */
+  personality: Partial<Record<VillagerState, number>>
   suggestion: Suggestion | null
   rng: RNG
 }
 
 /** Weighted candidates for the idle roll. Preconditions gate availability. */
 const IDLE: { state: VillagerState; weight: number; when: (c: FsmCtx) => boolean }[] = [
-  { state: 'wander', weight: 4, when: () => true },
+  { state: 'wander', weight: 7, when: () => true },
   { state: 'sitAtFire', weight: 3, when: c => c.campfireLit },
   {
     state: 'chopTree',
@@ -45,15 +51,19 @@ const IDLE: { state: VillagerState; weight: number; when: (c: FsmCtx) => boolean
       && (c.canChopAutomatically || c.suggestion?.kind === 'chop'),
   },
   { state: 'buildHut', weight: 3, when: c => c.hasSite },
-  { state: 'fish', weight: 4, when: c => c.hasFishPond },
+  { state: 'fish', weight: 2, when: c => c.hasFishPond },
   {
     state: 'drink',
     weight: 0,
     when: c => c.hasPond && c.suggestion?.kind === 'drink',
   },
   { state: 'makeFire', weight: 5, when: c => c.needsFire },
-  { state: 'harvest', weight: 5, when: c => c.hasFruitTree },
+  { state: 'harvest', weight: 3, when: c => c.hasFruitTree },
   { state: 'gather', weight: 3, when: c => c.fireOut || c.suggestion?.kind === 'gather' },
+  { state: 'chat', weight: 3, when: c => c.hasChatPartner },
+  { state: 'watchSea', weight: 2, when: () => true },
+  { state: 'dance', weight: 3, when: c => c.campfireLit },
+  { state: 'nap', weight: 2, when: () => true },
 ]
 
 const SUGGESTED: Record<SuggestionKind, VillagerState> = {
@@ -78,11 +88,18 @@ export function decideNext(ctx: FsmCtx): VillagerState {
   if (ctx.freshGrave) return 'mourn'
   if (ctx.hasRuin) return 'rebuild'
 
-  const available = IDLE.filter(option => option.when(ctx))
   const wanted = ctx.suggestion ? SUGGESTED[ctx.suggestion.kind] : null
-  const weightOf = (option: { state: VillagerState; weight: number }): number => (
-    option.state === wanted ? option.weight + SUGGESTION_WEIGHT : option.weight
-  )
+  let available = IDLE.filter(option => option.when(ctx))
+  // Variety: never re-roll the current state, unless a suggestion asks for it
+  // or nothing else is on offer.
+  const fresh = available.filter(option => option.state !== ctx.state || option.state === wanted)
+  if (fresh.length > 0) available = fresh
+  const weightOf = (option: { state: VillagerState; weight: number }): number => {
+    const habit = ctx.personality[option.state] ?? 1
+    const crowd = 1 + (ctx.stateCounts[option.state] ?? 0)
+    const weight = option.weight * habit / crowd
+    return option.state === wanted ? weight + SUGGESTION_WEIGHT : weight
+  }
   const total = available.reduce((sum, option) => sum + weightOf(option), 0)
   let roll = ctx.rng.next() * total
   for (const option of available) {
@@ -99,7 +116,7 @@ export function stateDuration(state: VillagerState, rng: RNG): number {
     case 'chopTree': return rng.range(3, 5)
     case 'buildHut':
     case 'rebuild': return rng.range(3, 5)
-    case 'fish': return rng.range(5, 9)
+    case 'fish': return rng.range(4, 6)
     case 'drink': return 4
     case 'harvest': return rng.range(4, 7)
     case 'gather': return rng.range(5, 9)
@@ -107,6 +124,10 @@ export function stateDuration(state: VillagerState, rng: RNG): number {
     // This is a watchdog, not the normal theatrical activity duration.
     case 'makeFire': return 35
     case 'sitAtFire': return rng.range(6, 12)
-    case 'wander': return rng.range(3, 6)
+    case 'wander': return rng.range(4, 9)
+    case 'chat': return rng.range(4, 7)
+    case 'watchSea': return rng.range(6, 10)
+    case 'dance': return rng.range(4, 8)
+    case 'nap': return rng.range(12, 18)
   }
 }

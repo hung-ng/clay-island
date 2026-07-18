@@ -13,16 +13,18 @@ const base = (o: Partial<FsmCtx> = {}): FsmCtx => ({
   hasSite: false, hasPond: false, hasTree: true, campfireLit: true,
   hasFishPond: false, canChopAutomatically: true,
   needsFire: false, hasFruitTree: false, fireOut: false,
+  hasChatPartner: false, stateCounts: {}, personality: {},
   suggestion: null, rng: new RNG(3), ...o,
 })
 
 describe('FSM shape', () => {
-  it('has exactly 12 states', () => {
-    expect(STATES).toHaveLength(12)
+  it('has exactly 16 states', () => {
+    expect(STATES).toHaveLength(16)
     expect([...STATES].sort()).toEqual(
       [
-        'buildHut', 'chopTree', 'drink', 'fish', 'flee', 'gather',
-        'harvest', 'makeFire', 'mourn', 'rebuild', 'sitAtFire', 'wander',
+        'buildHut', 'chat', 'chopTree', 'dance', 'drink', 'fish', 'flee',
+        'gather', 'harvest', 'makeFire', 'mourn', 'nap', 'rebuild',
+        'sitAtFire', 'wander', 'watchSea',
       ],
     )
   })
@@ -50,7 +52,7 @@ describe('weighted idle selection', () => {
     for (let seed = 0; seed < 200; seed++) {
       const ctx = base({ rng: new RNG(seed), hasTree: false, hasSite: false, hasPond: false })
       const next = decideNext(ctx)
-      expect(['wander', 'sitAtFire']).toContain(next)
+      expect(['wander', 'sitAtFire', 'watchSea', 'dance', 'nap']).toContain(next)
     }
   })
   it('does not choose autonomous chopping while the forest reserve is protected', () => {
@@ -242,5 +244,114 @@ describe('makeFire', () => {
 
   it('yields to a nearby fire emergency', () => {
     expect(decideNext(base({ needsFire: true, fireNear: true }))).toBe('flee')
+  })
+})
+
+describe('variety rules', () => {
+  it('never re-picks the current state when alternatives exist', () => {
+    for (let seed = 0; seed < 300; seed++) {
+      const next = decideNext(base({
+        state: 'fish', hasPond: true, hasFishPond: true, rng: new RNG(seed),
+      }))
+      expect(next).not.toBe('fish')
+    }
+  })
+
+  it('repeats the current state when it is the only weighted option', () => {
+    for (let seed = 0; seed < 50; seed++) {
+      expect(decideNext(base({
+        state: 'wander', hasTree: false, campfireLit: false,
+        personality: { watchSea: 0, nap: 0 },
+        rng: new RNG(seed),
+      }))).toBe('wander')
+    }
+  })
+
+  it('a suggestion may re-pick the current state', () => {
+    let repicked = 0
+    for (let seed = 0; seed < 300; seed++) {
+      if (decideNext(base({
+        state: 'chopTree', hasTree: true,
+        suggestion: { kind: 'chop', x: 0, z: 0 },
+        rng: new RNG(seed),
+      })) === 'chopTree') repicked++
+    }
+    expect(repicked).toBeGreaterThan(200)
+  })
+
+  it('crowded activities lose appeal', () => {
+    const picks = (stateCounts: Partial<FsmCtx['stateCounts']>): number => {
+      let count = 0
+      for (let seed = 0; seed < 400; seed++) {
+        if (decideNext(base({
+          hasFruitTree: true, stateCounts, rng: new RNG(seed),
+        })) === 'harvest') count++
+      }
+      return count
+    }
+    expect(picks({ harvest: 9 })).toBeLessThan(picks({}) / 2)
+  })
+
+  it('personality multipliers create habits', () => {
+    let naps = 0
+    for (let seed = 0; seed < 300; seed++) {
+      if (decideNext(base({
+        personality: { nap: 100 }, rng: new RNG(seed),
+      })) === 'nap') naps++
+    }
+    expect(naps).toBeGreaterThan(250)
+  })
+})
+
+describe('new states', () => {
+  it('chats only when a partner is available', () => {
+    let chatted = false
+    for (let seed = 0; seed < 300; seed++) {
+      if (decideNext(base({ hasChatPartner: true, rng: new RNG(seed) })) === 'chat') {
+        chatted = true
+      }
+      expect(decideNext(base({ hasChatPartner: false, rng: new RNG(seed) }))).not.toBe('chat')
+    }
+    expect(chatted).toBe(true)
+  })
+
+  it('dances only by a lit fire', () => {
+    let danced = false
+    for (let seed = 0; seed < 300; seed++) {
+      if (decideNext(base({ campfireLit: true, rng: new RNG(seed) })) === 'dance') danced = true
+      expect(decideNext(base({ campfireLit: false, rng: new RNG(seed) }))).not.toBe('dance')
+    }
+    expect(danced).toBe(true)
+  })
+
+  it('watchSea and nap are always available', () => {
+    const picked = new Set<string>()
+    for (let seed = 0; seed < 500; seed++) {
+      picked.add(decideNext(base({
+        hasTree: false, campfireLit: false, rng: new RNG(seed),
+      })))
+    }
+    expect(picked.has('watchSea')).toBe(true)
+    expect(picked.has('nap')).toBe(true)
+  })
+
+  it('gives the new states their designed durations', () => {
+    for (let seed = 0; seed < 50; seed++) {
+      const rng = new RNG(seed)
+      const chat = stateDuration('chat', new RNG(seed))
+      expect(chat).toBeGreaterThanOrEqual(4)
+      expect(chat).toBeLessThanOrEqual(7)
+      expect(stateDuration('watchSea', rng)).toBeGreaterThanOrEqual(6)
+      expect(stateDuration('dance', rng)).toBeLessThanOrEqual(8)
+      const nap = stateDuration('nap', rng)
+      expect(nap).toBeGreaterThanOrEqual(12)
+      expect(nap).toBeLessThanOrEqual(18)
+      const wander = stateDuration('wander', new RNG(seed))
+      expect(wander).toBeGreaterThanOrEqual(4)
+      expect(wander).toBeLessThanOrEqual(9)
+      const fish = stateDuration('fish', new RNG(seed))
+      expect(fish).toBeGreaterThanOrEqual(4)
+      expect(fish).toBeLessThanOrEqual(6)
+    }
   })
 })

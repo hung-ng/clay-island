@@ -8,26 +8,44 @@ export type VillagerProloguePose = 'idle' | 'wake' | 'carry' | 'hammer' | 'place
 
 export const MODEL_SCALE = 0.75
 
+type PartTransform = {
+  part: THREE.Object3D
+  position: THREE.Vector3
+  rotation: THREE.Euler
+  scale: THREE.Vector3
+}
+
+const MODEL_UP = new THREE.Vector3(0, 1, 0)
+const NAP_DIRECTION = new THREE.Vector3()
+
+function orientOnGround(part: THREE.Object3D, angle: number): void {
+  NAP_DIRECTION.set(Math.cos(angle), 0, Math.sin(angle))
+  part.quaternion.setFromUnitVectors(MODEL_UP, NAP_DIRECTION)
+}
+
 export class VillagerModel {
   readonly group = new THREE.Group()
+  readonly body: THREE.Mesh
   readonly head: THREE.Mesh
   readonly arms: [THREE.Mesh, THREE.Mesh]
+  readonly legs: [THREE.Mesh, THREE.Mesh]
   readonly axe: THREE.Group
   readonly materials: THREE.MeshToonMaterial[] = []
   readonly cleanColors: THREE.Color[] = []
+  private readonly idlePartTransforms: PartTransform[] = []
 
   constructor(id: string, visualSeed: number, lowFx: boolean) {
     const rng = new RNG(visualSeed)
     this.group.name = `${id}-model`
 
     const smock = rng.pick([PALETTE.smockA, PALETTE.smockB, PALETTE.smockC])
-    const body = new THREE.Mesh(
+    this.body = new THREE.Mesh(
       wobble(new THREE.CapsuleGeometry(0.22, 0.34, 5, 10), rng, 0.035),
       clayMaterial(smock),
     )
-    body.name = 'villager-body'
-    body.position.y = 0.44
-    this.addPart(body, lowFx)
+    this.body.name = 'villager-body'
+    this.body.position.y = 0.44
+    this.addPart(this.body, lowFx)
 
     this.head = new THREE.Mesh(
       wobble(new THREE.SphereGeometry(0.22, 12, 9), rng, 0.035),
@@ -39,6 +57,7 @@ export class VillagerModel {
     this.addPart(this.head, lowFx)
 
     const arms: THREE.Mesh[] = []
+    const legs: THREE.Mesh[] = []
     for (const side of [-1, 1] as const) {
       const arm = new THREE.Mesh(
         wobble(new THREE.CapsuleGeometry(0.065, 0.2, 4, 8), rng, 0.018),
@@ -57,9 +76,11 @@ export class VillagerModel {
       )
       leg.name = side < 0 ? 'villager-leg-left' : 'villager-leg-right'
       leg.position.set(side * 0.11, 0.12, 0)
+      legs.push(leg)
       this.addPart(leg, lowFx)
     }
     this.arms = [arms[0]!, arms[1]!]
+    this.legs = [legs[0]!, legs[1]!]
     this.group.scale.setScalar(MODEL_SCALE)
 
     this.axe = new THREE.Group()
@@ -82,14 +103,54 @@ export class VillagerModel {
     this.axe.rotation.z = -0.7
     this.axe.visible = false
     this.group.add(this.axe)
+
+    for (const part of [this.body, this.head, ...this.arms, ...this.legs]) {
+      this.idlePartTransforms.push({
+        part,
+        position: part.position.clone(),
+        rotation: part.rotation.clone(),
+        scale: part.scale.clone(),
+      })
+    }
   }
 
   resetPose(): void {
+    this.group.position.set(0, 0, 0)
+    this.group.rotation.set(0, 0, 0)
     this.group.scale.setScalar(MODEL_SCALE)
-    this.head.rotation.set(0, 0, 0)
-    for (const arm of this.arms) arm.rotation.z = arm.userData.baseRotation
+    for (const transform of this.idlePartTransforms) {
+      transform.part.position.copy(transform.position)
+      transform.part.rotation.copy(transform.rotation)
+      transform.part.scale.copy(transform.scale)
+    }
     this.axe.rotation.z = -0.7
     this.axe.visible = false
+  }
+
+  setNapPose(breathe: number): void {
+    this.resetPose()
+
+    // The root stays upright. Each piece is arranged on the ground so the
+    // silhouette reads as a curled body instead of a rotated standing rig.
+    this.body.position.set(0, 0.22, 0)
+    orientOnGround(this.body, 0.08)
+    this.body.scale.x = breathe
+    this.body.scale.y = 0.82
+
+    this.head.position.set(0.31, 0.22, 0.27)
+
+    // Right arm becomes a pillow; left arm drapes visibly over the torso.
+    this.arms[1].position.set(0.3, 0.1, 0.2)
+    orientOnGround(this.arms[1], 1.28)
+    this.arms[0].position.set(0.05, 0.39, 0.08)
+    orientOnGround(this.arms[0], 1.18)
+
+    // Both short legs pull toward the face side at different angles, closing
+    // the silhouette into a compact C instead of extending the standing body.
+    this.legs[0].position.set(-0.23, 0.1, 0.2)
+    orientOnGround(this.legs[0], 0.32)
+    this.legs[1].position.set(-0.34, 0.1, 0.3)
+    orientOnGround(this.legs[1], 0.82)
   }
 
   setProloguePose(pose: VillagerProloguePose, frame: number): void {

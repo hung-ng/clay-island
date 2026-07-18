@@ -121,6 +121,65 @@ describe('GameLoop lifecycle', () => {
   })
 })
 
+describe('GameLoop background mode', () => {
+  const stubRaf = () => {
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  }
+
+  it('advances sim by wall-clock elapsed while hidden, capped per drain', () => {
+    stubRaf()
+    let time = 0
+    let steps = 0
+    const render = vi.fn()
+    const loop = new GameLoop(() => { steps++ }, render, 1 / 30, () => time)
+    loop.start()
+    loop.setBackground(true)
+
+    time += 2_000
+    loop.backgroundTick()
+    expect(steps).toBe(60)
+    expect(render).not.toHaveBeenCalled()
+
+    time += 120_000
+    loop.backgroundTick()
+    expect(steps).toBe(60 + 900)
+
+    loop.backgroundTick()
+    expect(steps).toBe(60 + 900)
+    loop.stop()
+  })
+
+  it('banks elapsed time when returning to visible without any tick', () => {
+    stubRaf()
+    let time = 0
+    let steps = 0
+    const loop = new GameLoop(() => { steps++ }, () => {}, 1 / 30, () => time)
+    loop.start()
+    loop.setBackground(true)
+
+    time += 10_000
+    loop.setBackground(false)
+
+    expect(steps).toBe(300)
+    loop.stop()
+  })
+
+  it('ignores background ticks while visible', () => {
+    stubRaf()
+    let steps = 0
+    let time = 0
+    const loop = new GameLoop(() => { steps++ }, () => {}, 1 / 30, () => time)
+    loop.start()
+
+    time += 5_000
+    loop.backgroundTick()
+
+    expect(steps).toBe(0)
+    loop.stop()
+  })
+})
+
 describe('Timeline', () => {
   it('fires callbacks in windows, reports done', () => {
     const hits: number[] = []
