@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { describe, expect, it, vi } from 'vitest'
+import { PALETTE } from '../ui/tokens'
 import { MODEL_SCALE, VillagerModel } from './model'
 
 vi.mock('../fx/clayMaterial', async () => {
@@ -23,6 +24,22 @@ function namedTransforms(root: THREE.Object3D): Record<string, number[]> {
 }
 
 describe('VillagerModel', () => {
+  it('cycles smock colors evenly across consecutive villager ids', () => {
+    const colors = Array.from({ length: 6 }, (_, index) => {
+      const model = new VillagerModel(`villager-${index}`, 41, false)
+      return (model.body.material as THREE.MeshToonMaterial).color.getHex()
+    })
+
+    expect(colors).toEqual([
+      PALETTE.smockA,
+      PALETTE.smockB,
+      PALETTE.smockC,
+      PALETTE.smockA,
+      PALETTE.smockB,
+      PALETTE.smockC,
+    ].map(color => new THREE.Color(color).getHex()))
+  })
+
   it('builds identical named meshes and transforms from one visual seed', () => {
     expect(namedTransforms(new VillagerModel('v', 41, false).group)).toEqual(
       namedTransforms(new VillagerModel('v', 41, false).group),

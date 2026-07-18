@@ -109,6 +109,7 @@ type ActivityHarness = {
   head: THREE.Object3D
   arms: THREE.Object3D[]
   group: THREE.Object3D
+  emoteSprite: { sprite: THREE.Object3D }
   emote: ReturnType<typeof vi.fn>
   enter: ReturnType<typeof vi.fn>
   setTarget(point: { x: number; z: number }): void
@@ -154,6 +155,8 @@ function activityHarness(
   villager.rng = new RNG(5)
   villager.rig = createRigStub()
   villager.group = bone()
+  villager.emoteSprite = { sprite: bone() }
+  villager.emoteSprite.sprite.visible = false
   villager.head.position.y = 0.94
   villager.arms[0].position.set(-0.28, 0.51, 0)
   villager.arms[1].position.set(0.28, 0.51, 0)
@@ -230,6 +233,22 @@ describe('wander pause', () => {
 })
 
 describe('nap', () => {
+  it('keeps the sleep emote visible for the nap and clears it on exit', () => {
+    const villager = activityHarness('wander')
+    const enter = Villager.prototype['enter'] as unknown as (
+      this: ActivityHarness,
+      state: 'nap' | 'watchSea',
+      world: World,
+    ) => void
+
+    enter.call(villager, 'nap', {} as World)
+    expect(villager.emote).toHaveBeenCalledWith('sleep', Number.POSITIVE_INFINITY)
+
+    villager.emoteSprite.sprite.visible = true
+    enter.call(villager, 'watchSea', {} as World)
+    expect(villager.emoteSprite.sprite.visible).toBe(false)
+  })
+
   it('delegates an authored curl without rotating or breathing the complete rig', () => {
     const villager = activityHarness('nap')
     villager.x = 2
@@ -281,6 +300,7 @@ describe('watchSea', () => {
     villager.performActivity(0.1, true, {} as unknown as World)
 
     expect(villager.arrived).toBe(true)
+    expect(villager.emote).toHaveBeenCalledWith('content')
   })
 })
 
@@ -300,6 +320,7 @@ describe('dance', () => {
     villager.performActivity(0.1, true, world(true))
 
     expect(villager.arrived).toBe(true)
+    expect(villager.emote).toHaveBeenCalledWith('music')
     expect(Math.abs(villager.arms[0].rotation.z)).toBeGreaterThan(1)
   })
 
@@ -350,7 +371,7 @@ describe('chat', () => {
     villager.performActivity(0.1, true, {} as unknown as World)
 
     expect(villager.arrived).toBe(true)
-    expect(villager.emote).toHaveBeenCalledWith('question')
+    expect(villager.emote).toHaveBeenCalledWith('happy')
   })
 })
 
@@ -1477,6 +1498,7 @@ describe('harvesting', () => {
 
     expect(villager.updateHeldFruit(0.05, true)).toBe(true)
     expect(villager.suggestion).toBeNull()
+    expect(villager.emote).toHaveBeenCalledWith('happy')
   })
 
   it('does not let the generic state timer discard fruit during the chew', () => {

@@ -25,6 +25,21 @@ import {
 
 type Position = { x: number; z: number }
 
+type PopulationTimerKind = 'recovery' | 'growth'
+
+type PopulationTimer = {
+  kind: PopulationTimerKind
+  remaining: number
+}
+
+const POPULATION_DELAYS: Record<
+  PopulationTimerKind,
+  readonly [minimum: number, maximum: number]
+> = {
+  recovery: [10, 18],
+  growth: [45, 75],
+}
+
 /** The village can grow to this many active huts. */
 export const MAX_HUTS = 6
 /** A nudge is a poke, not a proclamation. Villagers past this never hear it. */
@@ -56,7 +71,7 @@ export class World {
   ponds: Pond[] = []
   flowerPatches: FlowerPatch[] = []
   villagers: Villager[] = []
-  private repopulateTimer: number | null = null
+  private populationTimer: PopulationTimer | null = null
   private reseedTimer: number | null = null
   private treeSerial = 1000
   private hutSerial = 1000
@@ -375,9 +390,10 @@ export class World {
     return restored
   }
 
-  /** A hut founded but not yet finished. The village builds one at a time. */
+  /** A hut reserved, founded, or under construction. Growth stays serial. */
   pendingSite(): boolean {
-    return this.huts.some(hut => hut.state === 'site' || hut.state === 'building')
+    return this.pendingHutSite !== null
+      || this.huts.some(hut => hut.state === 'site' || hut.state === 'building')
   }
 
   claimCampfireSite(rng: RNG, lowFx = false): Campfire | null {
@@ -857,24 +873,46 @@ export class World {
 
   repopulate(dt: number, rng: RNG, lowFx = false): void {
     const living = this.living()
-    // Crowding is stable. Housing loss pauses arrivals; it never removes people.
-    if (living >= this.capacity() && living > 0) {
-      this.repopulateTimer = null
+    const capacity = this.capacity()
+    const home = repopulationHome(living, this.huts)
+    let kind: PopulationTimerKind | null = null
+
+    if (home && (living < capacity || living === 0)) {
+      kind = 'recovery'
+    } else if (
+      home?.state === 'built'
+      && living === capacity
+      && capacity > 0
+      && capacity < MAX_HUTS * 2
+      && !this.pendingSite()
+    ) {
+      kind = 'growth'
+    }
+
+    // Crowding, missing shelter, construction, and the hard maximum all cancel
+    // stale elapsed time. A later eligible mode always gets its full delay.
+    if (!kind || !home) {
+      this.populationTimer = null
       return
     }
 
-    const hut = repopulationHome(living, this.huts)
-    if (!hut) return
-    if (this.repopulateTimer === null) this.repopulateTimer = rng.range(10, 18)
-    this.repopulateTimer -= dt
-    if (this.repopulateTimer > 0) return
+    if (!this.populationTimer || this.populationTimer.kind !== kind) {
+      const [minimum, maximum] = POPULATION_DELAYS[kind]
+      this.populationTimer = {
+        kind,
+        remaining: rng.range(minimum, maximum),
+      }
+    }
+
+    this.populationTimer.remaining -= dt
+    if (this.populationTimer.remaining > 0) return
 
     spawnVillagers(this, this.island, rng, 1, {
       lowFx,
-      origin: { x: hut.x, z: hut.z },
+      origin: { x: home.x, z: home.z },
       animateIn: true,
     })
-    this.repopulateTimer = null
+    this.populationTimer = null
   }
 
   /** Trees still occupying a place in the forest population. */

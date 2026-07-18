@@ -517,8 +517,8 @@ export class Villager {
     this.emoteSprite.dispose()
   }
 
-  emote(kind: EmoteKind): void {
-    this.emoteSprite.show(kind, 2.2)
+  emote(kind: EmoteKind, seconds = 2.2): void {
+    this.emoteSprite.show(kind, seconds)
   }
 
   lookUp(from: Point): void {
@@ -614,7 +614,7 @@ export class Villager {
 
     this.rainLeaf.visible = !treeIsNearer
     if (!treeIsNearer) this.arms[0].rotation.z = -2.25
-    this.emote('water')
+    this.emote('alarm')
     this.setTarget(tree && treeIsNearer ? tree : hut ?? this.randomWalkPoint(world))
   }
 
@@ -882,7 +882,7 @@ export class Villager {
     switch (this.state) {
       case 'wander': {
         if (this.targetDistance() < 0.22) {
-          if (!this.arrived && this.rng.chance(0.22)) this.emote('sleep')
+          if (!this.arrived && this.rng.chance(0.22)) this.emote('content')
           this.arrived = true
         }
         if (this.wanderPauseAt > 0 && this.timer <= this.wanderPauseAt && !this.arrived) {
@@ -929,7 +929,7 @@ export class Villager {
       case 'watchSea': {
         if (this.targetDistance() < 0.35 && !this.arrived) {
           this.arrived = true
-          this.emote('sleep')
+          this.emote('content')
         }
         return
       }
@@ -939,7 +939,10 @@ export class Villager {
           return
         }
         if (this.targetDistance() < 0.25) {
-          this.arrived = true
+          if (!this.arrived) {
+            this.arrived = true
+            this.emote('music')
+          }
           if (ticked) {
             const frame = Math.floor(this.timer * TIMING.fps) % 4
             const lift = frame < 2 ? 2.05 : 1.2
@@ -958,7 +961,7 @@ export class Villager {
         if (this.targetDistance() < 0.3) {
           if (!this.arrived) {
             this.arrived = true
-            this.emote('question')
+            this.emote('happy')
           }
           if (ticked) {
             // Nodding along: head bows on the beat, one arm gestures.
@@ -1048,7 +1051,7 @@ export class Villager {
           return
         }
         if (this.targetDistance() < 0.2) {
-          if (!this.arrived && this.rng.chance(0.5)) this.emote('sleep')
+          if (!this.arrived && this.rng.chance(0.5)) this.emote('content')
           this.arrived = true
         }
         return
@@ -1322,8 +1325,7 @@ export class Villager {
     if (this.eating > 0) return false
 
     this.heldFruit.visible = false
-    // `EmoteKind` has no 'happy'; the satisfied-sigh glyph is 'sleep'.
-    this.emote('sleep')
+    this.emote('happy')
     this.bus.emit({ type: 'villager:ate' })
     this.completeSuggestionFor('harvest')
     return true
@@ -1397,6 +1399,9 @@ export class Villager {
     chatWith: Villager | null = null,
   ): void {
     const suggestion = this.suggestionForState(state)
+    if (this.state === 'nap' && state !== 'nap') {
+      this.emoteSprite.sprite.visible = false
+    }
     if (state !== 'drink') this.resumeState = null
     this.resetPose()
     this.rod.visible = false
@@ -1433,7 +1438,7 @@ export class Villager {
         return
       case 'nap':
         this.setTarget({ x: this.x, z: this.z })
-        this.emote('sleep')
+        this.emote('sleep', Number.POSITIVE_INFINITY)
         return
       case 'watchSea': {
         let angle = Math.atan2(this.z, this.x)

@@ -17,6 +17,16 @@ type PartTransform = {
 
 const MODEL_UP = new THREE.Vector3(0, 1, 0)
 const NAP_DIRECTION = new THREE.Vector3()
+const SMOCK_COLORS = [PALETTE.smockA, PALETTE.smockB, PALETTE.smockC] as const
+
+function smockColor(id: string, rng: RNG): string {
+  // Preserve the visual RNG stream so changing color assignment does not
+  // reshape the seeded clay geometry that follows this draw.
+  const seededFallback = rng.pick(SMOCK_COLORS)
+  const serial = /^villager-(\d+)$/.exec(id)?.[1]
+  if (serial === undefined) return seededFallback
+  return SMOCK_COLORS[Number(serial) % SMOCK_COLORS.length]!
+}
 
 function orientOnGround(part: THREE.Object3D, angle: number): void {
   NAP_DIRECTION.set(Math.cos(angle), 0, Math.sin(angle))
@@ -38,7 +48,7 @@ export class VillagerModel {
     const rng = new RNG(visualSeed)
     this.group.name = `${id}-model`
 
-    const smock = rng.pick([PALETTE.smockA, PALETTE.smockB, PALETTE.smockC])
+    const smock = smockColor(id, rng)
     this.body = new THREE.Mesh(
       wobble(new THREE.CapsuleGeometry(0.22, 0.34, 5, 10), rng, 0.035),
       clayMaterial(smock),

@@ -1,17 +1,42 @@
 import * as THREE from 'three'
 import { PALETTE, TIMING, TYPE } from '../ui/tokens'
 
-export type EmoteKind = 'alarm' | 'question' | 'water' | 'sleep' | 'fish' | 'sad' | 'cower'
+export type EmoteKind =
+  | 'alarm'
+  | 'question'
+  | 'water'
+  | 'sleep'
+  | 'fish'
+  | 'sad'
+  | 'cower'
+  | 'content'
+  | 'happy'
+  | 'music'
 
-const KINDS: EmoteKind[] = ['alarm', 'question', 'water', 'sleep', 'fish', 'sad', 'cower']
-const GLYPHS: Record<EmoteKind, string> = {
+const KINDS: EmoteKind[] = [
+  'alarm',
+  'question',
+  'water',
+  'sleep',
+  'fish',
+  'sad',
+  'cower',
+  'content',
+  'happy',
+  'music',
+]
+
+export const EMOTE_GLYPHS: Record<EmoteKind, string> = {
   alarm: '!',
   question: '?',
   water: '≋',
   sleep: 'z',
   fish: '><>',
-  sad: '︵',
-  cower: '⌒',
+  sad: '…',
+  cower: '!',
+  content: '~',
+  happy: '♥',
+  music: '♪',
 }
 
 const CELL = 64
@@ -60,7 +85,7 @@ function createAtlas(): THREE.CanvasTexture {
     drawBubble(context, index)
     context.fillStyle = PALETTE.ink
     context.font = `700 ${kind === 'fish' ? 22 : 34}px ${TYPE.display}`
-    context.fillText(GLYPHS[kind], index * CELL + CELL / 2, CELL / 2 - 3)
+    context.fillText(EMOTE_GLYPHS[kind], index * CELL + CELL / 2, CELL / 2 - 3)
   })
 
   sharedAtlas = new THREE.CanvasTexture(canvas)

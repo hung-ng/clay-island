@@ -1,11 +1,14 @@
 import * as THREE from 'three'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { GameLoop } from '../core/loop'
 import { RNG } from '../core/rng'
 import type { Villager } from '../villagers/villager'
 import { MAX_TREES } from './forest'
 import type { Island } from './island'
 import { Campfire, Hut, Tree, type FlowerPatch, type Pond } from './objects'
 import { repopulationHome, World } from './world'
+
+afterEach(() => vi.unstubAllGlobals())
 
 vi.mock('../fx/clayMaterial', async () => {
   const THREE = await import('three')
@@ -56,6 +59,13 @@ const idleVillagerAt = (x: number, z: number): Partial<Villager> => ({
   canBeNudged: () => true,
   suggest: vi.fn(),
 })
+
+function setLiving(world: World, count: number): void {
+  world.villagers = Array.from({ length: count }, (_, index) => ({
+    id: `existing-${index}`,
+    alive: true,
+  })) as Villager[]
+}
 
 function advanceTree(tree: Tree, seconds: number, from = 0): number {
   const step = 1 / 12
@@ -1016,6 +1026,165 @@ describe('housing caps the population', () => {
 
     world.repopulate(9, new RNG(1))
     expect(world.living()).toBe(before + 1)
+  })
+})
+
+describe('natural population growth', () => {
+  it('admits one pioneer after 45–75 seconds and no second overflow arrival', () => {
+    const world = makeWorld()
+    const rng = new RNG(1)
+    addHut(world, 'hut-0', 0, 0)
+    setLiving(world, 2)
+
+    world.repopulate(44, rng)
+    expect(world.living()).toBe(2)
+
+    world.repopulate(31, rng)
+    expect(world.living()).toBe(3)
+
+    world.repopulate(75, rng)
+    expect(world.living()).toBe(3)
+  })
+
+  it('does not grow beyond the twelve-person hard maximum', () => {
+    const world = makeWorld()
+    for (let index = 0; index < 6; index++) {
+      addHut(world, `hut-${index}`, index * 3, 0)
+    }
+    setLiving(world, 12)
+
+    world.repopulate(75, new RNG(1))
+
+    expect(world.living()).toBe(12)
+  })
+
+  it('starts a fresh recovery countdown when a death interrupts growth', () => {
+    const world = makeWorld()
+    const rng = new RNG(1)
+    addHut(world, 'hut-0', 0, 0)
+    setLiving(world, 2)
+
+    world.repopulate(44, rng)
+    world.villagers.pop()
+
+    world.repopulate(9, rng)
+    expect(world.living()).toBe(1)
+
+    world.repopulate(9, rng)
+    expect(world.living()).toBe(2)
+  })
+
+  it('suppresses growth while a visible hut site is pending', () => {
+    const world = makeWorld()
+    addHut(world, 'hut-0', 0, 0)
+    addHut(world, 'hut-1', 4, 0, 'site')
+    setLiving(world, 2)
+
+    world.repopulate(75, new RNG(1))
+
+    expect(world.living()).toBe(2)
+  })
+
+  it('discards elapsed growth time when hut construction starts', () => {
+    const world = makeWorld()
+    const rng = new RNG(1)
+    addHut(world, 'hut-0', 0, 0)
+    setLiving(world, 2)
+    world.repopulate(44, rng)
+
+    const site = addHut(world, 'hut-1', 4, 0, 'site')
+    world.repopulate(1, rng)
+    world.huts.splice(world.huts.indexOf(site), 1)
+
+    world.repopulate(44, rng)
+    expect(world.living()).toBe(2)
+
+    world.repopulate(31, rng)
+    expect(world.living()).toBe(3)
+  })
+
+  it('treats an invisible replacement-site reservation as pending work', () => {
+    const world = makeWorld()
+    addHut(world, 'hut-0', 0, 0)
+    addHut(world, 'hut-1', 4, 0, 'abandoned')
+    setLiving(world, 2)
+    vi.spyOn(world, 'findBuildSite').mockReturnValue({ x: 7, z: 0 })
+
+    expect(world.claimBuildSite(new RNG(2))).not.toBeNull()
+    expect(world.pendingSite()).toBe(true)
+
+    world.repopulate(75, new RNG(1))
+    expect(world.living()).toBe(2)
+  })
+
+  it('uses recovery to fill the vacancy after a pioneer gains a new hut', () => {
+    const world = makeWorld()
+    const rng = new RNG(1)
+    addHut(world, 'hut-0', 0, 0)
+    setLiving(world, 2)
+
+    world.repopulate(75, rng)
+    expect(world.living()).toBe(3)
+
+    addHut(world, 'hut-1', 4, 0)
+    world.repopulate(9, rng)
+    expect(world.living()).toBe(3)
+
+    world.repopulate(9, rng)
+    expect(world.living()).toBe(4)
+  })
+
+  it('does not unlock village growth when the pioneer arrives', () => {
+    const world = makeWorld()
+    const events: string[] = []
+    world.bus.on(event => events.push(event.type))
+    addHut(world, 'hut-0', 0, 0)
+    setLiving(world, 2)
+
+    world.repopulate(75, new RNG(1))
+
+    expect(world.living()).toBe(3)
+    expect(events).not.toContain('village:grew')
+  })
+
+  it('keeps the zero-population mercy arrival and stops again without housing', () => {
+    const world = makeWorld()
+    addHut(world, 'hut-0', 0, 0, 'ruin')
+
+    world.repopulate(18, new RNG(1))
+    expect(world.living()).toBe(1)
+
+    world.repopulate(75, new RNG(1))
+    expect(world.living()).toBe(1)
+  })
+
+  it('advances the growth countdown through background simulation without rendering', () => {
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    let now = 0
+    const world = makeWorld()
+    const rng = new RNG(1)
+    const render = vi.fn()
+    addHut(world, 'hut-0', 0, 0)
+    setLiving(world, 2)
+
+    const loop = new GameLoop(
+      dt => world.repopulate(dt, rng),
+      render,
+      1 / 30,
+      () => now,
+    )
+    loop.start()
+    loop.setBackground(true)
+
+    for (const elapsed of [30_000, 30_000, 15_000]) {
+      now += elapsed
+      loop.backgroundTick()
+    }
+
+    expect(world.living()).toBe(3)
+    expect(render).not.toHaveBeenCalled()
+    loop.stop()
   })
 })
 
