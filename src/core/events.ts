@@ -1,3 +1,5 @@
+import type { DayKind } from './dayClock'
+
 export type PowerId = 'meteor' | 'lightning' | 'rain' | 'nudge'
 export type TargetKind = 'ground' | 'tree' | 'hut' | 'villager' | 'pond' | 'crater' | 'campfire'
 
@@ -26,6 +28,7 @@ export type GameEvent =
   | { type: 'flower:bloomed' }
   | { type: 'fruit:grown'; treeId: string }
   | { type: 'campfire:flared' }
+  | { type: 'day:phase'; kind: DayKind }
 
 export class EventBus {
   private handlers = new Set<(e: GameEvent) => void>()

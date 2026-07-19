@@ -279,6 +279,48 @@ describe('World villager registry', () => {
   })
 })
 
+describe('night roles', () => {
+  it('assigns one or two owls among the living and sleepers otherwise', () => {
+    const world = makeWorld()
+    setLiving(world, 6)
+
+    world.assignNightRoles(new RNG(5))
+
+    const living = world.villagers.filter(villager => villager.alive)
+    const owls = living.filter(villager => villager.nightRole === 'owl')
+    expect(owls.length).toBeGreaterThanOrEqual(1)
+    expect(owls.length).toBeLessThanOrEqual(2)
+    expect(living.every(villager => (
+      villager.nightRole === 'owl' || villager.nightRole === 'sleeper'
+    ))).toBe(true)
+  })
+
+  it('rotates owls between nights', () => {
+    const world = makeWorld()
+    setLiving(world, 6)
+    const picks = new Set<string>()
+
+    for (let seed = 0; seed < 12; seed++) {
+      world.assignNightRoles(new RNG(seed))
+      for (const villager of world.villagers) {
+        if (villager.nightRole === 'owl') picks.add(villager.id)
+      }
+    }
+
+    expect(picks.size).toBeGreaterThan(1)
+  })
+
+  it('finds the nearest built hut and ignores other hut states', () => {
+    const world = makeWorld()
+    const farther = addHut(world, 'hut-far', 8, 0)
+    addHut(world, 'hut-site', 1, 0, 'site')
+    const nearest = addHut(world, 'hut-near', 3, 0)
+
+    expect(world.nearestBuiltHut(2, 0)).toBe(nearest)
+    expect(world.nearestBuiltHut(7.5, 0)).toBe(farther)
+  })
+})
+
 describe('World impact consequences', () => {
   it('re-grounds standing props after terrain deformation', () => {
     const world = makeWorld()

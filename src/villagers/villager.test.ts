@@ -70,6 +70,7 @@ type ActivityHarness = {
     | 'chopTree'
     | 'wander'
     | 'nap'
+    | 'sleep'
     | 'watchSea'
     | 'dance'
     | 'chat'
@@ -78,6 +79,8 @@ type ActivityHarness = {
   targetPond: Pond | null
   targetTree: Tree | null
   targetHut: Hut | null
+  sleepingHut: Hut | null
+  sleepSlot: 0 | 1 | null
   targetGrave: null
   targetMourningPond: Pond | null
   targetCampfire: Campfire | null
@@ -109,6 +112,10 @@ type ActivityHarness = {
   head: THREE.Object3D
   arms: THREE.Object3D[]
   group: THREE.Object3D
+  blobShadow: THREE.Object3D | null
+  insideHut: boolean
+  island: { sampleHeight(x: number, z: number): number }
+  world: World
   emoteSprite: { sprite: THREE.Object3D }
   emote: ReturnType<typeof vi.fn>
   enter: ReturnType<typeof vi.fn>
@@ -117,6 +124,7 @@ type ActivityHarness = {
   alignFishingRig(pond: Pond): void
   updateHeldFruit(dt: number, ticked: boolean): boolean
   performActivity(dt: number, ticked: boolean, world: World): void
+  positionSleepingPresentation(): void
 }
 
 function activityHarness(
@@ -131,6 +139,8 @@ function activityHarness(
   villager.targetPond = targetPond
   villager.targetTree = null
   villager.targetHut = null
+  villager.sleepingHut = null
+  villager.sleepSlot = null
   villager.targetGrave = null
   villager.targetMourningPond = null
   villager.targetCampfire = null
@@ -155,6 +165,10 @@ function activityHarness(
   villager.rng = new RNG(5)
   villager.rig = createRigStub()
   villager.group = bone()
+  villager.blobShadow = bone()
+  villager.insideHut = false
+  villager.island = { sampleHeight: () => 0.25 }
+  villager.world = { submerged: () => false } as unknown as World
   villager.emoteSprite = { sprite: bone() }
   villager.emoteSprite.sprite.visible = false
   villager.head.position.y = 0.94
@@ -267,6 +281,142 @@ describe('nap', () => {
     expect(villager.rig.setNapPose).toHaveBeenCalledWith(expect.toSatisfy(
       (breathe: number) => breathe === 1 || breathe === 1.04,
     ))
+  })
+})
+
+describe('sleep', () => {
+  function builtHut(id = 'hut-near', x = 4, z = 0): Hut {
+    const group = new THREE.Group()
+    group.position.set(x, 0.4, z)
+    group.rotation.y = Math.atan2(-x, -z)
+    return { id, x, z, state: 'built', group } as unknown as Hut
+  }
+
+  it('walks to the doorway, then hides the villager and places the sleep marker over the hut', () => {
+    const hut = builtHut()
+    const villager = activityHarness('wander')
+    villager.x = 1
+    villager.z = 0
+    const world = {
+      huts: [hut],
+      villagers: [villager],
+      nearestBuiltHut: () => hut,
+    } as unknown as World
+    villager.world = world
+    const enter = Villager.prototype['enter'] as unknown as (
+      this: ActivityHarness,
+      state: 'sleep',
+      world: World,
+    ) => void
+
+    enter.call(villager, 'sleep', world)
+
+    expect(villager.sleepingHut).toBe(hut)
+    expect(villager.sleepSlot).toBe(0)
+    expect(villager.tx).toBeCloseTo(2.5)
+    expect(villager.tz).toBeCloseTo(0)
+    expect(villager.model.visible).toBe(true)
+
+    villager.x = villager.tx
+    villager.z = villager.tz
+    villager.performActivity(0.1, true, world)
+    villager.positionSleepingPresentation()
+
+    expect(villager.insideHut).toBe(true)
+    expect(villager.model.visible).toBe(false)
+    expect(villager.blobShadow?.visible).toBe(false)
+    expect(villager.emote).toHaveBeenCalledWith('sleep', Number.POSITIVE_INFINITY)
+    expect(villager.group.position.x).toBe(hut.x)
+    expect(villager.group.position.z).toBe(hut.z)
+    expect(villager.group.position.y - hut.group.position.y).toBeGreaterThanOrEqual(1.4)
+  })
+
+  it('reserves no more than two sleepers per hut before using the next nearest home', () => {
+    const near = builtHut('hut-near', 4, 0)
+    const far = builtHut('hut-far', 8, 0)
+    const villagers = [
+      activityHarness('wander'),
+      activityHarness('wander'),
+      activityHarness('wander'),
+    ]
+    const world = {
+      huts: [near, far],
+      villagers,
+      nearestBuiltHut: () => near,
+    } as unknown as World
+    const enter = Villager.prototype['enter'] as unknown as (
+      this: ActivityHarness,
+      state: 'sleep',
+      world: World,
+    ) => void
+
+    for (const villager of villagers) {
+      villager.x = 1
+      villager.world = world
+      enter.call(villager, 'sleep', world)
+    }
+
+    expect(villagers.map(villager => [villager.sleepingHut?.id, villager.sleepSlot])).toEqual([
+      ['hut-near', 0],
+      ['hut-near', 1],
+      ['hut-far', 0],
+    ])
+  })
+
+  it('centres one roof bubble but separates two bubbles along the hut roof', () => {
+    const hut = builtHut()
+    const first = activityHarness('sleep')
+    const second = activityHarness('sleep')
+    const world = { villagers: [first, second] } as unknown as World
+    for (const [slot, villager] of [first, second].entries()) {
+      villager.world = world
+      villager.sleepingHut = hut
+      villager.sleepSlot = slot as 0 | 1
+      villager.insideHut = true
+    }
+
+    first.positionSleepingPresentation()
+    second.positionSleepingPresentation()
+
+    const separation = Math.hypot(
+      first.group.position.x - second.group.position.x,
+      first.group.position.z - second.group.position.z,
+    )
+    expect(separation).toBeGreaterThanOrEqual(1.75)
+    expect(first.group.position.y - hut.group.position.y).toBeGreaterThanOrEqual(1.4)
+    expect(second.group.position.y - hut.group.position.y).toBeGreaterThanOrEqual(1.4)
+
+    second.insideHut = false
+    first.positionSleepingPresentation()
+    expect(first.group.position.x).toBeCloseTo(hut.x)
+    expect(first.group.position.z).toBeCloseTo(hut.z)
+  })
+
+  it('reappears at the doorway when danger interrupts sleep', () => {
+    const hut = builtHut()
+    const villager = activityHarness('sleep')
+    villager.sleepingHut = hut
+    villager.sleepSlot = 0
+    villager.insideHut = true
+    villager.arrived = true
+    villager.x = 2.5
+    villager.z = 0
+    villager.model.visible = false
+    if (villager.blobShadow) villager.blobShadow.visible = false
+    villager.group.position.copy(hut.group.position)
+    villager.emoteSprite.sprite.visible = true
+
+    ;(villager as unknown as Villager).panic({ x: 4, z: 0 })
+
+    expect(villager.state).toBe('flee')
+    expect(villager.insideHut).toBe(false)
+    expect(villager.sleepingHut).toBeNull()
+    expect(villager.sleepSlot).toBeNull()
+    expect(villager.model.visible).toBe(true)
+    expect(villager.blobShadow?.visible).toBe(true)
+    expect(villager.group.position.toArray()).toEqual([2.5, 0.25, 0])
+    expect(villager.emoteSprite.sprite.visible).toBe(false)
+    expect(villager.emote).toHaveBeenLastCalledWith('alarm')
   })
 })
 

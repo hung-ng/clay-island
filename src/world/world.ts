@@ -4,6 +4,7 @@ import {
   type CelebrationPoint,
   type CelebrationSite,
 } from '../celebration/slots'
+import type { DayKind } from '../core/dayClock'
 import { EventBus, type TargetKind } from '../core/events'
 import { RNG } from '../core/rng'
 import type { SuggestionKind } from '../villagers/fsm'
@@ -71,6 +72,8 @@ export class World {
   ponds: Pond[] = []
   flowerPatches: FlowerPatch[] = []
   villagers: Villager[] = []
+  /** Set by the composition root each simulation tick; day outside gameplay. */
+  dayKind: DayKind = 'day'
   private populationTimer: PopulationTimer | null = null
   private reseedTimer: number | null = null
   private treeSerial = 1000
@@ -89,6 +92,33 @@ export class World {
       if (event.type !== 'villager:died') return
       for (const villager of this.villagers) villager.huddleAtCampfire()
     })
+  }
+
+  /** Roll fresh night duty: one owl normally, sometimes two in a larger village. */
+  assignNightRoles(rng: RNG): void {
+    const living = this.villagers.filter(villager => villager.alive)
+    for (const villager of living) villager.nightRole = 'sleeper'
+    if (living.length === 0) return
+    const owlCount = living.length >= 4 && rng.chance(0.5) ? 2 : 1
+    for (let i = 0; i < owlCount; i++) {
+      const sleepers = living.filter(villager => villager.nightRole === 'sleeper')
+      const pick = sleepers[rng.int(0, sleepers.length - 1)]
+      if (pick) pick.nightRole = 'owl'
+    }
+  }
+
+  nearestBuiltHut(x: number, z: number): Hut | null {
+    let best: Hut | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const hut of this.huts) {
+      if (hut.state !== 'built') continue
+      const candidateDistance = Math.hypot(hut.x - x, hut.z - z)
+      if (candidateDistance < bestDistance) {
+        best = hut
+        bestDistance = candidateDistance
+      }
+    }
+    return best
   }
 
   setStepFoley(handler: (() => void) | null): void { this.stepFoley = handler }

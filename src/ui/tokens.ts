@@ -32,6 +32,22 @@ export const PALETTE = {
   keyLight: '#ffe3c0',
   fillSky: '#bcd7ff',
   fillGround: '#e8b087',
+  // day/night cycle
+  dawnSkyHigh: '#8fb8d8',
+  dawnSkyLow: '#ffb499',
+  dawnKeyLight: '#ffc9a3',
+  daySkyHigh: '#9edcf7',
+  daySkyLow: '#d9f0fa',
+  dayKeyLight: '#fff3dc',
+  duskSkyHigh: '#7b6f9e',
+  duskSkyLow: '#ff9b6b',
+  duskKeyLight: '#ffb37e',
+  nightSkyHigh: '#141e33',
+  nightSkyLow: '#2c3a58',
+  nightKeyLight: '#a8c0e8',
+  nightFillSky: '#31406b',
+  nightFillGround: '#232633',
+  nightCloud: '#5a6580',
   // ui
   paper: '#e8d5b7', // clay-cream, the tray + journal surface
   ink: '#3d3436',

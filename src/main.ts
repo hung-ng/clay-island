@@ -14,11 +14,13 @@ import {
   transitionAppFlow,
 } from './core/appFlow'
 import { createBackgroundTicker } from './core/backgroundTicker'
+import { DayClock, GOLDEN_T, sampleAt } from './core/dayClock'
 import { GameLoop, QuantizedClock } from './core/loop'
 import { applyReducedMotion, prefersReducedMotion } from './core/motion'
 import { Preferences } from './core/preferences'
 import { RNG } from './core/rng'
 import { Journal, MOMENTS } from './discovery/moments'
+import { NightSky } from './fx/nightSky'
 import { ParticleBurst } from './fx/particles'
 import { flash, Shake } from './fx/shake'
 import { DragTargeting } from './powers/drag'
@@ -61,6 +63,7 @@ const {
   camera,
   renderer,
   updateSky,
+  applyDay,
   quality,
   composer,
   lowFx,
@@ -72,6 +75,11 @@ const cameraController = new CameraController({
   reducedMotion,
 })
 cameraController.lock('prologue')
+const dayClock = new DayClock(reducedMotion)
+dayClock.setMode(startup.timeOfDay)
+const canonicalDay = sampleAt(GOLDEN_T)
+const nightSky = new NightSky(scene, stageRoot, lowFx)
+let lastDayKind = dayClock.kind
 
 const gameplay = buildInitialWorld(blueprint, startup.lowFx)
 const { island, world } = gameplay
@@ -176,6 +184,7 @@ settingsUI = createSettingsUI(ui, {
   forcedLowFx: startup.forcedLowFx,
   autoRotate: startup.autoRotate,
   reducedMotion: reducedMotion(),
+  timeOfDay: startup.timeOfDay,
   reducedMotionActive: reducedMotion,
   onOpenChange(open) {
     settingsOpen = open
@@ -203,6 +212,11 @@ settingsUI = createSettingsUI(ui, {
     preferences.setReducedMotion(on)
     applyReducedMotion(document.documentElement, reducedMotion())
     settingsUI?.setReducedMotion(reducedMotion())
+  },
+  onTimeOfDayChange(mode) {
+    preferences.setTimeOfDay(mode)
+    dayClock.setMode(mode)
+    settingsUI?.setTimeOfDay(mode)
   },
   onResetCamera() {
     settingsUI?.close()
@@ -466,6 +480,14 @@ const clock = new QuantizedClock(TIMING.fps)
 const loop = new GameLoop(
   (dt) => {
     if (!simulatesGameplay(flow)) return
+    dayClock.tick(dt)
+    const dayKind = dayClock.kind
+    world.dayKind = dayKind
+    if (dayKind !== lastDayKind) {
+      lastDayKind = dayKind
+      if (dayKind === 'night') world.assignNightRoles(rng)
+      world.bus.emit({ type: 'day:phase', kind: dayKind })
+    }
     clock.advance(dt)
     powers.update(dt)
     world.updateFire(dt, fireRng)
@@ -512,6 +534,10 @@ const loop = new GameLoop(
     }
 
     const ambientDt = auditingHandoff ? 0 : dt
+    const dayParams = gameplayActive ? dayClock.sample() : canonicalDay
+    applyDay(dayParams, ambientDt)
+    nightSky.setLevels(dayParams.starOpacity, dayParams.fireflyLevel)
+    nightSky.update(ambientDt, reducedMotion())
     updateSky(ambientDt)
     quality.update(ambientDt, cameraController.distance(), reducedMotion())
     renderScene()

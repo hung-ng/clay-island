@@ -69,6 +69,10 @@ export const DRINK_TIME = 2.6
 export const FISH_CAST_TIME = 4
 /** Time spent visibly tending a Nudge location after arriving there. */
 const SUGGESTED_GATHER_TIME = 2.5
+/** Lifts the ordinary emote anchor fully clear of a built hut's roof. */
+const SLEEP_EMOTE_LIFT = 1.45
+/** Separates two sleepers' roof markers along the hut's local left/right axis. */
+const SLEEP_EMOTE_SIDE_OFFSET = 0.9
 /** Activities that develop per-villager habits. Emergencies stay uniform. */
 const PERSONALITY_STATES: VillagerState[] = [
   'wander', 'sitAtFire', 'chopTree', 'buildHut', 'fish', 'harvest',
@@ -143,6 +147,7 @@ export function fleeTarget(
 
 export class Villager {
   state: VillagerState = 'wander'
+  nightRole: 'sleeper' | 'owl' = 'sleeper'
   alive = true
   group = new THREE.Group()
 
@@ -170,6 +175,10 @@ export class Villager {
   private chopFrames = 0
   private targetTree: Tree | null = null
   private targetHut: Hut | null = null
+  private sleepingHut: Hut | null = null
+  private sleepSlot: 0 | 1 | null = null
+  private insideHut = false
+  private blobShadow: THREE.Mesh | null = null
   private targetGrave: GraveLike | null = null
   private targetMourningPond: Pond | null = null
   private targetPond: Pond | null = null
@@ -320,6 +329,7 @@ export class Villager {
 
   beginCelebration(assignment: CelebrationAssignment): boolean {
     if (this.celebrating || !this.canCelebrate()) return false
+    this.wakeFromHut()
     this.celebration = {
       assignment,
       phase: 'gathering',
@@ -487,7 +497,7 @@ export class Villager {
         || this.state === 'drink'
         || this.state === 'watchSea'
       )
-    if (this.state !== 'drink' && this.state !== 'nap') {
+    if (this.state !== 'drink' && this.state !== 'nap' && this.state !== 'sleep') {
       this.model.scale.set(MODEL_SCALE, MODEL_SCALE * (sitting ? 0.8 : 1), MODEL_SCALE)
     }
     this.group.rotation.z = this.arrived ? 0 : frame === 0 ? 0.09 : frame === 2 ? -0.09 : 0
@@ -497,6 +507,7 @@ export class Villager {
     }
     if (!this.arrived && frame % 2 === 0) world.playStepFoley()
     this.emoteSprite.update(qt)
+    this.positionSleepingPresentation()
   }
 
   die(cause: DeathCause): void {
@@ -523,6 +534,7 @@ export class Villager {
 
   lookUp(from: Point): void {
     if (!this.alive || this.zapTime >= 0) return
+    this.wakeFromHut()
     this.performance = 'meteor'
     this.performanceTime = 1.2
     this.performanceFrom = from
@@ -533,6 +545,7 @@ export class Villager {
   startle(from: Point): void {
     if (!this.alive || this.zapTime >= 0) return
     if (this.state === 'flee' || this.state === 'mourn') return
+    this.wakeFromHut()
     if (this.rainTime > 0) {
       this.rainTime = 0
       this.rainLeaf.visible = false
@@ -546,6 +559,7 @@ export class Villager {
 
   cower(): void {
     if (!this.alive || this.zapTime >= 0) return
+    this.wakeFromHut()
     this.performance = 'cower'
     this.performanceTime = 0.85
     this.emote('cower')
@@ -553,6 +567,7 @@ export class Villager {
 
   flinch(): void {
     if (!this.alive || this.zapTime >= 0) return
+    this.wakeFromHut()
     this.performance = 'flinch'
     this.performanceTime = 0.13
   }
@@ -585,6 +600,8 @@ export class Villager {
 
   zap(): void {
     if (!this.alive || this.zapTime >= 0) return
+    this.wakeFromHut()
+    this.releaseSleepAssignment()
     this.zapTime = 0
     this.zapLastQt = Number.NEGATIVE_INFINITY
     this.rainTime = 0
@@ -600,6 +617,8 @@ export class Villager {
 
   grumpAtRain(world: World): void {
     if (!this.alive || this.zapTime >= 0) return
+    this.wakeFromHut()
+    this.releaseSleepAssignment()
     this.rainTime = 2.6
     this.state = 'wander'
     this.resetPose()
@@ -619,6 +638,8 @@ export class Villager {
   }
 
   panic(from: Point): void {
+    this.wakeFromHut()
+    this.releaseSleepAssignment()
     this.state = 'flee'
     this.timer = stateDuration('flee', this.rng)
     this.retargetTimer = 1
@@ -825,6 +846,8 @@ export class Villager {
     shadow.rotation.x = -Math.PI / 2
     shadow.position.y = 0.018
     shadow.renderOrder = 1
+    shadow.name = 'villager-blob-shadow'
+    this.blobShadow = shadow
     this.group.add(shadow)
   }
 
@@ -923,6 +946,13 @@ export class Villager {
         if (this.arrived && ticked) {
           const breathe = Math.floor(this.timer * TIMING.fps / 2) % 2 === 0 ? 1.04 : 1
           this.rig.setNapPose(breathe)
+        }
+        return
+      }
+      case 'sleep': {
+        if (this.targetDistance() < 0.3 && !this.arrived) {
+          this.arrived = true
+          this.settleInsideHut()
         }
         return
       }
@@ -1399,9 +1429,18 @@ export class Villager {
     chatWith: Villager | null = null,
   ): void {
     const suggestion = this.suggestionForState(state)
-    if (this.state === 'nap' && state !== 'nap') {
+    if (this.state === 'sleep'
+      && state === 'sleep'
+      && this.insideHut
+      && this.sleepingHut?.state === 'built') {
+      this.timer = stateDuration('sleep', this.rng)
+      return
+    }
+    if ((this.state === 'nap' && state !== 'nap')
+      || (this.state === 'sleep' && state !== 'sleep')) {
       this.emoteSprite.sprite.visible = false
     }
+    this.wakeFromHut()
     if (state !== 'drink') this.resumeState = null
     this.resetPose()
     this.rod.visible = false
@@ -1417,6 +1456,7 @@ export class Villager {
     this.chopFrames = 0
     this.targetTree = null
     this.targetHut = null
+    this.releaseSleepAssignment()
     this.targetGrave = null
     this.targetMourningPond = null
     this.targetPond = null
@@ -1440,6 +1480,21 @@ export class Villager {
         this.setTarget({ x: this.x, z: this.z })
         this.emote('sleep', Number.POSITIVE_INFINITY)
         return
+      case 'sleep': {
+        const assignment = this.selectSleepAssignment(world)
+        if (!assignment) return this.enter('nap', world)
+        const { hut, slot } = assignment
+        this.sleepingHut = hut
+        this.sleepSlot = slot
+        // Huts face the island centre; walk to the doorway before disappearing
+        // inside, leaving only the sleep marker above the roof.
+        const away = Math.hypot(hut.x, hut.z) || 1
+        this.setTarget({
+          x: hut.x - (hut.x / away) * 1.5,
+          z: hut.z - (hut.z / away) * 1.5,
+        })
+        return
+      }
       case 'watchSea': {
         let angle = Math.atan2(this.z, this.x)
         if (Math.hypot(this.x, this.z) < 0.5) {
@@ -1601,6 +1656,9 @@ export class Villager {
       hasFruitTree: world.fruitingTree() !== null,
       fireOut: world.fireOut(),
       hasChatPartner: this.findChatPartner(world) !== null,
+      dayKind: world.dayKind,
+      nightRole: this.nightRole,
+      hasBuiltHut: world.nearestBuiltHut(this.x, this.z) !== null,
       stateCounts: this.othersByState(world),
       personality: this.personality,
       suggestion: this.suggestion,
@@ -1724,6 +1782,78 @@ export class Villager {
 
   private targetDistance(): number {
     return Math.hypot(this.tx - this.x, this.tz - this.z)
+  }
+
+  private settleInsideHut(): void {
+    if (!this.sleepingHut
+      || this.sleepingHut.state !== 'built'
+      || this.sleepSlot === null) return
+    this.insideHut = true
+    this.model.visible = false
+    if (this.blobShadow) this.blobShadow.visible = false
+    this.emote('sleep', Number.POSITIVE_INFINITY)
+    this.positionSleepingPresentation()
+  }
+
+  private positionSleepingPresentation(): void {
+    if (!this.insideHut || !this.sleepingHut) return
+    const hut = this.sleepingHut
+    const paired = this.world.villagers.some(villager => (
+      villager !== this
+      && villager.alive
+      && villager.insideHut
+      && villager.sleepingHut === hut
+    ))
+    const lateral = paired && this.sleepSlot !== null
+      ? (this.sleepSlot === 0 ? -1 : 1) * SLEEP_EMOTE_SIDE_OFFSET
+      : 0
+    const angle = hut.group.rotation.y
+    this.group.position.set(
+      hut.x + Math.cos(angle) * lateral,
+      hut.group.position.y + SLEEP_EMOTE_LIFT,
+      hut.z - Math.sin(angle) * lateral,
+    )
+    this.group.rotation.z = 0
+  }
+
+  private selectSleepAssignment(world: World): { hut: Hut; slot: 0 | 1 } | null {
+    const huts = world.huts
+      .filter(hut => hut.state === 'built')
+      .sort((a, b) => distance(this, a) - distance(this, b) || a.id.localeCompare(b.id))
+    for (const hut of huts) {
+      const occupied = new Set<0 | 1>()
+      for (const villager of world.villagers) {
+        if (villager === this
+          || !villager.alive
+          || villager.sleepingHut !== hut
+          || villager.sleepSlot === null) continue
+        occupied.add(villager.sleepSlot)
+      }
+      if (!occupied.has(0)) return { hut, slot: 0 }
+      if (!occupied.has(1)) return { hut, slot: 1 }
+    }
+    return null
+  }
+
+  private releaseSleepAssignment(): void {
+    this.sleepingHut = null
+    this.sleepSlot = null
+  }
+
+  /** Restore the hidden model at its unchanged simulation position: the door. */
+  private wakeFromHut(): void {
+    if (!this.insideHut) return
+    this.insideHut = false
+    this.arrived = false
+    this.emoteSprite.sprite.visible = false
+    this.resetPose()
+    this.model.visible = true
+    if (this.blobShadow) this.blobShadow.visible = true
+    this.group.position.set(
+      this.x,
+      this.island.sampleHeight(this.x, this.z),
+      this.z,
+    )
   }
 
   private resetPose(): void {

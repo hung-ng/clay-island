@@ -17,6 +17,7 @@ Keyboard play is built in: press `1`, `2`, `3`, or `4` to arm a power, move the 
 
 - Vanilla Three.js, TypeScript, Vite, and `postprocessing`—no UI framework.
 - Villager and prop poses are held at 12 fps while the camera, particles, and post stack stay at display rate.
+- A six-minute day/night cycle drives keyframed light, stars, fireflies, and villager sleep schedules, with Auto/Day/Night overrides in Settings.
 - The island, clay meshes, textures, particles, foley, and ambient bed are procedural. Runtime gameplay ships no model, texture, font, or audio assets.
 - A complete power × target matrix makes every one of the 28 cells explicit and testable.
 - Fifteen event-driven Moments persist locally and appear as pressed thumbprints in a focus-trapped DOM clay tablet.

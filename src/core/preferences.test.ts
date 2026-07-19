@@ -16,6 +16,7 @@ describe('Preferences', () => {
     expect(new Preferences(storage, '').snapshot).toEqual({
       quality: 'enhanced', lowFx: false, forcedLowFx: false,
       autoRotate: true, reducedMotion: false, introSeen: false,
+      timeOfDay: 'auto',
     })
   })
 
@@ -79,5 +80,32 @@ describe('Preferences', () => {
     preferences.setAutoRotate(false)
     preferences.markIntroSeen()
     expect(preferences.snapshot).toMatchObject({ autoRotate: false, introSeen: true })
+  })
+})
+
+describe('timeOfDay preference', () => {
+  it('defaults to auto when nothing is stored', () => {
+    const preferences = new Preferences(null, '')
+    expect(preferences.snapshot.timeOfDay).toBe('auto')
+  })
+
+  it('accepts only day and night as stored overrides', () => {
+    const storage = new MemoryStorage()
+    storage.values.set('clayisland.timeOfDay', 'night')
+    expect(new Preferences(storage, '').snapshot.timeOfDay).toBe('night')
+
+    storage.values.set('clayisland.timeOfDay', 'noon')
+    expect(new Preferences(storage, '').snapshot.timeOfDay).toBe('auto')
+  })
+
+  it('persists the mode and stays session-local when storage is unavailable', () => {
+    const storage = new MemoryStorage()
+    const preferences = new Preferences(storage, '')
+    preferences.setTimeOfDay('day')
+    expect(storage.getItem('clayisland.timeOfDay')).toBe('day')
+
+    const blocked = new Preferences(null, '')
+    blocked.setTimeOfDay('night')
+    expect(blocked.snapshot.timeOfDay).toBe('night')
   })
 })

@@ -14,17 +14,18 @@ const base = (o: Partial<FsmCtx> = {}): FsmCtx => ({
   hasFishPond: false, canChopAutomatically: true,
   needsFire: false, hasFruitTree: false, fireOut: false,
   hasChatPartner: false, stateCounts: {}, personality: {},
+  dayKind: 'day', nightRole: 'sleeper', hasBuiltHut: false,
   suggestion: null, rng: new RNG(3), ...o,
 })
 
 describe('FSM shape', () => {
-  it('has exactly 16 states', () => {
-    expect(STATES).toHaveLength(16)
+  it('has exactly 17 states', () => {
+    expect(STATES).toHaveLength(17)
     expect([...STATES].sort()).toEqual(
       [
         'buildHut', 'chat', 'chopTree', 'dance', 'drink', 'fish', 'flee',
         'gather', 'harvest', 'makeFire', 'mourn', 'nap', 'rebuild',
-        'sitAtFire', 'wander', 'watchSea',
+        'sitAtFire', 'sleep', 'wander', 'watchSea',
       ],
     )
   })
@@ -353,5 +354,64 @@ describe('new states', () => {
       expect(fish).toBeGreaterThanOrEqual(4)
       expect(fish).toBeLessThanOrEqual(6)
     }
+  })
+})
+
+describe('day-phase scheduling', () => {
+  it('sends night sleepers with a built hut to sleep almost always', () => {
+    let sleeps = 0
+    for (let seed = 0; seed < 50; seed++) {
+      const ctx = base({
+        dayKind: 'night', nightRole: 'sleeper', hasBuiltHut: true,
+        rng: new RNG(seed),
+      })
+      if (decideNext(ctx) === 'sleep') sleeps++
+    }
+    expect(sleeps).toBeGreaterThan(40)
+  })
+
+  it('never offers sleep during the day or to night owls', () => {
+    for (let seed = 0; seed < 50; seed++) {
+      const day = base({ dayKind: 'day', hasBuiltHut: true, rng: new RNG(seed) })
+      expect(decideNext(day)).not.toBe('sleep')
+      const owl = base({
+        dayKind: 'night', nightRole: 'owl', hasBuiltHut: true, rng: new RNG(seed),
+      })
+      expect(decideNext(owl)).not.toBe('sleep')
+    }
+  })
+
+  it('lets a sleeper keep sleeping across re-rolls', () => {
+    const ctx = base({
+      state: 'sleep', dayKind: 'night', nightRole: 'sleeper', hasBuiltHut: true,
+      rng: new RNG(1),
+    })
+    expect(decideNext(ctx)).toBe('sleep')
+  })
+
+  it('keeps night owls off daytime work states', () => {
+    for (let seed = 0; seed < 60; seed++) {
+      const ctx = base({
+        dayKind: 'night', nightRole: 'owl',
+        hasTree: true, canChopAutomatically: true, hasSite: true,
+        hasFruitTree: true, campfireLit: true, hasFishPond: true,
+        rng: new RNG(seed),
+      })
+      const next = decideNext(ctx)
+      expect(['chopTree', 'buildHut', 'harvest', 'dance']).not.toContain(next)
+    }
+  })
+
+  it('does not offer hut sleep to a sleeper without a hut', () => {
+    const ctx = base({
+      dayKind: 'night', nightRole: 'sleeper', hasBuiltHut: false, rng: new RNG(3),
+    })
+    expect(decideNext(ctx)).not.toBe('sleep')
+  })
+
+  it('gives sleep a bounded duration', () => {
+    const duration = stateDuration('sleep', new RNG(1))
+    expect(duration).toBeGreaterThanOrEqual(20)
+    expect(duration).toBeLessThanOrEqual(30)
   })
 })

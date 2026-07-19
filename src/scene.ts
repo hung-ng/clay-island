@@ -9,6 +9,7 @@ import {
   TiltShiftEffect,
   VignetteEffect,
 } from 'postprocessing'
+import type { DayParams } from './core/dayClock'
 import { RNG } from './core/rng'
 import { clayMaterial } from './fx/clayMaterial'
 import { VisualQualityController } from './fx/quality'
@@ -47,19 +48,23 @@ class HeldNoiseEffect extends Effect {
   }
 }
 
-function createSkyTexture(): THREE.CanvasTexture {
+function createSky(): { texture: THREE.CanvasTexture; redraw(high: string, low: string): void } {
   const canvas = document.createElement('canvas')
   canvas.width = 2
   canvas.height = 256
   const context = canvas.getContext('2d')!
-  const gradient = context.createLinearGradient(0, 0, 0, canvas.height)
-  gradient.addColorStop(0, PALETTE.skyHigh)
-  gradient.addColorStop(1, PALETTE.skyLow)
-  context.fillStyle = gradient
-  context.fillRect(0, 0, canvas.width, canvas.height)
   const texture = new THREE.CanvasTexture(canvas)
   texture.colorSpace = THREE.SRGBColorSpace
-  return texture
+  const redraw = (high: string, low: string): void => {
+    const gradient = context.createLinearGradient(0, 0, 0, canvas.height)
+    gradient.addColorStop(0, high)
+    gradient.addColorStop(1, low)
+    context.fillStyle = gradient
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    texture.needsUpdate = true
+  }
+  redraw(PALETTE.skyHigh, PALETTE.skyLow)
+  return { texture, redraw }
 }
 
 type SceneOptions = {
@@ -88,7 +93,8 @@ export function createScene(options: SceneOptions) {
   document.getElementById('app')!.appendChild(renderer.domElement)
 
   const scene = new THREE.Scene()
-  scene.background = createSkyTexture()
+  const sky = createSky()
+  scene.background = sky.texture
 
   const stageRoot = new THREE.Group()
   stageRoot.name = 'island-stage'
@@ -172,6 +178,30 @@ export function createScene(options: SceneOptions) {
     stageRoot.position.y = reduced ? 0 : Math.sin(elapsed * 0.15) * 0.3
   }
 
+  let skyRedrawCooldown = 0
+  let lastSkyHigh: string = PALETTE.skyHigh
+  let lastSkyLow: string = PALETTE.skyLow
+
+  function applyDay(params: DayParams, dt: number): void {
+    key.color.set(params.keyColor)
+    key.intensity = params.keyIntensity
+    // Reduced quality bypasses shadows; a moving sun buys nothing there.
+    if (!lowFx) key.position.set(params.keyX, params.keyY, params.keyZ)
+    fill.color.set(params.fillSky)
+    fill.groundColor.set(params.fillGround)
+    fill.intensity = params.fillIntensity
+    cloudMaterial.color.set(params.cloudTint)
+
+    skyRedrawCooldown -= dt
+    if (skyRedrawCooldown <= 0
+      && (params.skyHigh !== lastSkyHigh || params.skyLow !== lastSkyLow)) {
+      skyRedrawCooldown = 0.25
+      lastSkyHigh = params.skyHigh
+      lastSkyLow = params.skyLow
+      sky.redraw(params.skyHigh, params.skyLow)
+    }
+  }
+
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight
     camera.updateProjectionMatrix()
@@ -179,5 +209,5 @@ export function createScene(options: SceneOptions) {
     composer.setSize(innerWidth, innerHeight)
   })
 
-  return { scene, stageRoot, camera, renderer, updateSky, quality, composer, lowFx }
+  return { scene, stageRoot, camera, renderer, updateSky, applyDay, quality, composer, lowFx }
 }

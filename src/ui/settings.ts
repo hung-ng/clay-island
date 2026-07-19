@@ -1,5 +1,12 @@
+import type { TimeOfDayMode } from '../core/dayClock'
 import type { VisualQuality } from '../core/preferences'
 import { setModalBackgroundInert } from './modal'
+
+export const TIME_OF_DAY_OPTIONS: readonly { value: TimeOfDayMode; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'day', label: 'Day' },
+  { value: 'night', label: 'Night' },
+] as const
 
 export type SettingsUI = {
   close(): void
@@ -7,6 +14,7 @@ export type SettingsUI = {
   setMuted(muted: boolean): void
   setAutoRotate(on: boolean): void
   setReducedMotion(on: boolean): void
+  setTimeOfDay(mode: TimeOfDayMode): void
   dispose(): void
 }
 
@@ -16,12 +24,14 @@ export type SettingsUIOptions = {
   forcedLowFx: boolean
   autoRotate: boolean
   reducedMotion: boolean
+  timeOfDay: TimeOfDayMode
   reducedMotionActive(): boolean
   onOpenChange(open: boolean): void
   onSoundChange(muted: boolean): void
   onQualityChange(quality: VisualQuality, reportFailure: () => void): void
   onAutoRotateChange(on: boolean): void
   onReducedMotionChange(on: boolean): void
+  onTimeOfDayChange(mode: TimeOfDayMode): void
   onResetCamera(): void
   onReplayIntro(): void
 }
@@ -96,6 +106,23 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
   qualityGroup.append(qualityLegend, enhancedLabel, reducedLabel)
   qualityGroup.disabled = options.forcedLowFx
 
+  const timeGroup = document.createElement('fieldset')
+  timeGroup.className = 'settings-quality settings-time'
+  const timeLegend = document.createElement('legend')
+  timeLegend.textContent = 'Time of day'
+  const timeRadios = new Map<TimeOfDayMode, HTMLInputElement>()
+  for (const option of TIME_OF_DAY_OPTIONS) {
+    const label = document.createElement('label')
+    const radio = document.createElement('input')
+    radio.type = 'radio'
+    radio.name = 'time-of-day'
+    radio.value = option.value
+    label.append(radio, document.createTextNode(option.label))
+    timeGroup.append(label)
+    timeRadios.set(option.value, radio)
+  }
+  timeGroup.prepend(timeLegend)
+
   const autoRotateButton = document.createElement('button')
   autoRotateButton.type = 'button'
   autoRotateButton.className = 'settings-toggle'
@@ -121,6 +148,7 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
   body.append(
     soundButton,
     qualityGroup,
+    timeGroup,
     autoRotateButton,
     reducedMotionButton,
     resetButton,
@@ -154,6 +182,7 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
   let autoRotate = options.autoRotate
   let reducedMotion = options.reducedMotion
   let quality = options.quality
+  let timeOfDay = options.timeOfDay
   let pendingQuality: VisualQuality | null = null
   let openRaf = 0
   let closeTimer = 0
@@ -179,6 +208,10 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
   const syncQuality = (): void => {
     enhancedRadio.checked = quality === 'enhanced'
     reducedRadio.checked = quality === 'reduced'
+  }
+
+  const syncTimeOfDay = (): void => {
+    for (const [value, radio] of timeRadios) radio.checked = value === timeOfDay
   }
 
   const setBackgroundInert = (value: boolean): void => {
@@ -252,6 +285,10 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
   const handleSound = (): void => options.onSoundChange(!muted)
   const handleAutoRotate = (): void => options.onAutoRotateChange(!autoRotate)
   const handleReducedMotion = (): void => options.onReducedMotionChange(!reducedMotion)
+  const handleTimeOfDay = (event: Event): void => {
+    const value = (event.target as HTMLInputElement).value as TimeOfDayMode
+    options.onTimeOfDayChange(value)
+  }
   const handleReset = (): void => options.onResetCamera()
   const handleReplay = (): void => options.onReplayIntro()
   const handleEnhanced = (): void => beginQualityConfirmation('enhanced')
@@ -293,6 +330,7 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
   soundButton.addEventListener('click', handleSound)
   autoRotateButton.addEventListener('click', handleAutoRotate)
   reducedMotionButton.addEventListener('click', handleReducedMotion)
+  for (const radio of timeRadios.values()) radio.addEventListener('change', handleTimeOfDay)
   resetButton.addEventListener('click', handleReset)
   replayButton.addEventListener('click', handleReplay)
   enhancedRadio.addEventListener('change', handleEnhanced)
@@ -305,6 +343,7 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
   syncAutoRotate()
   syncReducedMotion()
   syncQuality()
+  syncTimeOfDay()
 
   return {
     close() { setOpen(false) },
@@ -327,6 +366,10 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
       reducedMotion = on
       syncReducedMotion()
     },
+    setTimeOfDay(mode) {
+      timeOfDay = mode
+      syncTimeOfDay()
+    },
     dispose() {
       if (disposed) return
       setOpen(false)
@@ -340,6 +383,9 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
       soundButton.removeEventListener('click', handleSound)
       autoRotateButton.removeEventListener('click', handleAutoRotate)
       reducedMotionButton.removeEventListener('click', handleReducedMotion)
+      for (const radio of timeRadios.values()) {
+        radio.removeEventListener('change', handleTimeOfDay)
+      }
       resetButton.removeEventListener('click', handleReset)
       replayButton.removeEventListener('click', handleReplay)
       enhancedRadio.removeEventListener('change', handleEnhanced)
