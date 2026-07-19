@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   CELEBRATION_SECONDS,
+  CELEBRATION_NIGHT_GLIDE_SECONDS,
   CelebrationClock,
   canStartCelebration,
   shouldRequestAutomaticCelebration,
@@ -58,6 +59,37 @@ describe('CelebrationClock', () => {
     expect(subject.cancel()).toBe(true)
     expect(subject.phase).toBe('idle')
   })
+})
+
+describe('totalElapsed', () => {
+  const ready = {
+    gameplay: true,
+    toastsIdle: true,
+    modalsClosed: true,
+    powerEffectsIdle: true,
+    worldSafe: true,
+  }
+
+  it('reports seconds since gathering began across phases', () => {
+    const clock = new CelebrationClock()
+    expect(clock.totalElapsed).toBe(0)
+    clock.request()
+    expect(clock.totalElapsed).toBe(0)
+    clock.update(0, ready)
+    clock.update(3, ready)
+    expect(clock.totalElapsed).toBeCloseTo(3)
+    clock.update(4, ready)
+    expect(clock.totalElapsed).toBeCloseTo(7)
+    clock.update(6, ready)
+    expect(clock.totalElapsed).toBeCloseTo(13)
+    clock.update(1, ready)
+    expect(clock.totalElapsed).toBe(0)
+  })
+})
+
+it('darkens for the show well before the first launch', () => {
+  expect(CELEBRATION_NIGHT_GLIDE_SECONDS).toBe(2)
+  expect(CELEBRATION_NIGHT_GLIDE_SECONDS).toBeLessThan(CELEBRATION_SECONDS.gathering)
 })
 
 it('requires every readiness gate', () => {

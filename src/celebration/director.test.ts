@@ -13,6 +13,7 @@ function harness() {
     begin: vi.fn(), update: vi.fn(() => []), reset: vi.fn(), dispose: vi.fn(),
   }
   const onActiveChange = vi.fn()
+  const onCameraAct = vi.fn()
   const options = {
     world: {
       villagers: [participant],
@@ -32,13 +33,14 @@ function harness() {
     reducedMotion: () => false,
     onStatusChange: vi.fn(),
     onActiveChange,
-    onCameraSuggestion: vi.fn(),
+    onCameraAct,
     onSound: vi.fn(),
   } as unknown as CelebrationDirectorOptions
   return {
     participant,
     fireworks,
     onActiveChange,
+    onCameraAct,
     options,
     subject: new CelebrationDirector(options),
   }
@@ -107,27 +109,6 @@ describe('CelebrationDirector', () => {
     expect(subject.active).toBe(false)
   })
 
-  it('suggests the frozen launcher view once just before fireworks', () => {
-    const { options, subject } = harness()
-    subject.request()
-    subject.update(0)
-    subject.update(2.9)
-    expect(options.onCameraSuggestion).not.toHaveBeenCalled()
-    subject.update(0.1)
-    expect(options.onCameraSuggestion).toHaveBeenCalledOnce()
-    expect(options.onCameraSuggestion).toHaveBeenCalledWith({ x: 0, z: 0 })
-    subject.update(0.5)
-    expect(options.onCameraSuggestion).toHaveBeenCalledOnce()
-  })
-
-  it('still emits the one-shot suggestion when a frame reaches fireworks directly', () => {
-    const { options, subject } = harness()
-    subject.request()
-    subject.update(0)
-    subject.update(4)
-    expect(options.onCameraSuggestion).toHaveBeenCalledOnce()
-  })
-
   it('aborts active work when dangerous fire appears', () => {
     const { options, participant, subject } = harness()
     subject.request()
@@ -165,5 +146,39 @@ describe('CelebrationDirector', () => {
     subject.dispose()
     subject.dispose()
     expect(onActiveChange.mock.calls.filter(([active]) => active === false)).toHaveLength(1)
+  })
+
+  it('cues the three camera acts once each and re-arms on replay', () => {
+    const { onCameraAct, subject } = harness()
+    subject.request()
+    subject.update(0)
+    expect(onCameraAct).toHaveBeenCalledTimes(1)
+    expect(onCameraAct).toHaveBeenLastCalledWith(1, { x: 0, z: 0 })
+    subject.update(3.1)
+    expect(onCameraAct).toHaveBeenCalledTimes(1)
+    subject.update(0.2)
+    expect(onCameraAct).toHaveBeenCalledTimes(2)
+    expect(onCameraAct).toHaveBeenLastCalledWith(2, { x: 0, z: 0 })
+    subject.update(7.8)
+    expect(onCameraAct).toHaveBeenLastCalledWith(3, { x: 0, z: 0 })
+    subject.update(3)
+    expect(onCameraAct).toHaveBeenCalledTimes(3)
+
+    subject.request()
+    subject.update(0)
+    expect(onCameraAct).toHaveBeenCalledTimes(4)
+    expect(onCameraAct).toHaveBeenLastCalledWith(1, { x: 0, z: 0 })
+  })
+
+  it('stops cueing later acts after cancellation', () => {
+    const { onCameraAct, subject } = harness()
+    subject.request()
+    subject.update(0)
+    expect(onCameraAct).toHaveBeenCalledTimes(1)
+    expect(onCameraAct).toHaveBeenLastCalledWith(1, { x: 0, z: 0 })
+    subject.cancel()
+    subject.update(12)
+    subject.update(12)
+    expect(onCameraAct).toHaveBeenCalledTimes(1)
   })
 })

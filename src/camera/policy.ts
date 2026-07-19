@@ -19,41 +19,65 @@ export const CAMERA_LIMITS = {
   recenterSeconds: 1.2,
 } as const
 
-export const CELEBRATION_CAMERA = {
-  distance: CAMERA_LIMITS.maxDistance,
-  height: 20,
-  seconds: 0.8,
-  suggestAt: 3,
-} as const
-
-export function clampCameraTarget(target: Vec3): Vec3 {
+export function clampCameraTarget(target: Vec3, maxHeight = 0): Vec3 {
   const radius = Math.hypot(target.x, target.z)
   const scale = radius > CAMERA_LIMITS.targetRadius
     ? CAMERA_LIMITS.targetRadius / radius
     : 1
-  return { x: target.x * scale, y: 0, z: target.z * scale }
+  const y = Math.min(Math.max(target.y, 0), maxHeight)
+  return { x: target.x * scale, y, z: target.z * scale }
 }
 
-/** A launcher-relative view that preserves the player's current azimuth. */
-export function celebrationCameraPose(
+export type CelebrationAct = 1 | 2 | 3
+
+/** Bursts sit centre-frame: the celebration target floats this far above ground. */
+export const CELEBRATION_TARGET_LIFT = 3.5
+
+/**
+ * Three-act celebration choreography over the 14-second timeline:
+ * close protected view while villagers gather, a pull-back that settles before
+ * the first launch, and the widest pose for the finale. `at` is seconds since
+ * gathering began.
+ */
+export const CELEBRATION_ACTS: readonly {
+  act: CelebrationAct
+  at: number
+  distance: number
+  height: number
+  seconds: number
+}[] = [
+  { act: 1, at: 0, distance: 24, height: 9, seconds: 1.6 },
+  { act: 2, at: 3.2, distance: 40, height: 15, seconds: 0.8 },
+  { act: 3, at: 11, distance: CAMERA_LIMITS.maxDistance, height: 20, seconds: 0.8 },
+] as const
+
+/** The Act 1 gesture lock always releases at the Act 2 boundary. */
+export const CELEBRATION_INTRO_LOCK_SECONDS = CELEBRATION_ACTS[1]!.at
+  - CELEBRATION_ACTS[0]!.at
+
+/** An act's launcher-relative pose that preserves the player's current azimuth. */
+export function celebrationActPose(
+  act: CelebrationAct,
   current: CameraPose,
   centre: { x: number; z: number },
 ): CameraPose {
-  const target = clampCameraTarget({ x: centre.x, y: 0, z: centre.z })
+  const spec = CELEBRATION_ACTS[act - 1]!
+  const target = clampCameraTarget(
+    { x: centre.x, y: CELEBRATION_TARGET_LIFT, z: centre.z },
+    CELEBRATION_TARGET_LIFT,
+  )
   const dx = current.position.x - current.target.x
   const dz = current.position.z - current.target.z
   const length = Math.hypot(dx, dz)
   const direction = length > 1e-6
     ? { x: dx / length, z: dz / length }
     : { x: 0, z: 1 }
-  const horizontalDistance = Math.sqrt(Math.max(
-    0,
-    CELEBRATION_CAMERA.distance ** 2 - CELEBRATION_CAMERA.height ** 2,
-  ))
+  const rise = spec.height - target.y
+  const horizontalDistance = Math.sqrt(Math.max(0, spec.distance ** 2 - rise ** 2))
   return {
     position: {
       x: target.x + direction.x * horizontalDistance,
-      y: CELEBRATION_CAMERA.height,
+      y: spec.height,
       z: target.z + direction.z * horizontalDistance,
     },
     target,

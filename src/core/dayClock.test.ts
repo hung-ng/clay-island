@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { PALETTE } from '../ui/tokens'
 import {
+  DAY_ANCHOR,
   DAY_PERIOD,
   DayClock,
   GOLDEN_T,
@@ -82,6 +83,19 @@ describe('DayClock', () => {
     expect(clock.time).toBeCloseTo(112, 1)
   })
 
+  it('can glide backward from golden hour to day without crossing night', () => {
+    const clock = new DayClock(noReduced, GOLDEN_T)
+    clock.setMode('day', 'backward')
+    let sawNight = false
+    for (let i = 0; i < 30 * 3; i++) {
+      clock.tick(1 / 30)
+      if (clock.kind === 'night') sawNight = true
+    }
+    expect(sawNight).toBe(false)
+    expect(clock.time).toBeCloseTo(DAY_ANCHOR, 1)
+    expect(clock.kind).toBe('day')
+  })
+
   it('snaps instead of gliding under reduced motion', () => {
     const clock = new DayClock(reduced, 100)
     clock.setMode('night')
@@ -117,5 +131,17 @@ describe('DayClock', () => {
     clock.requestHold('night')
     clock.tick(1 / 30)
     expect(clock.kind).toBe('day')
+  })
+
+  it('honors a custom hold glide duration and parks for the show', () => {
+    const clock = new DayClock(noReduced, 100)
+    clock.requestHold('night', 2)
+    for (let i = 0; i < 30 * 2; i++) clock.tick(1 / 30)
+    expect(clock.time).toBeCloseTo(305, 1)
+    clock.tick(5)
+    expect(clock.time).toBeCloseTo(305, 1)
+    clock.releaseHold()
+    clock.tick(1 / 30)
+    expect(clock.time).toBeGreaterThan(305) // gliding forward through wrap to resume phase
   })
 })

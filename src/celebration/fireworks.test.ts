@@ -76,4 +76,19 @@ describe('CelebrationFireworks', () => {
     expect(subject.launchedCount).toBe(18)
     expect(second).toEqual(first)
   })
+
+  it('reports each burst color and finale flag for the island light', () => {
+    const bursts: [string, boolean][] = []
+    const subject = new CelebrationFireworks(new THREE.Group(), {
+      lowFx: false,
+      reducedMotion: () => false,
+      onBurst: (color, finale) => bursts.push([color, finale]),
+    })
+    subject.begin({ x: 0, y: 0, z: 0 })
+    runShow(subject)
+    expect(bursts).toHaveLength(FIREWORK_LAUNCHES.length)
+    expect(bursts.filter(([, finale]) => finale)).toHaveLength(6)
+    expect(bursts[0]![0]).toBe(FIREWORK_LAUNCHES[0]!.color)
+    subject.dispose()
+  })
 })

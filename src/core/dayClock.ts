@@ -2,6 +2,7 @@ import { PALETTE } from '../ui/tokens'
 
 export type DayKind = 'dawn' | 'day' | 'dusk' | 'night'
 export type TimeOfDayMode = 'auto' | 'day' | 'night'
+export type GlideDirection = 'forward' | 'backward'
 
 export type DayParams = {
   kind: DayKind
@@ -158,6 +159,7 @@ export class DayClock {
   private holdResumeT: number | null = null
   private glideTarget: number | null = null
   private glideSpeed = 0
+  private glideDirection: 1 | -1 = 1
   /** After a glide lands (or a hold), the clock parks until circumstances change. */
   private parked = false
   private parkAfterGlide = true
@@ -172,7 +174,7 @@ export class DayClock {
 
   sample(): DayParams { return sampleAt(this.t) }
 
-  setMode(mode: TimeOfDayMode): void {
+  setMode(mode: TimeOfDayMode, direction: GlideDirection = 'forward'): void {
     if (mode === this.modeValue) return
     this.modeValue = mode
     if (mode === 'auto') {
@@ -180,15 +182,15 @@ export class DayClock {
       this.glideTarget = null
       if (this.holdKind) this.beginGlide(NIGHT_ANCHOR)
     } else {
-      this.beginGlide(mode === 'day' ? DAY_ANCHOR : NIGHT_ANCHOR)
+      this.beginGlide(mode === 'day' ? DAY_ANCHOR : NIGHT_ANCHOR, true, GLIDE_SECONDS, direction)
     }
   }
 
-  requestHold(kind: 'night'): void {
+  requestHold(kind: 'night', glideSeconds = GLIDE_SECONDS): void {
     if (this.holdKind) return
     this.holdKind = kind
     this.holdResumeT = this.t
-    if (this.modeValue === 'auto') this.beginGlide(NIGHT_ANCHOR)
+    if (this.modeValue === 'auto') this.beginGlide(NIGHT_ANCHOR, true, glideSeconds)
   }
 
   releaseHold(): void {
@@ -208,13 +210,15 @@ export class DayClock {
         this.finishGlide()
         return
       }
-      const remaining = wrap(this.glideTarget - this.t)
+      const remaining = this.glideDirection === 1
+        ? wrap(this.glideTarget - this.t)
+        : wrap(this.t - this.glideTarget)
       const step = this.glideSpeed * dt
       if (step >= remaining) {
         this.t = this.glideTarget
         this.finishGlide()
       } else {
-        this.t = wrap(this.t + step)
+        this.t = wrap(this.t + step * this.glideDirection)
       }
       return
     }
@@ -222,10 +226,18 @@ export class DayClock {
     this.t = wrap(this.t + dt)
   }
 
-  private beginGlide(target: number, parkAfter = true): void {
+  private beginGlide(
+    target: number,
+    parkAfter = true,
+    seconds = GLIDE_SECONDS,
+    direction: GlideDirection = 'forward',
+  ): void {
     this.glideTarget = wrap(target)
-    const distance = wrap(this.glideTarget - this.t)
-    this.glideSpeed = distance > 0 ? distance / GLIDE_SECONDS : 0
+    this.glideDirection = direction === 'forward' ? 1 : -1
+    const distance = this.glideDirection === 1
+      ? wrap(this.glideTarget - this.t)
+      : wrap(this.t - this.glideTarget)
+    this.glideSpeed = distance > 0 ? distance / seconds : 0
     this.parkAfterGlide = parkAfter
   }
 

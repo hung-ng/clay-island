@@ -3,15 +3,18 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import {
   CAMERA_HOME,
   CAMERA_LIMITS,
-  CELEBRATION_CAMERA,
   clampCameraTarget,
   maxPolarAngleAt,
   smooth01,
   type CameraPose,
 } from './policy'
 
-export type CameraLockReason = 'prologue' | 'targeting' | 'journal' | 'settings'
+export type CameraLockReason =
+  | 'prologue' | 'targeting' | 'journal' | 'settings' | 'celebration-intro'
 export type CameraAutoMotionReason = 'celebration'
+
+/** Metres per second the celebration target-lift ceiling eases at. */
+const TARGET_LIFT_RATE = 6
 
 export type CameraControlsPort = {
   target: THREE.Vector3
@@ -48,7 +51,7 @@ export type CameraControllerOptions = {
 }
 
 type CameraTween = {
-  kind: 'reset' | 'recenter' | 'suggestion'
+  kind: 'reset' | 'recenter' | 'suggestion' | 'intro'
   start: CameraPose
   end: CameraPose
   elapsed: number
@@ -79,6 +82,9 @@ export class CameraController {
   private tween: CameraTween | null = null
   private suppressNextContextMenu = false
   private interactionRevision = 0
+  private introRemaining: number | null = null
+  private targetLift = 0
+  private targetLiftGoal = 0
 
   constructor(options: CameraControllerOptions) {
     this.camera = options.camera
@@ -154,7 +160,7 @@ export class CameraController {
 
   get userInteractionRevision(): number { return this.interactionRevision }
 
-  suggestPose(pose: CameraPose, sinceRevision: number): boolean {
+  suggestPose(pose: CameraPose, sinceRevision: number, seconds = 0.8): boolean {
     if (this.reducedMotion()
       || this.locks.size > 0
       || this.interacting
@@ -165,9 +171,38 @@ export class CameraController {
       start: this.pose(),
       end: copyPose(pose),
       elapsed: 0,
-      seconds: CELEBRATION_CAMERA.seconds,
+      seconds,
     }
     return true
+  }
+
+  get userInteracting(): boolean { return this.interacting }
+
+  /** Bounded protective glide for the celebration's first launches. */
+  beginCelebrationIntro(pose: CameraPose, seconds: number, lockSeconds: number): boolean {
+    if (this.reducedMotion() || this.locks.size > 0 || this.interacting) return false
+    this.lock('celebration-intro')
+    this.introRemaining = lockSeconds
+    this.tween = {
+      kind: 'intro',
+      start: this.pose(),
+      end: copyPose(pose),
+      elapsed: 0,
+      seconds,
+    }
+    return true
+  }
+
+  endCelebrationIntro(): void {
+    if (this.introRemaining === null && !this.locks.has('celebration-intro')) return
+    this.introRemaining = null
+    if (this.tween?.kind === 'intro') this.tween = null
+    this.unlock('celebration-intro')
+  }
+
+  setTargetLift(height: number): void {
+    this.targetLiftGoal = Math.max(0, height)
+    if (this.reducedMotion()) this.targetLift = this.targetLiftGoal
   }
 
   pose(): CameraPose {
@@ -205,6 +240,20 @@ export class CameraController {
 
   update(dt: number): void {
     const reduced = this.reducedMotion()
+    if (this.introRemaining !== null) {
+      this.introRemaining -= dt
+      if (this.introRemaining <= 0) this.endCelebrationIntro()
+    }
+    if (this.targetLift !== this.targetLiftGoal) {
+      if (reduced) {
+        this.targetLift = this.targetLiftGoal
+      } else {
+        const step = TARGET_LIFT_RATE * dt
+        this.targetLift = this.targetLift < this.targetLiftGoal
+          ? Math.min(this.targetLiftGoal, this.targetLift + step)
+          : Math.max(this.targetLiftGoal, this.targetLift - step)
+      }
+    }
     if (reduced
       || this.autoMotionSuppressions.size > 0
       || this.locks.size > 0
@@ -217,6 +266,7 @@ export class CameraController {
         this.flushControlsMotion()
         this.applyPose(this.tween.end)
       }
+      if (this.tween.kind === 'intro') this.endCelebrationIntro()
       this.tween = null
     }
 
@@ -299,7 +349,7 @@ export class CameraController {
 
   private applyPose(pose: CameraPose): void {
     this.camera.position.set(pose.position.x, pose.position.y, pose.position.z)
-    const target = clampCameraTarget(pose.target)
+    const target = clampCameraTarget(pose.target, this.targetLift)
     this.controls.target.set(target.x, target.y, target.z)
     this.camera.lookAt(this.controls.target)
   }
@@ -312,7 +362,7 @@ export class CameraController {
   }
 
   private enforcePolicy(): void {
-    const target = clampCameraTarget(this.controls.target)
+    const target = clampCameraTarget(this.controls.target, this.targetLift)
     if (this.controls.target.x !== target.x
       || this.controls.target.y !== target.y
       || this.controls.target.z !== target.z) {

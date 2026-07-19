@@ -2,10 +2,20 @@ import * as THREE from 'three'
 import type { PowerId } from './core/events'
 import { Sfx } from './audio/sfx'
 import { CameraController } from './camera/controller'
-import { celebrationCameraPose, type CameraPose } from './camera/policy'
+import {
+  CELEBRATION_ACTS,
+  CELEBRATION_INTRO_LOCK_SECONDS,
+  CELEBRATION_TARGET_LIFT,
+  celebrationActPose,
+  type CameraPose,
+} from './camera/policy'
+import { CelebrationBurstLight } from './celebration/burstLight'
 import { CelebrationDirector } from './celebration/director'
 import { CelebrationFireworks } from './celebration/fireworks'
-import { shouldRequestAutomaticCelebration } from './celebration/state'
+import {
+  CELEBRATION_NIGHT_GLIDE_SECONDS,
+  shouldRequestAutomaticCelebration,
+} from './celebration/state'
 import {
   canArmPower,
   canSkipPrologue,
@@ -76,7 +86,10 @@ const cameraController = new CameraController({
 })
 cameraController.lock('prologue')
 const dayClock = new DayClock(reducedMotion)
-dayClock.setMode(startup.timeOfDay)
+dayClock.setMode(
+  startup.timeOfDay,
+  startup.timeOfDay === 'day' ? 'backward' : 'forward',
+)
 const canonicalDay = sampleAt(GOLDEN_T)
 const nightSky = new NightSky(scene, stageRoot, lowFx)
 let lastDayKind = dayClock.kind
@@ -225,11 +238,35 @@ settingsUI = createSettingsUI(ui, {
   onReplayIntro() { beginSettingsReplay() },
 })
 settingsUI.setVisible(false)
-const celebrationFireworks = new CelebrationFireworks(stageRoot, { lowFx, reducedMotion })
+const celebrationBurstLight = lowFx ? null : new CelebrationBurstLight(stageRoot)
+const celebrationFireworks = new CelebrationFireworks(stageRoot, {
+  lowFx,
+  reducedMotion,
+  onBurst: (color, finale) => celebrationBurstLight?.onBurst(color, finale),
+})
+const celebrationShow = {
+  begin(origin: { x: number; y: number; z: number }): void {
+    celebrationFireworks.begin(origin)
+    celebrationBurstLight?.begin(origin)
+  },
+  update(dt: number) {
+    celebrationBurstLight?.update(dt)
+    return celebrationFireworks.update(dt)
+  },
+  reset(): void {
+    celebrationFireworks.reset()
+    celebrationBurstLight?.reset()
+  },
+  dispose(): void {
+    celebrationFireworks.dispose()
+    celebrationBurstLight?.dispose()
+  },
+}
 let celebrationCameraRevision = 0
+let celebrationDragAtStart = false
 celebration = new CelebrationDirector({
   world,
-  fireworks: celebrationFireworks,
+  fireworks: celebrationShow,
   isGameplay: () => flow.phase === 'gameplay',
   toastsIdle: () => journalUI?.isToastIdle() ?? true,
   modalsClosed: () => !settingsOpen && !(journalUI?.isOpen() ?? false),
@@ -238,19 +275,34 @@ celebration = new CelebrationDirector({
   onStatusChange: status => journalUI?.setCelebrationStatus(status),
   onActiveChange: active => {
     if (active) {
+      dayClock.requestHold('night', CELEBRATION_NIGHT_GLIDE_SECONDS)
       celebrationCameraRevision = cameraController.userInteractionRevision
+      celebrationDragAtStart = cameraController.userInteracting
       targeting.cancel(false)
       cameraController.suppressAutoMotion('celebration')
+      cameraController.setTargetLift(CELEBRATION_TARGET_LIFT)
     } else {
+      dayClock.releaseHold()
+      cameraController.endCelebrationIntro()
+      cameraController.setTargetLift(0)
       cameraController.releaseAutoMotion('celebration')
     }
     for (const power of powerIds) tray.setEnabled(power, !active)
   },
-  onCameraSuggestion: centre => {
-    cameraController.suggestPose(
-      celebrationCameraPose(cameraController.pose(), centre),
-      celebrationCameraRevision,
-    )
+  onCameraAct: (act, centre) => {
+    const spec = CELEBRATION_ACTS[act - 1]!
+    const pose = celebrationActPose(act, cameraController.pose(), centre)
+    if (act !== 1) cameraController.endCelebrationIntro()
+    if (act === 1
+      && !celebrationDragAtStart
+      && cameraController.beginCelebrationIntro(
+        pose,
+        spec.seconds,
+        CELEBRATION_INTRO_LOCK_SECONDS,
+      )) {
+      return
+    }
+    cameraController.suggestPose(pose, celebrationCameraRevision, spec.seconds)
   },
   onSound: cue => sfx.celebration(cue),
 })

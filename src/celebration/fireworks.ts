@@ -93,7 +93,11 @@ export class CelebrationFireworks {
 
   constructor(
     parent: THREE.Object3D,
-    private readonly options: { lowFx: boolean; reducedMotion(): boolean },
+    private readonly options: {
+      lowFx: boolean
+      reducedMotion(): boolean
+      onBurst?(color: string, finale: boolean): void
+    },
   ) {
     this.group.name = 'celebration-fireworks'
     this.group.visible = false
@@ -224,6 +228,7 @@ export class CelebrationFireworks {
       slot.mesh.visible = false
       this.emitBurst(launch, slot.mesh.position.x, slot.mesh.position.y, slot.mesh.position.z)
       this.flash(slot.mesh.position.x, slot.mesh.position.y, slot.mesh.position.z, launch.color)
+      this.options.onBurst?.(launch.color, launch.finale)
       if (launch.echo && !this.options.reducedMotion()) {
         this.scheduleEcho(slot.mesh.position.x, slot.mesh.position.y, slot.mesh.position.z, launch.color)
       }

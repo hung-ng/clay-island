@@ -1,4 +1,4 @@
-import { CELEBRATION_CAMERA } from '../camera/policy'
+import { CELEBRATION_ACTS, type CelebrationAct } from '../camera/policy'
 import type { World } from '../world/world'
 import type {
   CelebrationAssignment,
@@ -27,7 +27,7 @@ export type CelebrationDirectorOptions = {
   reducedMotion(): boolean
   onStatusChange(status: CelebrationStatus): void
   onActiveChange(active: boolean): void
-  onCameraSuggestion(centre: CelebrationPoint): void
+  onCameraAct(act: CelebrationAct, centre: CelebrationPoint): void
   onSound(cue: CelebrationSoundCue): void
 }
 
@@ -36,7 +36,7 @@ export class CelebrationDirector {
   private participants: CelebrationParticipant[] = []
   private ownsActiveInputs = false
   private activeCentre: CelebrationPoint | null = null
-  private cameraSuggested = false
+  private nextAct = 0
   private disposed = false
 
   constructor(private readonly options: CelebrationDirectorOptions) {}
@@ -90,16 +90,12 @@ export class CelebrationDirector {
     for (const signal of signals) this.handleSignal(signal, living, site)
     if (!this.clock.active) return
 
-    const reachedCameraSuggestion = (
-      this.clock.phase === 'gathering'
-      && this.clock.phaseElapsed >= CELEBRATION_CAMERA.suggestAt
-    ) || (
-      this.clock.phase === 'fireworks'
-      && signals.includes('fireworks')
-    )
-    if (!this.cameraSuggested && this.activeCentre && reachedCameraSuggestion) {
-      this.cameraSuggested = true
-      this.options.onCameraSuggestion(this.activeCentre)
+    while (this.nextAct < CELEBRATION_ACTS.length
+      && this.activeCentre !== null
+      && this.clock.totalElapsed >= CELEBRATION_ACTS[this.nextAct]!.at) {
+      const act = CELEBRATION_ACTS[this.nextAct]!.act
+      this.nextAct++
+      this.options.onCameraAct(act, this.activeCentre)
     }
 
     const phase = this.clock.phase as VillagerCelebrationPhase
@@ -151,7 +147,7 @@ export class CelebrationDirector {
   private begin(living: CelebrationParticipant[], site: CelebrationSite): void {
     const { centre, slots } = site
     this.activeCentre = { ...centre }
-    this.cameraSuggested = false
+    this.nextAct = 0
     const origin = {
       x: centre.x,
       y: this.options.world.island.sampleHeight(centre.x, centre.z),
@@ -177,7 +173,7 @@ export class CelebrationDirector {
     this.participants = []
     this.options.fireworks.reset()
     this.activeCentre = null
-    this.cameraSuggested = false
+    this.nextAct = 0
     this.ownsActiveInputs = false
     this.options.onActiveChange(false)
   }

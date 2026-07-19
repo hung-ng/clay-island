@@ -319,3 +319,83 @@ describe('CameraController', () => {
     subject.dispose()
   })
 })
+
+describe('celebration intro lock and target lift', () => {
+  const actPose = {
+    position: { x: 0, y: 9, z: 22 },
+    target: { x: 0, y: 3.5, z: 0 },
+  }
+
+  function build(reducedMotion = () => false) {
+    const controls = fakeControls()
+    const subject = new CameraController({
+      camera: new THREE.PerspectiveCamera(),
+      dom: new EventTarget() as HTMLElement,
+      autoRotate: false,
+      reducedMotion,
+      controls,
+    })
+    return { controls, subject }
+  }
+
+  it('locks, glides while locked, and releases itself at the bound', () => {
+    const { controls, subject } = build()
+    expect(subject.beginCelebrationIntro(actPose, 1, 4)).toBe(true)
+    expect(controls.enabled).toBe(false)
+    subject.update(0.5)
+    expect(controls.enabled).toBe(false)
+    subject.update(1)
+    expect(controls.enabled).toBe(false)
+    subject.update(3)
+    expect(controls.enabled).toBe(true)
+  })
+
+  it('refuses during a gesture, under reduced motion, and under another lock', () => {
+    const dragging = build()
+    dragging.controls.emit('start')
+    expect(dragging.subject.userInteracting).toBe(true)
+    expect(dragging.subject.beginCelebrationIntro(actPose, 1, 4)).toBe(false)
+    expect(dragging.controls.enabled).toBe(true)
+
+    const reduced = build(() => true)
+    expect(reduced.subject.beginCelebrationIntro(actPose, 1, 4)).toBe(false)
+
+    const modal = build()
+    modal.subject.lock('journal')
+    expect(modal.subject.beginCelebrationIntro(actPose, 1, 4)).toBe(false)
+  })
+
+  it('ends early idempotently without unlocking another owner', () => {
+    const { controls, subject } = build()
+    subject.beginCelebrationIntro(actPose, 1, 4)
+    subject.lock('settings')
+    subject.endCelebrationIntro()
+    subject.endCelebrationIntro()
+    expect(controls.enabled).toBe(false)
+    subject.unlock('settings')
+    expect(controls.enabled).toBe(true)
+    subject.update(10)
+    expect(controls.enabled).toBe(true)
+  })
+
+  it('eases the lifted target ceiling up and clamps back down on release', () => {
+    const { controls, subject } = build()
+    subject.setTargetLift(3.5)
+    expect(subject.suggestPose(actPose, subject.userInteractionRevision, 0.5)).toBe(true)
+    subject.update(1)
+    expect(controls.target.y).toBeCloseTo(3.5)
+    subject.setTargetLift(0)
+    subject.update(1)
+    expect(controls.target.y).toBe(0)
+  })
+
+  it('snaps the lift and skips intro travel under reduced motion', () => {
+    const { controls, subject } = build(() => true)
+    subject.setTargetLift(3.5)
+    subject.setPose(actPose)
+    expect(controls.target.y).toBeCloseTo(3.5)
+    subject.setTargetLift(0)
+    subject.update(0.01)
+    expect(controls.target.y).toBe(0)
+  })
+})

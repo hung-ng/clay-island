@@ -5,9 +5,18 @@ export const CELEBRATION_SECONDS = {
   total: 14,
 } as const
 
+/** The temporary night override glides in this fast so the show opens under stars. */
+export const CELEBRATION_NIGHT_GLIDE_SECONDS = 2
+
 export type CelebrationPhase = 'idle' | 'queued' | 'gathering' | 'fireworks' | 'finale'
 export type ActiveCelebrationPhase = Exclude<CelebrationPhase, 'idle' | 'queued'>
 export type CelebrationSignal = 'started' | 'fireworks' | 'finale' | 'completed'
+
+const PHASE_START: Record<ActiveCelebrationPhase, number> = {
+  gathering: 0,
+  fireworks: CELEBRATION_SECONDS.gathering,
+  finale: CELEBRATION_SECONDS.gathering + CELEBRATION_SECONDS.fireworks,
+}
 
 export type CelebrationReadiness = {
   gameplay: boolean
@@ -56,6 +65,10 @@ export class CelebrationClock {
   get busy(): boolean { return this.phase !== 'idle' }
   get active(): boolean { return this.phase !== 'idle' && this.phase !== 'queued' }
   get phaseElapsed(): number { return this.elapsed }
+  get totalElapsed(): number {
+    if (!this.active) return 0
+    return PHASE_START[this.phase as ActiveCelebrationPhase] + this.elapsed
+  }
 
   request(): boolean {
     if (this.busy) return false
