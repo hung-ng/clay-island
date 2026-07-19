@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { powerGlyphMarkup, TRAY_AUXILIARY_CONTROLS } from './tray'
+import { POWER_IDS, powerGlyphMarkup, TRAY_AUXILIARY_CONTROLS } from './tray'
 
-it('keeps only Journal beside the four powers', () => {
+it('keeps only Journal beside the five powers', () => {
   expect(TRAY_AUXILIARY_CONTROLS).toEqual(['journal'])
+})
+
+it('places Wind fourth and Nudge fifth so their shortcuts follow their slots', () => {
+  expect(POWER_IDS).toEqual(['meteor', 'lightning', 'rain', 'wind', 'nudge'])
 })
 
 describe('power glyph markup', () => {
@@ -26,6 +30,12 @@ describe('power glyph markup', () => {
   it('keeps other power glyphs as simple decorative spans', () => {
     expect(powerGlyphMarkup('meteor')).toBe(
       '<span class="power-glyph" data-glyph="meteor" aria-hidden="true"></span>',
+    )
+  })
+
+  it('gives Wind the same simple decorative span as the destructive powers', () => {
+    expect(powerGlyphMarkup('wind')).toBe(
+      '<span class="power-glyph" data-glyph="wind" aria-hidden="true"></span>',
     )
   })
 })

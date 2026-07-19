@@ -6,7 +6,7 @@ import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
 import { PALETTE, TIMING } from '../ui/tokens'
 import { WALK_RADIUS, type Island } from '../world/island'
-import type { Campfire, Hut, Pond, Tree } from '../world/objects'
+import type { Campfire, GroundFruit, Hut, Pond, Tree } from '../world/objects'
 import type { World } from '../world/world'
 import {
   decideNext,
@@ -73,6 +73,8 @@ const SUGGESTED_GATHER_TIME = 2.5
 const SLEEP_EMOTE_LIFT = 1.45
 /** Separates two sleepers' roof markers along the hut's local left/right axis. */
 const SLEEP_EMOTE_SIDE_OFFSET = 0.9
+/** Duration of the grounded two-beat Wind stumble. */
+const TUMBLE_TIME = 1.4
 /** Activities that develop per-villager habits. Emergencies stay uniform. */
 const PERSONALITY_STATES: VillagerState[] = [
   'wander', 'sitAtFire', 'chopTree', 'buildHut', 'fish', 'harvest',
@@ -174,6 +176,7 @@ export class Villager {
   private arrived = false
   private chopFrames = 0
   private targetTree: Tree | null = null
+  private targetFruit: GroundFruit | null = null
   private targetHut: Hut | null = null
   private sleepingHut: Hut | null = null
   private sleepSlot: 0 | 1 | null = null
@@ -186,7 +189,7 @@ export class Villager {
   private rebuildingRuin = false
   private spawnFrames: number
   private spawnLastQt = Number.NEGATIVE_INFINITY
-  private performance: 'none' | 'meteor' | 'startle' | 'cower' | 'flinch' = 'none'
+  private performance: 'none' | 'meteor' | 'startle' | 'cower' | 'flinch' | 'tumble' = 'none'
   private performanceTime = 0
   private performanceFrom: Point = { x: 0, z: 0 }
   private huddleTime = 0
@@ -268,7 +271,9 @@ export class Villager {
       clayMaterial(PALETTE.smockA),
     )
     this.heldFruit.name = 'held-fruit'
-    this.heldFruit.position.set(0, -0.18, 0.06)
+    // Rest beyond the capsule tip and in front of the body plane so the inward
+    // carry-to-mouth rotation cannot pull the fruit through the torso or head.
+    this.heldFruit.position.set(0, -0.29, 0.28)
     this.heldFruit.visible = false
     this.heldFruit.castShadow = !this.lowFx
     this.arms[0].add(this.heldFruit)
@@ -451,7 +456,21 @@ export class Villager {
       const priorityOverride = context.fireNear || context.freshGrave || context.hasRuin
       const finishingCast = this.state === 'fish' && this.arrived && this.actionTimer > 0
       const finishingFruit = this.state === 'harvest' && this.eating > 0
-      if ((this.suggestionForState(this.state) || finishingCast || finishingFruit)
+      const groundFruit = this.targetFruit
+      const fetchingGroundFruit = this.state === 'harvest'
+        && groundFruit !== null
+        && groundFruit !== undefined
+        && world.groundFruits.includes(groundFruit)
+      const finishingGroundPickup = this.state === 'harvest'
+        && groundFruit !== null
+        && groundFruit !== undefined
+        && this.arrived
+        && this.actionTimer > 0
+      if ((this.suggestionForState(this.state)
+        || finishingCast
+        || finishingFruit
+        || fetchingGroundFruit
+        || finishingGroundPickup)
         && !priorityOverride) {
         this.timer = 0.25
       }
@@ -613,6 +632,23 @@ export class Villager {
     this.arms[0].rotation.z = -Math.PI / 2
     this.arms[1].rotation.z = Math.PI / 2
     this.ghost.visible = false
+  }
+
+  /** A gust knocks the villager into a comic stumble; they recover on their own. */
+  tumble(from: Point): void {
+    if (!this.alive || this.zapTime >= 0) return
+    if (this.state === 'flee' || this.state === 'mourn') return
+    this.wakeFromHut()
+    this.releaseSleepAssignment()
+    if (this.rainTime > 0) {
+      this.rainTime = 0
+      this.rainLeaf.visible = false
+      this.resetPose()
+    }
+    this.performance = 'tumble'
+    this.performanceTime = TUMBLE_TIME
+    this.performanceFrom = from
+    this.emote('alarm')
   }
 
   grumpAtRain(world: World): void {
@@ -1196,6 +1232,43 @@ export class Villager {
         // Once the fruit is in hand the tree no longer matters — eat it even if
         // the tree burns down mid-chew.
         if (this.eating > 0) return
+        if (!this.targetFruit && world.groundFruits.length > 0) {
+          const fruit = world.nearestGroundFruit(this.x, this.z)
+          if (fruit) {
+            this.targetTree = null
+            this.targetFruit = fruit
+            this.actionTimer = 0
+            this.resetPose()
+            this.setTarget(fruit)
+            return
+          }
+        }
+        if (this.targetFruit) {
+          const finishingPickup = this.arrived && this.actionTimer > 0
+          if (!world.groundFruits.includes(this.targetFruit) && !finishingPickup) {
+            this.targetFruit = null
+            this.enter('harvest', world)
+            return
+          }
+          if (!this.arrived && distance(this, this.targetFruit) <= 0.55) {
+            const fruit = this.targetFruit
+            if (world.claimGroundFruit(fruit)) {
+              this.beginFruitPickup()
+            } else {
+              this.targetFruit = null
+              this.enter('harvest', world)
+              return
+            }
+          }
+          if (this.arrived) {
+            this.actionTimer -= dt
+            if (this.actionTimer <= 0) {
+              this.targetFruit = null
+              this.finishFruitPickup()
+            }
+          }
+          return
+        }
         if (!this.targetTree || !world.isTreeActionable(this.targetTree) || !this.targetTree.hasFruit) {
           this.cancelSuggestionFor('harvest')
           this.enter('wander', world)
@@ -1203,15 +1276,12 @@ export class Villager {
         }
         if (distance(this, this.targetTree) <= 1.2) {
           if (!this.arrived) {
-            this.arrived = true
-            this.actionTimer = 1.2
-            this.arms[0].rotation.z = -1.5
+            this.beginFruitPickup()
           }
           this.actionTimer -= dt
           if (this.actionTimer <= 0) {
             if (this.targetTree.pickFruit(this.x, this.z)) {
-              this.heldFruit.visible = true
-              this.eating = 1.6
+              this.finishFruitPickup()
             } else {
               this.cancelSuggestionFor('harvest')
               this.enter('wander', world)
@@ -1361,6 +1431,18 @@ export class Villager {
     return true
   }
 
+  /** Shared reach-and-lift choreography for tree and ground fruit. */
+  private beginFruitPickup(): void {
+    this.arrived = true
+    this.actionTimer = 1.2
+    this.arms[0].rotation.z = -1.5
+  }
+
+  private finishFruitPickup(): void {
+    this.heldFruit.visible = true
+    this.eating = 1.6
+  }
+
   private suggestedGatherTarget(suggestion: Suggestion, world: World): Point {
     const fire = world.campfire
     if (!fire || distance(fire, suggestion) > 1.5) {
@@ -1455,6 +1537,7 @@ export class Villager {
     this.actionTimer = 0
     this.chopFrames = 0
     this.targetTree = null
+    this.targetFruit = null
     this.targetHut = null
     this.releaseSleepAssignment()
     this.targetGrave = null
@@ -1615,6 +1698,12 @@ export class Villager {
         return
       }
       case 'harvest': {
+        const fruit = world.nearestGroundFruit(this.x, this.z)
+        if (fruit) {
+          this.targetFruit = fruit
+          this.setTarget(fruit)
+          return
+        }
         this.targetTree = this.selectHarvestTree(world, preferredTree)
         if (!this.targetTree) {
           this.cancelSuggestionFor('harvest')
@@ -1653,7 +1742,7 @@ export class Villager {
       canChopAutomatically: world.canChopAutomatically(),
       campfireLit: world.campfire?.lit ?? false,
       needsFire: world.needsFire(),
-      hasFruitTree: world.fruitingTree() !== null,
+      hasFruitTree: world.fruitingTree() !== null || world.groundFruits.length > 0,
       fireOut: world.fireOut(),
       hasChatPartner: this.findChatPartner(world) !== null,
       dayKind: world.dayKind,
@@ -1866,9 +1955,14 @@ export class Villager {
     this.performanceTime = Math.max(0, this.performanceTime - dt)
     if (this.performanceTime <= 0) {
       const wasStartle = this.performance === 'startle'
+      const wasTumble = this.performance === 'tumble'
       this.performance = 'none'
       this.resetPose()
       if (wasStartle) this.panic(this.performanceFrom)
+      if (wasTumble) {
+        this.emote('question')
+        this.enter('wander', this.world)
+      }
       return false
     }
     if (qt === this.lastQt) return true
@@ -1889,6 +1983,12 @@ export class Villager {
       this.model.scale.set(MODEL_SCALE * 1.04, MODEL_SCALE * 0.88, MODEL_SCALE)
       this.arms[0].rotation.z = -1.45
       this.arms[1].rotation.z = 1.45
+    } else if (this.performance === 'tumble') {
+      this.group.rotation.y = Math.atan2(
+        this.x - this.performanceFrom.x,
+        this.z - this.performanceFrom.z,
+      )
+      this.rig.setTumblePose((TUMBLE_TIME - this.performanceTime) / TUMBLE_TIME)
     } else {
       this.group.rotation.y = Math.atan2(
         this.performanceFrom.x - this.x,

@@ -15,7 +15,7 @@ type PowerControl = {
   enabled: boolean
 }
 
-const POWER_IDS: readonly PowerId[] = ['meteor', 'lightning', 'rain', 'nudge']
+export const POWER_IDS: readonly PowerId[] = ['meteor', 'lightning', 'rain', 'wind', 'nudge']
 export const TRAY_AUXILIARY_CONTROLS = ['journal'] as const
 const COOLDOWN_STEPS = 12
 const POWER_LABELS: Record<PowerId, string> = {
@@ -23,6 +23,7 @@ const POWER_LABELS: Record<PowerId, string> = {
   lightning: 'Lightning',
   rain: 'Rain',
   nudge: 'Nudge',
+  wind: 'Wind',
 }
 
 export function powerGlyphMarkup(id: PowerId): string {

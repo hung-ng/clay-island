@@ -14,6 +14,7 @@ export type InteractionKind =
   | 'grumpy'
   | 'suggest'
   | 'startleVillager'
+  | 'tumble'
 
 export type Interaction = { kind: InteractionKind }
 
@@ -31,6 +32,7 @@ export const INTERACTION_KINDS: readonly InteractionKind[] = [
   'grumpy',
   'suggest',
   'startleVillager',
+  'tumble',
 ] as const
 
 const MATRIX: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
@@ -70,6 +72,17 @@ const MATRIX: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
     campfire: ['suggest'],
     crater: [],
     ground: ['suggest'],
+  },
+  wind: {
+    // Gust-wide effects are staged by the wind module; these cells only own
+    // consequences unique to the object directly under the reticle.
+    tree: [],
+    hut: ['scatter'],
+    villager: ['tumble'],
+    pond: [],
+    campfire: ['flare'],
+    crater: [],
+    ground: [],
   },
 }
 

@@ -21,6 +21,7 @@ export type PowerContext = {
   bus: EventBus
   rng: RNG
   lowFx: boolean
+  reducedMotion(): boolean
 }
 
 export type CastCtx = PowerContext & {

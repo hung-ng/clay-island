@@ -258,6 +258,48 @@ describe('Tree lifecycle', () => {
     run(subject, 1, 1 / 60)
     expect(crown.rotation.z).toBe(0)
   })
+
+  it('drops one fruit per call to a landing point near the trunk', () => {
+    const subject = tree()
+    subject.growFruit()
+    expect(subject.fruitCount).toBe(4)
+
+    const landing = subject.dropFruit()
+    expect(landing).not.toBeNull()
+    expect(Math.hypot(landing!.x, landing!.z)).toBeLessThanOrEqual(2.6)
+    expect(subject.fruitCount).toBe(3)
+
+    subject.dropFruit()
+    subject.dropFruit()
+    subject.dropFruit()
+    expect(subject.fruitCount).toBe(0)
+    expect(subject.hasFruit).toBe(false)
+    expect(subject.dropFruit()).toBeNull()
+  })
+
+  it('sways its crown along the gust and settles back upright', () => {
+    const subject = tree()
+    const crown = subject.group.getObjectByName('tree-crown')!
+    subject.sway(0, 1, 2.5)
+    run(subject, 1.2)
+    expect(Math.abs(crown.rotation.x)).toBeGreaterThan(0.01)
+    run(subject, 2, 1.2)
+    expect(crown.rotation.x).toBe(0)
+    expect(crown.rotation.z).toBe(0)
+  })
+
+  it('ignores sway once felled', () => {
+    const subject = tree()
+    subject.chop()
+    const qt = run(subject, 1)
+    expect(subject.state).toBe('felled')
+    subject.sway(1, 0, 2.5)
+    const crown = subject.group.getObjectByName('tree-crown')!
+    const before = crown.rotation.z
+    run(subject, 0.5, qt)
+    expect(crown.rotation.x).toBe(0)
+    expect(crown.rotation.z).toBe(before)
+  })
 })
 
 describe('Tree fruit', () => {
@@ -399,6 +441,24 @@ describe('Hut charring', () => {
     hut.extinguish()
 
     expect(colorOf(hut, 'hut-base')).toBe(clean)
+  })
+})
+
+describe('burning-object flare', () => {
+  it.each([
+    ['tree', () => new Tree('tree-flare', 0, 0, 0, new RNG(1))],
+    ['hut', () => new Hut('hut-flare', 0, 0, 'built', 0, new RNG(1))],
+  ] as const)('briefly surges the visible %s flames', (_kind, create) => {
+    const subject = create()
+    subject.ignite()
+    subject.update(1 / 12, 1)
+    const flame = subject.group.getObjectByName('fire-flame')!
+    const baseline = flame.scale.y
+
+    subject.flare(1, 2)
+    subject.update(1 / 12, 1 + 1 / 12)
+
+    expect(flame.scale.y).toBeGreaterThan(baseline * 1.5)
   })
 })
 

@@ -24,6 +24,7 @@ type RigStub = {
   cleanColors: THREE.Color[]
   resetPose: ReturnType<typeof vi.fn>
   setNapPose: ReturnType<typeof vi.fn>
+  setTumblePose: ReturnType<typeof vi.fn>
   restoreColors: ReturnType<typeof vi.fn>
 }
 
@@ -44,6 +45,10 @@ function createRigStub(): RigStub {
     axe.rotation.z = -0.7
     axe.visible = false
   })
+  const setTumblePose = vi.fn((progress: number) => {
+    resetPose()
+    group.position.y = Math.abs(Math.sin(progress * Math.PI * 2)) * 0.16
+  })
   group.add(head, ...arms, axe)
   resetPose()
   resetPose.mockClear()
@@ -56,6 +61,7 @@ function createRigStub(): RigStub {
     cleanColors: [],
     resetPose,
     setNapPose: vi.fn(),
+    setTumblePose,
     restoreColors: vi.fn(),
   }
 }
@@ -74,10 +80,13 @@ type ActivityHarness = {
     | 'watchSea'
     | 'dance'
     | 'chat'
+    | 'flee'
+    | 'mourn'
   alive: boolean
   suggestion: Suggestion | null
   targetPond: Pond | null
   targetTree: Tree | null
+  targetFruit: { x: number; z: number } | null
   targetHut: Hut | null
   sleepingHut: Hut | null
   sleepSlot: 0 | 1 | null
@@ -125,6 +134,14 @@ type ActivityHarness = {
   updateHeldFruit(dt: number, ticked: boolean): boolean
   performActivity(dt: number, ticked: boolean, world: World): void
   positionSleepingPresentation(): void
+  performance: 'none' | 'meteor' | 'startle' | 'cower' | 'flinch' | 'tumble'
+  performanceTime: number
+  tumble(from: { x: number; z: number }): void
+  updatePerformance(
+    dt: number,
+    qt: number,
+    island: { sampleHeight(x: number, z: number): number },
+  ): boolean
 }
 
 function activityHarness(
@@ -138,6 +155,7 @@ function activityHarness(
   villager.suggestion = null
   villager.targetPond = targetPond
   villager.targetTree = null
+  villager.targetFruit = null
   villager.targetHut = null
   villager.sleepingHut = null
   villager.sleepSlot = null
@@ -196,7 +214,7 @@ function activityHarness(
   const heldFruit = bone()
   heldFruit.name = 'held-fruit'
   heldFruit.visible = false
-  heldFruit.position.set(0, -0.18, 0.06)
+  heldFruit.position.set(0, -0.29, 0.28)
   villager.heldFruit = heldFruit
   villager.arms[0].add(heldFruit)
   villager.targetDistance = () => 0
@@ -204,6 +222,8 @@ function activityHarness(
 }
 
 const dryTreeWork = {
+  groundFruits: [],
+  nearestGroundFruit: () => null,
   isTreeActionable: (tree: Tree): boolean => tree.state === 'normal',
   actionableTreeAt(this: { trees: Tree[] }, x: number, z: number, radius = 1.2): Tree | null {
     return this.trees
@@ -783,6 +803,203 @@ describe('meteor panic', () => {
   })
 })
 
+describe('tumble', () => {
+  function tumbler(state: ActivityHarness['state'] = 'sitAtFire'): ActivityHarness {
+    const villager = activityHarness(state)
+    villager.performance = 'none'
+    villager.performanceTime = 0
+    ;(villager.emoteSprite as { update?: unknown }).update = vi.fn()
+    return villager
+  }
+
+  it('stumbles with a grounded rig, freezes normal activity, then recovers to wander', () => {
+    const villager = tumbler()
+    villager.tumble({ x: -2, z: 0 })
+    expect(villager.performance).toBe('tumble')
+    expect(villager.emote).toHaveBeenCalledWith('alarm')
+
+    expect(villager.updatePerformance(0.5, 1 / 12, villager.island)).toBe(true)
+    expect(villager.group.rotation.z).toBe(0)
+    expect(villager.rig.setTumblePose).toHaveBeenCalled()
+    expect(villager.model.position.y).toBeGreaterThanOrEqual(0)
+    expect(villager.updatePerformance(0.5, 2 / 12, villager.island)).toBe(true)
+    expect(villager.enter).not.toHaveBeenCalled()
+
+    villager.updatePerformance(0.5, 3 / 12, villager.island)
+    expect(villager.performance).toBe('none')
+    expect(villager.emote).toHaveBeenCalledWith('question')
+    expect(villager.enter).toHaveBeenCalledWith('wander', villager.world)
+  })
+
+  it('never interrupts fleeing, mourning, or a zapped villager', () => {
+    const fleeing = tumbler('flee')
+    fleeing.tumble({ x: 0, z: 0 })
+    expect(fleeing.performance).toBe('none')
+
+    const mourning = tumbler('mourn')
+    mourning.tumble({ x: 0, z: 0 })
+    expect(mourning.performance).toBe('none')
+
+    const zapped = tumbler()
+    ;(zapped as unknown as { zapTime: number }).zapTime = 0.5
+    zapped.tumble({ x: 0, z: 0 })
+    expect(zapped.performance).toBe('none')
+  })
+})
+
+describe('ground fruit gathering', () => {
+  it('targets dropped fruit before a nearer suggested tree and walks to its exact location', () => {
+    const villager = activityHarness('wander')
+    const tree = {
+      id: 'tree-fruiting',
+      x: 1,
+      z: 0,
+      state: 'normal',
+      hasFruit: true,
+    } as Tree
+    const fruit = { id: 'ground-fruit-far', x: 6, z: -2 }
+    villager.suggestion = {
+      kind: 'harvest',
+      x: tree.x,
+      z: tree.z,
+      targetId: tree.id,
+    }
+    const world = {
+      ...dryTreeWork,
+      trees: [tree],
+      groundFruits: [fruit],
+      nearestGroundFruit: () => fruit,
+      submerged: () => false,
+    } as unknown as World
+    const enter = Villager.prototype['enter'] as unknown as (
+      this: ActivityHarness,
+      state: 'harvest',
+      world: World,
+      preferredPond: null,
+      preferredTree: Tree,
+    ) => void
+
+    enter.call(villager, 'harvest', world, null, tree)
+
+    expect(villager.targetFruit).toBe(fruit)
+    expect(villager.targetTree).toBeNull()
+    expect({ x: villager.tx, z: villager.tz }).toEqual({ x: fruit.x, z: fruit.z })
+  })
+
+  it('claims a dropped fruit, then uses the same pickup and eating sequence as tree fruit', () => {
+    const villager = activityHarness('harvest')
+    const fruit = { x: 0.2, z: 0, id: 'ground-fruit-1' }
+    const claimGroundFruit = vi.fn(() => true)
+    villager.world = {
+      groundFruits: [fruit],
+      claimGroundFruit,
+      submerged: () => false,
+    } as unknown as World
+    villager.targetFruit = fruit
+    const events: string[] = []
+    villager.bus = {
+      emit: (event: { type: string }) => events.push(event.type),
+    } as EventBus
+
+    villager.performActivity(0.1, true, villager.world)
+
+    expect(claimGroundFruit).toHaveBeenCalledWith(fruit)
+    expect(villager.targetFruit).toBe(fruit)
+    expect(villager.arrived).toBe(true)
+    expect(villager.actionTimer).toBeCloseTo(1.1)
+    expect(villager.arms[0].rotation.z).toBeCloseTo(-1.5)
+    expect(villager.head.rotation.x).toBe(0)
+    expect(villager.heldFruit.visible).toBe(false)
+    expect(villager.eating).toBe(0)
+
+    villager.performActivity(1.2, true, villager.world)
+    expect(villager.targetFruit).toBeNull()
+    expect(villager.heldFruit.visible).toBe(true)
+    expect(villager.eating).toBeCloseTo(1.6)
+
+    villager.updateHeldFruit(0, true)
+    expect(villager.arms[0].rotation.z).toBeCloseTo(2.1)
+
+    villager.updateHeldFruit(1.7, true)
+    expect(events).toContain('villager:ate')
+  })
+
+  it('switches from a fruiting tree when dropped fruit appears during the walk', () => {
+    const villager = activityHarness('harvest')
+    const tree = {
+      id: 'tree-fruiting',
+      x: 4,
+      z: 0,
+      state: 'normal',
+      hasFruit: true,
+      pickFruit: vi.fn(() => true),
+    } as unknown as Tree
+    const fruit = { id: 'ground-fruit-new', x: 2, z: 1 }
+    villager.targetTree = tree
+    const world = {
+      ...dryTreeWork,
+      trees: [tree],
+      groundFruits: [fruit],
+      nearestGroundFruit: () => fruit,
+    } as unknown as World
+
+    villager.performActivity(0.1, true, world)
+
+    expect(villager.targetFruit).toBe(fruit)
+    expect(villager.targetTree).toBeNull()
+    expect({ x: villager.tx, z: villager.tz }).toEqual({ x: fruit.x, z: fruit.z })
+    expect(tree.pickFruit).not.toHaveBeenCalled()
+  })
+
+  it('retargets harvesting when someone else claims the fruit first', () => {
+    const villager = activityHarness('harvest')
+    const fruit = { x: 0.2, z: 0, id: 'ground-fruit-1' }
+    villager.world = {
+      groundFruits: [],
+      claimGroundFruit: vi.fn(() => false),
+      submerged: () => false,
+    } as unknown as World
+    villager.targetFruit = fruit
+
+    villager.performActivity(0.1, true, villager.world)
+    expect(villager.enter).toHaveBeenCalledWith('harvest', villager.world)
+    expect(villager.heldFruit.visible).toBe(false)
+    expect(villager.arrived).toBe(false)
+  })
+
+  it('allows only one nudged villager to pick up a shared dropped fruit', () => {
+    const first = activityHarness('harvest')
+    const second = activityHarness('harvest')
+    const fruit = { x: 0.2, z: 0, id: 'ground-fruit-shared' }
+    const groundFruits = [fruit]
+    const claimGroundFruit = vi.fn((candidate: typeof fruit) => {
+      const index = groundFruits.indexOf(candidate)
+      if (index < 0) return false
+      groundFruits.splice(index, 1)
+      return true
+    })
+    const world = {
+      groundFruits,
+      claimGroundFruit,
+      nearestGroundFruit: () => groundFruits[0] ?? null,
+      submerged: () => false,
+    } as unknown as World
+    first.world = world
+    second.world = world
+    first.targetFruit = fruit
+    second.targetFruit = fruit
+
+    first.performActivity(0.1, true, world)
+    second.performActivity(0.1, true, world)
+
+    expect(claimGroundFruit).toHaveBeenCalledTimes(1)
+    expect(first.actionTimer).toBeGreaterThan(0)
+    expect(first.heldFruit.visible).toBe(false)
+    expect(second.heldFruit.visible).toBe(false)
+    expect(second.enter).toHaveBeenCalledWith('harvest', world)
+  })
+})
+
 describe('villagers keep out of the water', () => {
   it('is pushed away from a pond it would otherwise walk into', () => {
     const villager = Object.create(Villager.prototype) as unknown as {
@@ -1015,7 +1232,7 @@ describe('held prop alignment', () => {
     expect(lineTop.distanceTo(poleTip)).toBeLessThan(0.001)
   })
 
-  it('keeps held fruit on the carrying arm through the bite pose', () => {
+  it('keeps held fruit on the carrying arm and in front of the body through the bite pose', () => {
     const tree = {
       x: 0,
       z: 0,
@@ -1033,10 +1250,13 @@ describe('held prop alignment', () => {
 
     expect(villager.heldFruit.parent).toBe(villager.arms[0])
     expect(villager.heldFruit.visible).toBe(true)
-    expect(villager.heldFruit.position.y).toBeLessThan(0)
-    expect(villager.heldFruit.getWorldPosition(new THREE.Vector3()).distanceTo(
-      villager.head.getWorldPosition(new THREE.Vector3()),
-    )).toBeLessThan(0.3)
+    expect(villager.heldFruit.position.y).toBeCloseTo(-0.29)
+    expect(villager.heldFruit.position.z).toBeCloseTo(0.28)
+    const fruitPosition = villager.heldFruit.getWorldPosition(new THREE.Vector3())
+    const headPosition = villager.head.getWorldPosition(new THREE.Vector3())
+    expect(fruitPosition.z - headPosition.z).toBeGreaterThan(0.2)
+    // MODEL_SCALE shrinks the head/fruit radii to a combined ~0.27.
+    expect(fruitPosition.distanceTo(headPosition)).toBeGreaterThan(0.28)
   })
 })
 
@@ -1700,10 +1920,17 @@ describe('harvesting', () => {
         hasPond: false,
         hasFishPond: false,
         hasTree: true,
+        canChopAutomatically: false,
         campfireLit: false,
         needsFire: false,
         hasFruitTree: true,
         fireOut: false,
+        hasChatPartner: false,
+        dayKind: 'day',
+        nightRole: 'sleeper',
+        hasBuiltHut: true,
+        stateCounts: {},
+        personality: {},
         suggestion: null,
         rng: new RNG(1),
       })),
@@ -1720,6 +1947,169 @@ describe('harvesting', () => {
 
     expect(villager.eating).toBeCloseTo(1.5)
     expect(villager.heldFruit.visible).toBe(true)
+    expect(enter).not.toHaveBeenCalled()
+  })
+
+  it('does not let the generic state timer abandon dropped fruit during the walk', () => {
+    const enter = vi.fn()
+    const fruit = { id: 'ground-fruit-far', x: 6, z: 0 }
+    const villager = Object.create(Villager.prototype) as unknown as {
+      alive: boolean
+      suggestion: null
+      huddleTime: number
+      zapTime: number
+      rainTime: number
+      lastQt: number
+      state: 'harvest'
+      timer: number
+      thirst: number
+      eating: number
+      arrived: boolean
+      targetFruit: typeof fruit
+      normalizeSuggestion: ReturnType<typeof vi.fn>
+      updatePerformance: ReturnType<typeof vi.fn>
+      updateFleeTarget: ReturnType<typeof vi.fn>
+      steer: ReturnType<typeof vi.fn>
+      performActivity: ReturnType<typeof vi.fn>
+      context: ReturnType<typeof vi.fn>
+      enter: ReturnType<typeof vi.fn>
+      update(dt: number, qt: number, world: World, island: never): void
+    }
+    Object.assign(villager, {
+      alive: true,
+      suggestion: null,
+      huddleTime: 0,
+      zapTime: -1,
+      rainTime: 0,
+      lastQt: 0,
+      state: 'harvest',
+      timer: 0.05,
+      thirst: 0,
+      eating: 0,
+      arrived: false,
+      targetFruit: fruit,
+      normalizeSuggestion: vi.fn(),
+      updatePerformance: vi.fn(() => false),
+      updateFleeTarget: vi.fn(),
+      steer: vi.fn(),
+      performActivity: vi.fn(),
+      context: vi.fn(() => ({
+        state: 'harvest',
+        fireNear: false,
+        freshGrave: false,
+        hasRuin: false,
+        hasSite: false,
+        hasPond: false,
+        hasFishPond: false,
+        hasTree: true,
+        canChopAutomatically: false,
+        campfireLit: false,
+        needsFire: false,
+        hasFruitTree: true,
+        fireOut: false,
+        hasChatPartner: false,
+        dayKind: 'day',
+        nightRole: 'sleeper',
+        hasBuiltHut: true,
+        stateCounts: {},
+        personality: {},
+        suggestion: null,
+        rng: new RNG(1),
+      })),
+      enter,
+    })
+    const world = {
+      nearestBurning: () => null,
+      ponds: [],
+      graves: [],
+      huts: [],
+      groundFruits: [fruit],
+    } as unknown as World
+
+    villager.update(0.1, 0, world, {} as never)
+
+    expect(villager.steer).toHaveBeenCalled()
+    expect(enter).not.toHaveBeenCalled()
+  })
+
+  it('does not let the generic state timer interrupt a claimed ground-fruit pickup', () => {
+    const enter = vi.fn()
+    const fruit = { id: 'ground-fruit-claimed', x: 0.2, z: 0 }
+    const villager = Object.create(Villager.prototype) as unknown as {
+      alive: boolean
+      suggestion: null
+      huddleTime: number
+      zapTime: number
+      rainTime: number
+      lastQt: number
+      state: 'harvest'
+      timer: number
+      actionTimer: number
+      thirst: number
+      eating: number
+      arrived: boolean
+      targetFruit: typeof fruit
+      normalizeSuggestion: ReturnType<typeof vi.fn>
+      updatePerformance: ReturnType<typeof vi.fn>
+      updateFleeTarget: ReturnType<typeof vi.fn>
+      performActivity: ReturnType<typeof vi.fn>
+      context: ReturnType<typeof vi.fn>
+      enter: ReturnType<typeof vi.fn>
+      update(dt: number, qt: number, world: World, island: never): void
+    }
+    Object.assign(villager, {
+      alive: true,
+      suggestion: null,
+      huddleTime: 0,
+      zapTime: -1,
+      rainTime: 0,
+      lastQt: 0,
+      state: 'harvest',
+      timer: 0.05,
+      actionTimer: 0.8,
+      thirst: 0,
+      eating: 0,
+      arrived: true,
+      targetFruit: fruit,
+      normalizeSuggestion: vi.fn(),
+      updatePerformance: vi.fn(() => false),
+      updateFleeTarget: vi.fn(),
+      performActivity: vi.fn(),
+      context: vi.fn(() => ({
+        state: 'harvest',
+        fireNear: false,
+        freshGrave: false,
+        hasRuin: false,
+        hasSite: false,
+        hasPond: false,
+        hasFishPond: false,
+        hasTree: true,
+        canChopAutomatically: false,
+        campfireLit: false,
+        needsFire: false,
+        hasFruitTree: true,
+        fireOut: false,
+        hasChatPartner: false,
+        dayKind: 'day',
+        nightRole: 'sleeper',
+        hasBuiltHut: true,
+        stateCounts: {},
+        personality: {},
+        suggestion: null,
+        rng: new RNG(1),
+      })),
+      enter,
+    })
+    const world = {
+      nearestBurning: () => null,
+      ponds: [],
+      graves: [],
+      huts: [],
+      groundFruits: [],
+    } as unknown as World
+
+    villager.update(0.1, 0, world, {} as never)
+
     expect(enter).not.toHaveBeenCalled()
   })
 

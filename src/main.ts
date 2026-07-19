@@ -39,6 +39,7 @@ import { Meteor } from './powers/meteor'
 import { Nudge } from './powers/nudge'
 import { PowerManager } from './powers/power'
 import { Rain } from './powers/rain'
+import { Wind } from './powers/wind'
 import {
   compareFramebuffers,
   projectEmberMask,
@@ -119,7 +120,7 @@ let auditMask: EmberMask | null = null
 
 const rng = new RNG(7)
 const fireRng = new RNG(13)
-const powerIds: readonly PowerId[] = ['meteor', 'lightning', 'rain', 'nudge']
+const powerIds: readonly PowerId[] = ['meteor', 'lightning', 'rain', 'nudge', 'wind']
 const particles = new ParticleBurst(stageRoot)
 world.setChipFx((x, z) => particles.burst({
   x,
@@ -133,7 +134,7 @@ world.setChipFx((x, z) => particles.burst({
   size: 0.6,
 }))
 const shake = new Shake(reducedMotion)
-const powers = new PowerManager([new Meteor(), new Lightning(), new Rain(), new Nudge()], {
+const powers = new PowerManager([new Meteor(), new Lightning(), new Rain(), new Nudge(), new Wind()], {
   world,
   island,
   scene,
@@ -145,6 +146,7 @@ const powers = new PowerManager([new Meteor(), new Lightning(), new Rain(), new 
   bus: world.bus,
   rng,
   lowFx,
+  reducedMotion,
 })
 const targeting = new DragTargeting(renderer.domElement, camera, island, world, (power, x, z) => {
   powers.cast(power, x, z)
@@ -169,6 +171,7 @@ const tray = createTray(ui, {
     lightning: powers.cooldown01('lightning'),
     rain: powers.cooldown01('rain'),
     nudge: powers.cooldown01('nudge'),
+    wind: powers.cooldown01('wind'),
   }),
 })
 const trayElement = document.getElementById('tray')!
@@ -544,6 +547,7 @@ const loop = new GameLoop(
     powers.update(dt)
     world.updateFire(dt, fireRng)
     world.updateGraves(dt)
+    world.updateGroundFruit(dt)
     world.relocateDrownedRuins(rng, lowFx)
     world.updateTrees(dt, clock.quantizedTime)
     for (const hut of world.huts) hut.update(dt, clock.quantizedTime)

@@ -177,6 +177,7 @@ export class Sfx {
       if (event.power === 'meteor') this.oscillator('sine', 220, 980, 1.2, 0.042)
       if (event.power === 'lightning') this.oscillator('sawtooth', 58, 34, 0.9, 0.018)
       if (event.power === 'rain') this.rain(7.2)
+      if (event.power === 'wind') this.whoosh(3.4)
       return
     }
     if (event.type === 'power:impact') {
@@ -341,6 +342,31 @@ export class Sfx {
     gain.gain.setValueAtTime(0.0001, now)
     gain.gain.exponentialRampToValueAtTime(0.018, now + 0.45)
     gain.gain.setValueAtTime(0.018, now + seconds - 0.7)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + seconds)
+    source.connect(filter).connect(gain).connect(audio.master)
+    source.start(now)
+    source.stop(now + seconds)
+    this.trackVoice([source], [filter, gain])
+  }
+
+  private whoosh(seconds: number): void {
+    const audio = this.ready()
+    if (!audio) return
+    const { context } = audio
+    const now = context.currentTime
+    const source = context.createBufferSource()
+    source.buffer = this.noiseBuffer
+    source.loop = true
+    const filter = context.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.Q.value = 0.6
+    filter.frequency.setValueAtTime(240, now)
+    filter.frequency.exponentialRampToValueAtTime(900, now + 1.1)
+    filter.frequency.exponentialRampToValueAtTime(320, now + seconds)
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.exponentialRampToValueAtTime(0.05, now + 0.9)
+    gain.gain.setValueAtTime(0.05, now + seconds - 1)
     gain.gain.exponentialRampToValueAtTime(0.0001, now + seconds)
     source.connect(filter).connect(gain).connect(audio.master)
     source.start(now)

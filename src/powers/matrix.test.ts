@@ -3,7 +3,7 @@ import type { PowerId, TargetKind } from '../core/events'
 import { INTERACTION_KINDS, resolveInteraction, type InteractionKind } from './matrix'
 import { OUTCOME_HANDLERS } from './outcomes'
 
-const POWERS: PowerId[] = ['meteor', 'lightning', 'rain', 'nudge']
+const POWERS: PowerId[] = ['meteor', 'lightning', 'rain', 'nudge', 'wind']
 const TARGETS: TargetKind[] = ['ground', 'tree', 'hut', 'villager', 'pond', 'crater', 'campfire']
 
 const EXPECTED: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
@@ -43,6 +43,15 @@ const EXPECTED: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
     crater: [],
     ground: ['suggest'],
   },
+  wind: {
+    tree: [],
+    hut: ['scatter'],
+    villager: ['tumble'],
+    pond: [],
+    campfire: ['flare'],
+    crater: [],
+    ground: [],
+  },
 }
 
 describe('resolveInteraction', () => {
@@ -68,6 +77,17 @@ describe('resolveInteraction', () => {
 })
 
 describe('matrix completeness', () => {
+  it('covers all 35 power-target cells explicitly', () => {
+    let cells = 0
+    for (const power of POWERS) {
+      for (const target of TARGETS) {
+        expect(Array.isArray(resolveInteraction(power, target))).toBe(true)
+        cells++
+      }
+    }
+    expect(cells).toBe(35)
+  })
+
   it('every kind the matrix can emit has a handler', () => {
     const emitted = new Set<InteractionKind>()
     for (const power of POWERS) {

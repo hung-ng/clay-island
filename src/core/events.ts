@@ -1,6 +1,6 @@
 import type { DayKind } from './dayClock'
 
-export type PowerId = 'meteor' | 'lightning' | 'rain' | 'nudge'
+export type PowerId = 'meteor' | 'lightning' | 'rain' | 'nudge' | 'wind'
 export type TargetKind = 'ground' | 'tree' | 'hut' | 'villager' | 'pond' | 'crater' | 'campfire'
 
 // Events carrying `x`/`z` do so because the discovery system (Task 17) needs to

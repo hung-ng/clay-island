@@ -98,4 +98,27 @@ describe('VillagerModel', () => {
 
     expect(namedTransforms(subject.group)).toEqual(idle)
   })
+
+  it('authors both tumble beats without rotating or burying the complete rig', () => {
+    const subject = new VillagerModel('villager-1', 7, false)
+
+    for (const progress of [0.125, 0.375, 0.625, 0.875]) {
+      subject.setTumblePose(progress)
+      subject.group.updateMatrixWorld(true)
+
+      expect(subject.group.rotation.toArray()).toEqual([0, 0, 0, 'XYZ'])
+      expect(subject.group.position.y).toBeGreaterThan(0)
+      expect(new THREE.Box3().setFromObject(subject.group).min.y).toBeGreaterThanOrEqual(0)
+    }
+  })
+
+  it('restores every articulated part after tumbling', () => {
+    const subject = new VillagerModel('villager-1', 7, false)
+    const idle = namedTransforms(subject.group)
+
+    subject.setTumblePose(0.375)
+    subject.resetPose()
+
+    expect(namedTransforms(subject.group)).toEqual(idle)
+  })
 })

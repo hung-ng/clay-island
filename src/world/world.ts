@@ -13,7 +13,16 @@ import { craterAt, craterRimY, type Crater } from './craters'
 import { FIRE_CONFIG, FireSystem, type FireEvent, type Flammable } from './fire'
 import { AUTONOMOUS_TREE_RESERVE, MAX_TREES, seedSite, type Seedling } from './forest'
 import { Island, WALK_RADIUS, islandSurfaceY } from './island'
-import { Campfire, FlowerPatch, Grave, Hut, MAX_POND_FISH, Pond, Tree } from './objects'
+import {
+  Campfire,
+  FlowerPatch,
+  Grave,
+  GroundFruit,
+  Hut,
+  MAX_POND_FISH,
+  Pond,
+  Tree,
+} from './objects'
 import {
   BUILD_CLEARANCE,
   groupBasins,
@@ -69,6 +78,7 @@ export class World {
   huts: Hut[] = []
   campfire!: Campfire
   graves: Grave[] = []
+  groundFruits: GroundFruit[] = []
   ponds: Pond[] = []
   flowerPatches: FlowerPatch[] = []
   villagers: Villager[] = []
@@ -79,6 +89,7 @@ export class World {
   private treeSerial = 1000
   private hutSerial = 1000
   private villagerSerial = 0
+  private groundFruitSerial = 1000
   private pendingHutSite: { source: Hut; site: Hut } | null = null
   private pendingCampfireSite: { source: Campfire | null; site: Campfire } | null = null
   private fireSystem = new FireSystem()
@@ -798,11 +809,110 @@ export class World {
     }
   }
 
+  /** Wind shakes one fruit from every fruiting tree inside the gust. */
+  dropFruitNear(x: number, z: number, radius: number, rng: RNG, lowFx = false): number {
+    let dropped = 0
+    for (const tree of this.trees) {
+      if (tree.state !== 'normal' || !tree.hasFruit || !within(tree, x, z, radius)) continue
+      const landing = tree.dropFruit()
+      if (!landing) continue
+      const fruit = new GroundFruit(
+        `ground-fruit-${this.groundFruitSerial++}`,
+        landing.x,
+        landing.z,
+        this.island.sampleHeight(landing.x, landing.z),
+        rng,
+        lowFx,
+      )
+      this.island.group.add(fruit.group)
+      this.groundFruits.push(fruit)
+      dropped++
+    }
+    return dropped
+  }
+
+  nearestGroundFruit(x: number, z: number): GroundFruit | null {
+    return [...this.groundFruits]
+      .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z))[0]
+      ?? null
+  }
+
+  /** A villager picks the fruit up; false when someone else got there first. */
+  claimGroundFruit(fruit: GroundFruit): boolean {
+    const index = this.groundFruits.indexOf(fruit)
+    if (index < 0) return false
+    this.groundFruits.splice(index, 1)
+    this.island.group.remove(fruit.group)
+    fruit.dispose()
+    return true
+  }
+
+  updateGroundFruit(dt: number): void {
+    for (const fruit of [...this.groundFruits]) {
+      fruit.update(dt)
+      if (fruit.expired) this.claimGroundFruit(fruit)
+    }
+  }
+
+  /** One active fire may fling one ember into the nearest eligible downwind fuel. */
+  emberIgnite(
+    source: Tree | Hut | Campfire,
+    rng: RNG,
+    chance: number,
+    radius: number,
+    direction: { x: number; z: number },
+    halfAngle: number,
+  ): boolean {
+    const sourceIsBurning = source.kind === 'campfire' ? source.lit : source.burning
+    if (!sourceIsBurning || !rng.chance(chance)) return false
+    const directionLength = Math.hypot(direction.x, direction.z)
+    if (directionLength < 1e-6) return false
+    const minimumAlignment = Math.cos(halfAngle)
+    const targets: Array<Tree | Hut> = [
+      ...this.trees.filter(candidate => (
+        (candidate.state === 'normal' || candidate.state === 'sapling')
+        && !candidate.burning
+        && !candidate.burnt
+      )),
+      ...this.huts.filter(candidate => (
+        candidate.state === 'built'
+        && !candidate.burning
+        && !candidate.burnt
+      )),
+    ]
+    const target = targets
+      .filter((candidate) => {
+        const dx = candidate.x - source.x
+        const dz = candidate.z - source.z
+        const distance = Math.hypot(dx, dz)
+        if (distance < 1e-6 || distance > radius) return false
+        const alignment = (dx * direction.x + dz * direction.z)
+          / (distance * directionLength)
+        return alignment >= minimumAlignment
+      })
+      .sort((a, b) => (
+        Math.hypot(a.x - source.x, a.z - source.z)
+        - Math.hypot(b.x - source.x, b.z - source.z)
+      ))[0]
+    if (!target) return false
+    target.ignite()
+    if (!target.burning) return false
+    this.bus.emit({
+      type: 'fire:ignited',
+      kind: target.kind,
+      bySpread: true,
+      burning: this.burningCount(),
+    })
+    this.alarmNear(target.x, target.z, 7)
+    return true
+  }
+
   reground(): void {
-    const standing: Array<Tree | Hut | Grave | Campfire> = [
+    const standing: Array<Tree | Hut | Grave | Campfire | GroundFruit> = [
       ...this.trees,
       ...this.huts,
       ...this.graves,
+      ...this.groundFruits,
     ]
     if (this.campfire) standing.push(this.campfire)
     for (const object of standing) {

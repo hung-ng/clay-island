@@ -427,6 +427,16 @@ body {
   text-shadow: 0 6px 0 var(--water), 0 12px 0 var(--water);
 }
 
+.power-glyph[data-glyph='wind']::before {
+  display: block;
+  transform: rotate(-6deg);
+  color: var(--ink-soft);
+  content: '≋';
+  font-size: 46px;
+  line-height: 27px;
+  text-align: center;
+}
+
 .power-glyph[data-glyph='nudge'] {
   transform: translate(1px, -1px) scale(1.12);
   transform-origin: center;

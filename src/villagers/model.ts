@@ -163,6 +163,23 @@ export class VillagerModel {
     orientOnGround(this.legs[1], 0.82)
   }
 
+  /** A grounded two-beat stumble: articulated lean and lift, never a root spin. */
+  setTumblePose(progress: number): void {
+    this.resetPose()
+    const amount = THREE.MathUtils.clamp(progress, 0, 1)
+    const beat = Math.sin(amount * Math.PI * 4)
+    const lift = Math.abs(Math.sin(amount * Math.PI * 2)) * 0.18
+    const lean = beat * 0.42
+
+    this.group.position.y = lift
+    this.body.position.x += beat * 0.05
+    this.body.rotation.z = lean
+    this.head.position.x += beat * 0.09
+    this.head.rotation.z = -lean * 0.55
+    this.arms[0].rotation.z = -1.45 - beat * 0.35
+    this.arms[1].rotation.z = 1.45 - beat * 0.35
+  }
+
   setProloguePose(pose: VillagerProloguePose, frame: number): void {
     this.resetPose()
     if (pose === 'wake') {

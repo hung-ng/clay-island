@@ -4,6 +4,7 @@ import { isBuildable } from '../world/terrain'
 import type { Interaction, InteractionKind } from './matrix'
 import { groundNudge } from './nudge'
 import type { CastCtx } from './power'
+import { gustDirection } from './wind'
 
 /** How far a ground nudge "sees" when deciding what the place is for. */
 const NUDGE_SENSE_RADIUS = 5
@@ -77,7 +78,23 @@ export const OUTCOME_HANDLERS: Record<
     )
   },
   zap: (ctx) => { ctx.world.villagerAt(ctx.x, ctx.z, 1.2)?.zap() },
-  scatter: (ctx) => { ctx.world.scatterCampfire() },
+  scatter: (ctx, y0) => {
+    if (ctx.kind === 'hut') {
+      ctx.fx.particles.burst({
+        x: ctx.x,
+        y: y0 + 1.1,
+        z: ctx.z,
+        n: ctx.lowFx ? 6 : 14,
+        color: PALETTE.dirt,
+        speed: 1.6,
+        gravity: 6,
+        size: 0.5,
+        life: 0.6,
+      })
+      return
+    }
+    ctx.world.scatterCampfire()
+  },
   emptyPond: (ctx) => { ctx.world.emptyPondAt(ctx.x, ctx.z) },
   steam: (ctx, y0) => {
     ctx.fx.particles.burst({
@@ -113,6 +130,13 @@ export const OUTCOME_HANDLERS: Record<
   },
   startleVillager: (ctx) => {
     ctx.world.villagerAt(ctx.x, ctx.z, 1.2)?.emote('question')
+  },
+  tumble: (ctx) => {
+    const direction = gustDirection(ctx.x, ctx.z)
+    ctx.world.villagerAt(ctx.x, ctx.z, 1.2)?.tumble({
+      x: ctx.x - direction.x * 2,
+      z: ctx.z - direction.z * 2,
+    })
   },
 }
 

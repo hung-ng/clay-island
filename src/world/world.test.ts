@@ -1427,3 +1427,169 @@ describe('World forest', () => {
     expect(hut.state).toBe('burning')
   })
 })
+
+describe('wind consequences', () => {
+  const downwind = { x: 1, z: 0 }
+  const emberHalfAngle = 50 * Math.PI / 180
+
+  it('shakes one fruit loose per fruiting tree inside the gust', () => {
+    const world = makeWorld()
+    const near = addTree(world, 'tree-near', 1, 0)
+    const far = addTree(world, 'tree-far', 20, 0)
+    const bare = addTree(world, 'tree-bare', -1, 0)
+    near.growFruit()
+    far.growFruit()
+
+    expect(world.dropFruitNear(0, 0, 6, new RNG(3))).toBe(1)
+    expect(near.fruitCount).toBe(3)
+    expect(far.fruitCount).toBe(4)
+    expect(bare.hasFruit).toBe(false)
+    expect(world.groundFruits).toHaveLength(1)
+    expect(world.nearestGroundFruit(0, 0)).toBe(world.groundFruits[0]!)
+  })
+
+  it('claims each ground fruit exactly once and spoils leftovers', () => {
+    const world = makeWorld()
+    addTree(world, 'tree-a', 1, 0).growFruit()
+    world.dropFruitNear(0, 0, 6, new RNG(3))
+    const fruit = world.groundFruits[0]!
+
+    expect(world.claimGroundFruit(fruit)).toBe(true)
+    expect(world.claimGroundFruit(fruit)).toBe(false)
+    expect(world.groundFruits).toHaveLength(0)
+
+    world.dropFruitNear(0, 0, 6, new RNG(4))
+    world.updateGroundFruit(59)
+    expect(world.groundFruits).toHaveLength(1)
+    world.updateGroundFruit(2)
+    expect(world.groundFruits).toHaveLength(0)
+  })
+
+  it('rolls one ember from a lit campfire into the nearest eligible tree', () => {
+    const world = makeWorld()
+    world.campfire = new Campfire(0, 0, 0, new RNG(1), false, 'lit')
+    const close = addTree(world, 'tree-close', 1.5, 0)
+    addTree(world, 'tree-far', 5, 0)
+    const events: string[] = []
+    world.bus.on((event) => {
+      if (event.type === 'fire:ignited') events.push(`${event.kind}:${event.bySpread}`)
+    })
+
+    expect(world.emberIgnite(
+      world.campfire,
+      new RNG(1),
+      0,
+      2.5,
+      downwind,
+      emberHalfAngle,
+    )).toBe(false)
+    expect(close.burning).toBe(false)
+    expect(world.emberIgnite(
+      world.campfire,
+      new RNG(1),
+      1,
+      2.5,
+      downwind,
+      emberHalfAngle,
+    )).toBe(true)
+    expect(close.burning).toBe(true)
+    expect(events).toEqual(['tree:true'])
+
+    const doused = makeWorld()
+    doused.campfire = new Campfire(0, 0, 0, new RNG(1), false, 'doused')
+    addTree(doused, 'tree-b', 1.5, 0)
+    expect(doused.emberIgnite(
+      doused.campfire,
+      new RNG(1),
+      1,
+      2.5,
+      downwind,
+      emberHalfAngle,
+    )).toBe(false)
+  })
+
+  it('chooses the nearest eligible target across intact trees and built huts', () => {
+    const world = makeWorld()
+    world.campfire = new Campfire(0, 0, 0, new RNG(1), false, 'lit')
+    const tree = addTree(world, 'tree-near', 4, 0)
+    const hut = addHut(world, 'hut-nearer', 3, 0)
+    const events: string[] = []
+    world.bus.on((event) => {
+      if (event.type === 'fire:ignited') events.push(`${event.kind}:${event.bySpread}`)
+    })
+
+    expect(world.emberIgnite(
+      world.campfire,
+      new RNG(1),
+      1,
+      4.5,
+      downwind,
+      emberHalfAngle,
+    )).toBe(true)
+    expect(hut.burning).toBe(true)
+    expect(tree.burning).toBe(false)
+    expect(events).toEqual(['hut:true'])
+  })
+
+  it('skips ineligible nearer huts and ignites at most one valid target', () => {
+    const world = makeWorld()
+    world.campfire = new Campfire(0, 0, 0, new RNG(1), false, 'lit')
+    const abandoned = addHut(world, 'hut-abandoned', 1, 0, 'abandoned')
+    const building = addHut(world, 'hut-building', 2, 0, 'building')
+    const sapling = new Tree('tree-sapling', 3, 0, 0, new RNG(1), false, 'sapling')
+    world.trees.push(sapling)
+    const built = addHut(world, 'hut-built', 4, 0)
+
+    expect(world.emberIgnite(
+      world.campfire,
+      new RNG(1),
+      1,
+      4.5,
+      downwind,
+      emberHalfAngle,
+    )).toBe(true)
+    expect(abandoned.burning).toBe(false)
+    expect(building.burning).toBe(false)
+    expect(sapling.burning).toBe(true)
+    expect(built.burning).toBe(false)
+  })
+
+  it('ignites only within the downwind cone, skipping nearer side and upwind fuel', () => {
+    const world = makeWorld()
+    world.campfire = new Campfire(0, 0, 0, new RNG(1), false, 'lit')
+    const upwind = addTree(world, 'tree-upwind', -1, 0)
+    const sideways = addHut(world, 'hut-sideways', 0, 2)
+    const aligned = addTree(world, 'tree-downwind', 3, 1)
+
+    expect(world.emberIgnite(
+      world.campfire,
+      new RNG(1),
+      1,
+      4.5,
+      downwind,
+      emberHalfAngle,
+    )).toBe(true)
+    expect(upwind.burning).toBe(false)
+    expect(sideways.burning).toBe(false)
+    expect(aligned.burning).toBe(true)
+  })
+
+  it('lets a burning hut spread an ember even when the campfire is doused', () => {
+    const world = makeWorld()
+    world.campfire = new Campfire(8, 8, 0, new RNG(1), false, 'doused')
+    const source = addHut(world, 'hut-burning', 0, 0)
+    source.ignite()
+    const target = addTree(world, 'tree-downwind', 3, 0)
+
+    expect(world.emberIgnite(
+      source,
+      new RNG(1),
+      1,
+      4.5,
+      downwind,
+      emberHalfAngle,
+    )).toBe(true)
+    expect(source.burning).toBe(true)
+    expect(target.burning).toBe(true)
+  })
+})

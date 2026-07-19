@@ -108,8 +108,11 @@ class BurningVisual {
   private readonly flames: THREE.Mesh[] = []
   private readonly smoke: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>[] = []
   private readonly light: THREE.PointLight
+  private readonly baseLightIntensity: number
   private lightEnabled = false
   private lastQt = Number.NEGATIVE_INFINITY
+  private flareTime = 0
+  private flareScale = 1
 
   constructor(seed: number, baseY: number, radius: number, lowFx: boolean) {
     const rng = new RNG(seed)
@@ -155,7 +158,8 @@ class BurningVisual {
       this.group.add(blob)
     }
 
-    this.light = new THREE.PointLight(PALETTE.flame, lowFx ? 0.8 : 1.2, 5)
+    this.baseLightIntensity = lowFx ? 0.8 : 1.2
+    this.light = new THREE.PointLight(PALETTE.flame, this.baseLightIntensity, 5)
     this.light.name = 'fire-point-light'
     this.light.position.y = baseY + radius
     this.light.castShadow = false
@@ -166,7 +170,18 @@ class BurningVisual {
   setBurning(on: boolean): void {
     this.group.visible = on
     this.light.visible = on && this.lightEnabled
-    if (!on) this.lastQt = Number.NEGATIVE_INFINITY
+    if (!on) {
+      this.lastQt = Number.NEGATIVE_INFINITY
+      this.flareTime = 0
+      this.flareScale = 1
+      this.light.intensity = this.baseLightIntensity
+    }
+  }
+
+  flare(seconds = 1, scale = 1.75): void {
+    if (!this.group.visible) return
+    this.flareTime = Math.max(this.flareTime, seconds)
+    this.flareScale = Math.max(this.flareScale, scale)
   }
 
   setLightEnabled(on: boolean): void {
@@ -176,6 +191,11 @@ class BurningVisual {
 
   update(qt: number): void {
     if (!this.group.visible || qt === this.lastQt) return
+    if (Number.isFinite(this.lastQt)) {
+      this.flareTime = Math.max(0, this.flareTime - Math.max(0, qt - this.lastQt))
+    }
+    const flareScale = this.flareTime > 0 ? this.flareScale : 1
+    if (this.flareTime === 0) this.flareScale = 1
     const frame = Math.floor(qt * 12)
     for (let i = 0; i < this.flames.length; i++) {
       const flame = this.flames[i]!
@@ -188,7 +208,11 @@ class BurningVisual {
         (flame.userData.baseY as number) + Math.abs(jy) * 0.12,
         (flame.userData.baseZ as number) + jz * 0.12,
       )
-      flame.scale.set(0.85 + Math.abs(jz) * 0.2, 1.25 + Math.abs(jx) * 0.45, 0.85)
+      flame.scale.set(
+        flareScale * (0.85 + Math.abs(jz) * 0.2),
+        flareScale * (1.25 + Math.abs(jx) * 0.45),
+        flareScale * 0.85,
+      )
     }
     for (const blob of this.smoke) {
       const phase = (qt * 0.28 + (blob.userData.phase as number)) % 1
@@ -201,6 +225,7 @@ class BurningVisual {
       blob.scale.setScalar(0.65 + phase * 1.15)
       blob.material.opacity = (1 - phase) * 0.58
     }
+    this.light.intensity = this.baseLightIntensity * flareScale
     this.lastQt = qt
   }
 }
@@ -233,6 +258,9 @@ export class Tree {
   private fruitSlots: (THREE.Vector3 | null)[] = []
   private fruitTime = 0
   private shudderTime = 0
+  private swayTime = 0
+  private swaySeconds = 0
+  private swayDir = { x: 1, z: 0 }
   private fireVisual: BurningVisual
   private fireStarted = false
   private phase = 0
@@ -390,6 +418,11 @@ export class Tree {
     this.fireVisual.setLightEnabled(on)
   }
 
+  flare(seconds = 1, scale = 1.75): void {
+    if (!this.burning) return
+    this.fireVisual.flare(seconds, scale)
+  }
+
   /** Seek the authored sapling presentation without advancing gameplay systems. */
   setGrowthProgress(value: number): void {
     if (this.state !== 'sapling' && this.state !== 'normal') return
@@ -404,6 +437,15 @@ export class Tree {
   shudder(): void {
     if (this.state !== 'normal') return
     this.shudderTime = 0.18
+  }
+
+  /** A gust bends the whole crown along its direction for `seconds`. */
+  sway(dirX: number, dirZ: number, seconds: number): void {
+    if (this.state !== 'normal' && this.state !== 'sapling') return
+    const length = Math.hypot(dirX, dirZ) || 1
+    this.swayDir = { x: dirX / length, z: dirZ / length }
+    this.swaySeconds = Math.max(seconds, 0.001)
+    this.swayTime = this.swaySeconds
   }
 
   growFruit(): boolean {
@@ -522,15 +564,50 @@ export class Tree {
     return true
   }
 
+  /**
+   * Wind shakes one fruit out of the crown. Unlike `pickFruit`, the fruit
+   * leaves for the ground: the caller receives the island-local landing point
+   * and owns the resulting ground fruit. Returns null when the tree is bare.
+   */
+  dropFruit(): { x: number; z: number } | null {
+    if (!this.fruit || this.fruitCount === 0) return null
+    const index = this.fruitSlots.findIndex(slot => slot !== null)
+    if (index < 0) return null
+    const slot = this.fruitSlots[index]!
+    this.fruitSlots[index] = null
+    const matrix = new THREE.Matrix4()
+    matrix.makeScale(0, 0, 0)
+    this.fruit.setMatrixAt(index, matrix)
+    this.fruit.instanceMatrix.needsUpdate = true
+    if (this.fruitCount === 0) {
+      this.crown.remove(this.fruit)
+      disposeObjectResources(this.fruit)
+      this.fruit = null
+      this.fruitTime = 0
+    }
+    return { x: this.x + slot.x * 1.15, z: this.z + slot.z * 1.15 }
+  }
+
   update(dt: number, qt: number): void {
     if (this.expiredValue) return
     this.phase += dt
+
+    if (this.swayTime > 0 && (this.state === 'normal' || this.state === 'sapling')) {
+      this.swayTime = Math.max(0, this.swayTime - dt)
+      const progress = 1 - this.swayTime / this.swaySeconds
+      const strength = Math.sin(Math.min(1, progress) * Math.PI)
+      const lean = strength * (0.24 + Math.sin(this.phase * 26) * 0.07)
+      this.crown.rotation.z = -this.swayDir.x * lean
+      this.crown.rotation.x = this.swayDir.z * lean
+    } else if (this.crown.rotation.x !== 0) {
+      this.crown.rotation.x = 0
+    }
 
     if (this.shudderTime > 0 && this.state === 'normal') {
       this.shudderTime = Math.max(0, this.shudderTime - dt)
       const amount = this.shudderTime / 0.18
       this.crown.rotation.z = Math.sin(this.shudderTime * 60) * 0.06 * amount
-    } else if (this.state === 'normal' && this.crown.rotation.z !== 0) {
+    } else if (this.swayTime <= 0 && (this.state === 'normal' || this.state === 'sapling')) {
       this.crown.rotation.z = 0
     }
 
@@ -805,6 +882,11 @@ export class Hut {
 
   setFireLightEnabled(on: boolean): void {
     this.fireVisual.setLightEnabled(on)
+  }
+
+  flare(seconds = 1, scale = 1.75): void {
+    if (!this.burning) return
+    this.fireVisual.flare(seconds, scale)
   }
 
   dispose(): void {
@@ -1425,6 +1507,40 @@ export class Grave {
   dispose(): void {
     disposeObjectResources(this.group)
   }
+}
+
+/** A wind-dropped fruit resting on the ground until gathered or spoiled. */
+export class GroundFruit {
+  readonly group = new THREE.Group()
+
+  private age = 0
+
+  /** Uneaten fruit spoils on the same 60-second clock as fruit in a crown. */
+  get expired(): boolean { return this.age >= 60 }
+
+  constructor(
+    public readonly id: string,
+    public x: number,
+    public z: number,
+    y: number,
+    rng: RNG,
+    lowFx = false,
+  ) {
+    this.group.name = 'ground-fruit'
+    this.group.position.set(x, y, z)
+    const fruit = new THREE.Mesh(
+      wobble(new THREE.SphereGeometry(0.12, 8, 6), rng, 0.018),
+      clayMaterial(PALETTE.smockA),
+    )
+    fruit.name = 'ground-fruit-blob'
+    fruit.position.y = 0.1
+    fruit.castShadow = !lowFx
+    this.group.add(fruit)
+  }
+
+  update(dt: number): void { this.age += dt }
+
+  dispose(): void { disposeObjectResources(this.group) }
 }
 
 export class FlowerPatch {
