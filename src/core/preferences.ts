@@ -11,6 +11,7 @@ export type PreferencesSnapshot = {
   reducedMotion: boolean
   introSeen: boolean
   timeOfDay: TimeOfDayMode
+  dayCount: number
 }
 
 const QUALITY_KEY = 'clayisland.visualQuality'
@@ -18,6 +19,7 @@ const ROTATE_KEY = 'clayisland.autoRotate'
 const MOTION_KEY = 'clayisland.reducedMotion'
 const INTRO_KEY = 'clayisland.introSeen'
 const TIME_OF_DAY_KEY = 'clayisland.timeOfDay'
+const DAY_COUNT_KEY = 'clayisland.dayCount'
 
 function read(storage: PreferenceStorage | null, key: string): string | null {
   try { return storage?.getItem(key) ?? null } catch { return null }
@@ -35,6 +37,7 @@ export class Preferences {
   private reducedMotionValue: boolean
   private introSeenValue: boolean
   private timeOfDayValue: TimeOfDayMode
+  private dayCountValue: number
   private readonly forced: boolean
 
   constructor(
@@ -50,6 +53,8 @@ export class Preferences {
     this.introSeenValue = read(storage, INTRO_KEY) === 'true'
     const timeOfDay = read(storage, TIME_OF_DAY_KEY)
     this.timeOfDayValue = timeOfDay === 'day' || timeOfDay === 'night' ? timeOfDay : 'auto'
+    const dayCount = Number.parseInt(read(storage, DAY_COUNT_KEY) ?? '', 10)
+    this.dayCountValue = Number.isInteger(dayCount) && dayCount >= 1 ? dayCount : 1
   }
 
   get snapshot(): PreferencesSnapshot {
@@ -62,6 +67,7 @@ export class Preferences {
       reducedMotion: this.reducedMotionValue,
       introSeen: this.introSeenValue,
       timeOfDay: this.timeOfDayValue,
+      dayCount: this.dayCountValue,
     }
   }
 
@@ -88,6 +94,11 @@ export class Preferences {
   setTimeOfDay(mode: TimeOfDayMode): void {
     this.timeOfDayValue = mode
     try { this.storage?.setItem(TIME_OF_DAY_KEY, mode) } catch { /* session-only */ }
+  }
+
+  setDayCount(count: number): void {
+    this.dayCountValue = count
+    try { this.storage?.setItem(DAY_COUNT_KEY, String(count)) } catch { /* session-only */ }
   }
 
   markIntroSeen(): void {

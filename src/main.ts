@@ -50,6 +50,15 @@ import {
 import { PrologueDirector } from './prologue/prologue'
 import { createScene } from './scene'
 import { createJournalUI, type JournalUI } from './ui/journal'
+import {
+  createPhotoAnnouncer,
+  createPhotoCapture,
+  createPhotoPreview,
+  downloadBlob,
+  photoArmable,
+  type PhotoCanvas,
+  type PhotoPreviewUI,
+} from './ui/photo'
 import { createSettingsUI, type SettingsUI } from './ui/settings'
 import { createTitleUI } from './ui/title'
 import { PALETTE, TIMING } from './ui/tokens'
@@ -86,7 +95,8 @@ const cameraController = new CameraController({
   reducedMotion,
 })
 cameraController.lock('prologue')
-const dayClock = new DayClock(reducedMotion)
+const dayClock = new DayClock(reducedMotion, GOLDEN_T, startup.dayCount)
+dayClock.onDayWrap = day => preferences.setDayCount(day)
 dayClock.setMode(
   startup.timeOfDay,
   startup.timeOfDay === 'day' ? 'backward' : 'forward',
@@ -157,11 +167,16 @@ const targeting = new DragTargeting(renderer.domElement, camera, island, world, 
 let settingsOpen = false
 let journalUI: JournalUI | null = null
 let celebration: CelebrationDirector | null = null
+let takePhoto: (() => void) | null = null
+let photoPreview: PhotoPreviewUI | null = null
+const modalOpen = (): boolean => settingsOpen
+  || Boolean(journalUI?.isOpen())
+  || Boolean(photoPreview?.isOpen())
 const tray = createTray(ui, {
+  onPhoto: () => takePhoto?.(),
   onArm: power => {
     const celebrationActive = celebration?.active ?? false
-    if (!celebrationActive
-      && canArmPower(flow, settingsOpen || Boolean(journalUI?.isOpen()))) {
+    if (!celebrationActive && canArmPower(flow, modalOpen())) {
       targeting.arm(power)
     }
   },
@@ -181,6 +196,55 @@ trayElement.inert = true
 const sfx = new Sfx({ storage })
 sfx.attach(world.bus)
 world.setStepFoley(() => sfx.step())
+
+const photoAnnounce = createPhotoAnnouncer(ui)
+const createPhotoCanvas = (width: number, height: number): PhotoCanvas => {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  return canvas as unknown as PhotoCanvas
+}
+photoPreview = createPhotoPreview(ui, {
+  reducedMotion,
+  createCanvas: createPhotoCanvas,
+  download: downloadBlob,
+  announce: photoAnnounce,
+  onOpenChange: (open) => {
+    if (open) {
+      targeting.cancel(true)
+      cameraController.lock('photo')
+    } else cameraController.unlock('photo')
+  },
+})
+const photoCapture = createPhotoCapture({
+  renderer: {
+    canvas: renderer.domElement,
+    size: () => {
+      const size = renderer.getSize(new THREE.Vector2())
+      return { width: size.x, height: size.y }
+    },
+    pixelRatio: () => renderer.getPixelRatio(),
+    setPixelRatio: value => renderer.setPixelRatio(value),
+    setSize: (width, height) => renderer.setSize(width, height, false),
+  },
+  // Reduced quality renders without the composer; resizing it would only
+  // allocate capture-sized buffers that nothing reads.
+  composer: lowFx ? null : { setSize: (width, height) => composer.setSize(width, height) },
+  renderFrame: renderScene,
+  day: () => dayClock.day,
+  kind: () => dayClock.kind,
+  createCanvas: createPhotoCanvas,
+  openPreview: photo => photoPreview?.open(photo),
+  announce: photoAnnounce,
+  onCaptured: () => {
+    sfx.unlock()
+    sfx.shutter()
+    if (!reducedMotion()) flash(PALETTE.cloud, 0.24, false)
+  },
+})
+takePhoto = () => {
+  if (photoArmable(flow, modalOpen())) photoCapture.capture()
+}
 
 const journal = new Journal(storage)
 let settingsUI: SettingsUI | null = null
@@ -577,6 +641,7 @@ const loop = new GameLoop(
       celebration?.update(dt)
       particles.update(dt)
       for (const power of powerIds) tray.setCooldown(power, powers.cooldown01(power))
+      tray.setPhotoEnabled(photoArmable(flow, modalOpen()))
       world.updateFireLights(camera.position)
     }
 

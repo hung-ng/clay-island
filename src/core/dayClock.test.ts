@@ -144,4 +144,35 @@ describe('DayClock', () => {
     clock.tick(1 / 30)
     expect(clock.time).toBeGreaterThan(305) // gliding forward through wrap to resume phase
   })
+
+  it('starts at day 1 and increments once per free-run wrap', () => {
+    const clock = new DayClock(noReduced, DAY_PERIOD - 1)
+    const wraps: number[] = []
+    clock.onDayWrap = day => wraps.push(day)
+    expect(clock.day).toBe(1)
+    clock.tick(2)
+    expect(clock.day).toBe(2)
+    expect(wraps).toEqual([2])
+    clock.tick(DAY_PERIOD)
+    expect(clock.day).toBe(3)
+    expect(wraps).toEqual([2, 3])
+  })
+
+  it('sanitises the persisted start day', () => {
+    expect(new DayClock(noReduced, 0, 12).day).toBe(12)
+    expect(new DayClock(noReduced, 0, 0).day).toBe(1)
+    expect(new DayClock(noReduced, 0, -3).day).toBe(1)
+    expect(new DayClock(noReduced, 0, 4.7).day).toBe(4)
+  })
+
+  it('does not count glides or holds as lived days', () => {
+    const clock = new DayClock(noReduced, 300)
+    const wraps: number[] = []
+    clock.onDayWrap = day => wraps.push(day)
+    clock.setMode('day') // glides forward through t=0 to DAY_ANCHOR
+    for (let i = 0; i < 30 * 10; i++) clock.tick(1 / 30)
+    expect(clock.time).toBeCloseTo(DAY_ANCHOR, 1)
+    expect(clock.day).toBe(1)
+    expect(wraps).toEqual([])
+  })
 })

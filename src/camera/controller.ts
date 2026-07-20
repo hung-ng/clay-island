@@ -10,7 +10,7 @@ import {
 } from './policy'
 
 export type CameraLockReason =
-  | 'prologue' | 'targeting' | 'journal' | 'settings' | 'celebration-intro'
+  | 'prologue' | 'targeting' | 'journal' | 'settings' | 'photo' | 'celebration-intro'
 export type CameraAutoMotionReason = 'celebration'
 
 /** Metres per second the celebration target-lift ceiling eases at. */

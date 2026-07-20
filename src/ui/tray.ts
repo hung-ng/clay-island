@@ -3,6 +3,7 @@ import { MOMENTS } from '../discovery/moments'
 
 type TrayOptions = {
   onArm(id: PowerId): void
+  onPhoto(): void
   onCancel(): void
   cooldowns: () => Record<PowerId, number>
 }
@@ -16,7 +17,7 @@ type PowerControl = {
 }
 
 export const POWER_IDS: readonly PowerId[] = ['meteor', 'lightning', 'rain', 'wind', 'nudge']
-export const TRAY_AUXILIARY_CONTROLS = ['journal'] as const
+export const TRAY_AUXILIARY_CONTROLS = ['photo', 'journal'] as const
 const COOLDOWN_STEPS = 12
 const POWER_LABELS: Record<PowerId, string> = {
   meteor: 'Meteor',
@@ -51,12 +52,18 @@ function clamp01(value: number): number {
 export function createTray(ui: HTMLElement, opts: TrayOptions): {
   setCooldown(id: PowerId, t01: number): void
   setEnabled(id: PowerId, on: boolean): void
+  setPhotoEnabled(on: boolean): void
   setJournalCount(n: number): void
 } {
   const tray = document.createElement('div')
   tray.id = 'tray'
   tray.setAttribute('role', 'toolbar')
-  tray.setAttribute('aria-label', 'Powers')
+  tray.setAttribute('aria-label', 'Island controls')
+
+  const powers = document.createElement('div')
+  powers.className = 'tray-powers'
+  powers.setAttribute('role', 'group')
+  powers.setAttribute('aria-label', 'Powers')
 
   const controls = new Map<PowerId, PowerControl>()
   const initialCooldowns = opts.cooldowns()
@@ -80,7 +87,7 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
       <span class="power-label">${POWER_LABELS[id]}</span>
     `
     shell.append(cooldownFill, button)
-    tray.appendChild(shell)
+    powers.appendChild(shell)
 
     const control = {
       button,
@@ -105,17 +112,41 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
     })
   }
 
+  tray.appendChild(powers)
+
+  const tools = document.createElement('div')
+  tools.className = 'tray-tools'
+  tools.setAttribute('role', 'group')
+  tools.setAttribute('aria-label', 'Island tools')
+
   const spacer = document.createElement('span')
   spacer.className = 'spacer'
   spacer.setAttribute('aria-hidden', 'true')
-  tray.appendChild(spacer)
+  tools.appendChild(spacer)
+
+  const photo = document.createElement('button')
+  photo.type = 'button'
+  photo.id = 'photo-btn'
+  photo.setAttribute('aria-label', 'Take photo')
+  photo.setAttribute('aria-keyshortcuts', 'P')
+  photo.title = 'Take photo (P)'
+  photo.disabled = true
+  photo.innerHTML = `
+    <span class="photo-glyph" aria-hidden="true"></span>
+    <span class="photo-label">Photo</span>
+  `
+  photo.addEventListener('click', () => {
+    if (!photo.disabled) opts.onPhoto()
+  })
+  tools.appendChild(photo)
 
   const journal = document.createElement('button')
   journal.type = 'button'
   journal.id = 'journal-btn'
   journal.setAttribute('aria-haspopup', 'dialog')
   journal.innerHTML = `Journal <b>0/${MOMENTS.length}</b>`
-  tray.appendChild(journal)
+  tools.appendChild(journal)
+  tray.appendChild(tools)
 
   function sync(control: PowerControl): void {
     const unavailable = !control.enabled || control.cooldown > 0
@@ -138,6 +169,12 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
       return
     }
     if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return
+    if (event.key === 'p' || event.key === 'P') {
+      if (photo.disabled) return
+      event.preventDefault()
+      opts.onPhoto()
+      return
+    }
     const index = Number(event.key) - 1
     const id = POWER_IDS[index]
     if (!id) return
@@ -160,6 +197,9 @@ export function createTray(ui: HTMLElement, opts: TrayOptions): {
       if (!control) return
       control.enabled = on
       sync(control)
+    },
+    setPhotoEnabled(on) {
+      photo.disabled = !on
     },
     setJournalCount(n) {
       const counter = journal.querySelector('b')

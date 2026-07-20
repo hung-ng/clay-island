@@ -17,6 +17,10 @@ export type PrologueSoundProfile =
   | { kind: 'step' }
   | { kind: 'knock'; pitch: number; seconds: number; volume: number }
   | { kind: 'tone'; from: number; to: number; seconds: number; volume: number }
+export type ShutterSoundProfile = {
+  knock: { pitch: number; seconds: number; volume: number }
+  tick: { from: number; to: number; seconds: number; volume: number }
+}
 
 export function prologueSoundProfile(cue: PrologueSoundCue): PrologueSoundProfile {
   if (cue === 'step') return { kind: 'step' }
@@ -42,6 +46,13 @@ export function celebrationSoundProfile(cue: CelebrationSoundCue): CelebrationSo
     return { kind: 'knock', from: 88, to: 46, seconds: 0.36, volume: 0.058 }
   }
   return { kind: 'tone', from: 310, to: 620, seconds: 0.34, volume: 0.026 }
+}
+
+export function shutterSoundProfile(): ShutterSoundProfile {
+  return {
+    knock: { pitch: 430, seconds: 0.05, volume: 0.045 },
+    tick: { from: 2400, to: 1500, seconds: 0.03, volume: 0.016 },
+  }
 }
 
 const MUTE_KEY = 'clayisland.muted'
@@ -149,6 +160,18 @@ export class Sfx {
 
   reward(): void {
     this.oscillator('sine', 116, 82, 0.18, 0.022)
+  }
+
+  shutter(): void {
+    const profile = shutterSoundProfile()
+    this.knock(profile.knock.pitch, profile.knock.seconds, profile.knock.volume)
+    this.oscillator(
+      'sine',
+      profile.tick.from,
+      profile.tick.to,
+      profile.tick.seconds,
+      profile.tick.volume,
+    )
   }
 
   dispose(): void {

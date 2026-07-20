@@ -16,7 +16,7 @@ describe('Preferences', () => {
     expect(new Preferences(storage, '').snapshot).toEqual({
       quality: 'enhanced', lowFx: false, forcedLowFx: false,
       autoRotate: true, reducedMotion: false, introSeen: false,
-      timeOfDay: 'auto',
+      timeOfDay: 'auto', dayCount: 1,
     })
   })
 
@@ -107,5 +107,33 @@ describe('timeOfDay preference', () => {
     const blocked = new Preferences(null, '')
     blocked.setTimeOfDay('night')
     expect(blocked.snapshot.timeOfDay).toBe('night')
+  })
+})
+
+describe('day count', () => {
+  it('defaults to 1 for absent or corrupt values', () => {
+    expect(new Preferences(null, '').snapshot.dayCount).toBe(1)
+    const storage = new MemoryStorage()
+    storage.values.set('clayisland.dayCount', 'twelve')
+    expect(new Preferences(storage, '').snapshot.dayCount).toBe(1)
+    storage.values.set('clayisland.dayCount', '0')
+    expect(new Preferences(storage, '').snapshot.dayCount).toBe(1)
+  })
+
+  it('persists the count and survives reload', () => {
+    const storage = new MemoryStorage()
+    new Preferences(storage, '').setDayCount(12)
+    expect(storage.values.get('clayisland.dayCount')).toBe('12')
+    expect(new Preferences(storage, '').snapshot.dayCount).toBe(12)
+  })
+
+  it('stays session-local when storage writes fail', () => {
+    const blocked: PreferenceStorage = {
+      getItem: () => null,
+      setItem: () => { throw new Error('blocked') },
+    }
+    const preferences = new Preferences(blocked, '')
+    preferences.setDayCount(4)
+    expect(preferences.snapshot.dayCount).toBe(4)
   })
 })

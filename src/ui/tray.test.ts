@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { POWER_IDS, powerGlyphMarkup, TRAY_AUXILIARY_CONTROLS } from './tray'
 
-it('keeps only Journal beside the five powers', () => {
-  expect(TRAY_AUXILIARY_CONTROLS).toEqual(['journal'])
+it('keeps only Photo and Journal beside the five powers', () => {
+  expect(TRAY_AUXILIARY_CONTROLS).toEqual(['photo', 'journal'])
 })
 
 it('places Wind fourth and Nudge fifth so their shortcuts follow their slots', () => {

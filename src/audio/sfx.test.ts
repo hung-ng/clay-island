@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { celebrationSoundProfile, prologueSoundProfile } from './sfx'
+import { celebrationSoundProfile, prologueSoundProfile, shutterSoundProfile } from './sfx'
 
 describe('prologue sound profiles', () => {
   it('gives every visual cue a bounded distinct sound profile', () => {
@@ -19,4 +19,13 @@ it('keeps every celebration cue bounded and distinct', () => {
   })
   expect(celebrationSoundProfile('finale')).toMatchObject({ kind: 'knock', from: 88, seconds: 0.36 })
   expect(celebrationSoundProfile('cheer')).toMatchObject({ kind: 'tone', to: 620 })
+})
+
+it('keeps the shutter click short and quiet', () => {
+  const profile = shutterSoundProfile()
+  expect(profile.knock.seconds).toBeLessThanOrEqual(0.08)
+  expect(profile.tick.seconds).toBeLessThanOrEqual(0.05)
+  expect(profile.knock.volume).toBeLessThanOrEqual(0.06)
+  expect(profile.tick.volume).toBeLessThanOrEqual(0.03)
+  expect(profile.tick.from).toBeGreaterThan(profile.knock.pitch)
 })

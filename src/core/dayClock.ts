@@ -154,6 +154,7 @@ export function sampleAt(t: number): DayParams {
 
 export class DayClock {
   private t: number
+  private dayValue: number
   private modeValue: TimeOfDayMode = 'auto'
   private holdKind: 'night' | null = null
   private holdResumeT: number | null = null
@@ -163,12 +164,21 @@ export class DayClock {
   /** After a glide lands (or a hold), the clock parks until circumstances change. */
   private parked = false
   private parkAfterGlide = true
+  /** Fired with the new count each time the free-running clock wraps a full day. */
+  onDayWrap: ((day: number) => void) | null = null
 
-  constructor(private readonly reducedMotion: () => boolean, startT = GOLDEN_T) {
+  constructor(
+    private readonly reducedMotion: () => boolean,
+    startT = GOLDEN_T,
+    startDay = 1,
+  ) {
     this.t = wrap(startT)
+    const wholeDay = Math.floor(startDay)
+    this.dayValue = Number.isFinite(wholeDay) ? Math.max(1, wholeDay) : 1
   }
 
   get time(): number { return this.t }
+  get day(): number { return this.dayValue }
   get mode(): TimeOfDayMode { return this.modeValue }
   get kind(): DayKind { return kindAt(this.t) }
 
@@ -223,7 +233,12 @@ export class DayClock {
       return
     }
     if (this.parked) return
-    this.t = wrap(this.t + dt)
+    const advanced = this.t + dt
+    if (advanced >= DAY_PERIOD) {
+      this.dayValue += Math.floor(advanced / DAY_PERIOD)
+      this.onDayWrap?.(this.dayValue)
+    }
+    this.t = wrap(advanced)
   }
 
   private beginGlide(
