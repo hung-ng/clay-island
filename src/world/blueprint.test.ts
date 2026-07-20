@@ -12,7 +12,7 @@ describe('initial world blueprint', () => {
     expect(blueprint.props.filter(item => item.kind === 'campfire')).toHaveLength(1)
     expect(blueprint.villagers).toHaveLength(6)
     expect(blueprint.handoffFrame).toBe(INITIAL_HANDOFF_FRAME)
-    expect(INITIAL_HANDOFF_FRAME).toBe(132)
+    expect(INITIAL_HANDOFF_FRAME).toBe(204)
   })
 
   it('is deeply deterministic and uses unique visual seeds', () => {

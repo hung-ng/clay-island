@@ -166,11 +166,16 @@ export function createScene(options: SceneOptions) {
 
   let elapsed = 0
 
-  function updateSky(dt: number): void {
+  /**
+   * `driftScale` speeds cloud travel without touching the island's own bob. The
+   * prologue time-lapse runs it high so daylight has visible motion instead of
+   * reading as a held blue plate; gameplay leaves it at 1.
+   */
+  function updateSky(dt: number, driftScale = 1): void {
     elapsed += dt
     const reduced = options.reducedMotion()
 
-    if (!reduced) cloudGroup.rotation.y += dt * 0.01
+    if (!reduced) cloudGroup.rotation.y += dt * 0.01 * driftScale
     for (const cloud of clouds) {
       const bob = reduced ? 0 : Math.sin(elapsed * 0.22 + cloud.userData.phase) * 0.25
       cloud.position.y = cloud.userData.baseY + bob

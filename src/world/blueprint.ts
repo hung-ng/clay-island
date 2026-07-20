@@ -1,7 +1,7 @@
 import { RNG } from '../core/rng'
 import { placeSites, type Placement } from './scatter'
 
-export const INITIAL_HANDOFF_FRAME = 11 * 12
+export const INITIAL_HANDOFF_FRAME = 17 * 12
 
 export type InitialPropSpec =
   | { id: string; kind: 'tree'; state: 'normal'; x: number; z: number; visualSeed: number }

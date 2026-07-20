@@ -47,6 +47,7 @@ import {
   type EmberMask,
   type Framebuffer,
 } from './prologue/audit'
+import { PROLOGUE_CLOUD_DRIFT } from './prologue/choreography'
 import { PrologueDirector } from './prologue/prologue'
 import { createScene } from './scene'
 import { createJournalUI, type JournalUI } from './ui/journal'
@@ -395,6 +396,7 @@ function createDirector(generation: number): PrologueDirector {
     camera: cameraController,
     reducedMotion,
     onCue: cue => sfx.prologue(cue.kind),
+    applyDay: (params, dt) => applyDay(params, dt),
     onFinished: () => {
       if (flow.generation !== generation || flow.phase !== 'prologue') return
       if (flow.mode === 'replay') {
@@ -655,11 +657,16 @@ const loop = new GameLoop(
     }
 
     const ambientDt = auditingHandoff ? 0 : dt
-    const dayParams = gameplayActive ? dayClock.sample() : canonicalDay
+    const sweeping = !gameplayActive && flow.phase === 'prologue' && director !== null
+    const dayParams = gameplayActive
+      ? dayClock.sample()
+      : (sweeping ? director!.dayParams() : canonicalDay)
     applyDay(dayParams, ambientDt)
     nightSky.setLevels(dayParams.starOpacity, dayParams.fireflyLevel)
     nightSky.update(ambientDt, reducedMotion())
-    updateSky(ambientDt)
+    // Clouds drift at time-lapse speed through the prologue so its daylight
+    // stretches have visible motion rather than reading as a held frame.
+    updateSky(ambientDt, sweeping ? PROLOGUE_CLOUD_DRIFT : 1)
     quality.update(ambientDt, cameraController.distance(), reducedMotion())
     renderScene()
 

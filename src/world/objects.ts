@@ -849,6 +849,20 @@ export class Hut {
     this.syncAppearance()
   }
 
+  setProgress(value: number): void {
+    if (this.state !== 'site' && this.state !== 'building' && this.state !== 'built') return
+    const next = Math.max(0, Math.min(1, value))
+    if (next <= 0) {
+      this.state = 'site'
+      this.progress = 0
+      this.syncAppearance()
+      return
+    }
+    this.state = next >= 1 ? 'built' : 'building'
+    this.progress = next
+    this.syncAppearance()
+  }
+
   ignite(): void {
     if (this.state !== 'built' || this.burnt) return
     this.state = 'burning'
@@ -1105,6 +1119,20 @@ export class Campfire {
       flame.scale.set(flareScale * (0.9 + Math.abs(jz) * 0.18), flareScale * (1.35 + Math.abs(jx) * 0.3), flareScale)
     }
     this.lastQt = qt
+  }
+
+  /**
+   * Restores the flames to their construction transforms. Flicker leaves them on
+   * a jittered frame, which the prologue handoff compares against a freshly
+   * built gameplay campfire and rejects.
+   */
+  settleFlames(): void {
+    this.flareTime = 0
+    this.lastQt = -1
+    this.flames.forEach((flame, index) => {
+      flame.position.set(0, 0.52 + index * 0.2, 0)
+      flame.scale.set(1, 1.45, 1)
+    })
   }
 
   private syncAppearance(): void {

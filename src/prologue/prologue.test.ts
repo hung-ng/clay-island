@@ -82,20 +82,18 @@ describe('PrologueSet', () => {
     expect(() => { prologue.dispose(); prologue.dispose() }).not.toThrow()
   })
 
-  it('tracks all three hut stages idempotently', () => {
+  it('tracks continuous hut growth idempotently', () => {
     const blueprint = createInitialWorldBlueprint(7)
     const set = new PrologueSet(blueprint, false, false)
-    const stages = (): number[] => [
-      ...(set as unknown as { appliedHutStages: number[] }).appliedHutStages,
-    ]
 
-    expect(stages()).toEqual([0, 0, 0])
-    set.apply(prologueStateAt(3.6, blueprint))
-    expect(stages()).toEqual([1, 1, 1])
-    set.apply(prologueStateAt(6.8, blueprint))
-    expect(stages()).toEqual([3, 3, 3])
-    set.apply(prologueStateAt(6.8, blueprint))
-    expect(stages()).toEqual([3, 3, 3])
+    expect(set.huts.map(hut => hut.progress)).toEqual([0, 0, 0])
+    const state = prologueStateAt(7, blueprint)
+    set.apply(state)
+    expect(set.huts.map(hut => hut.progress)).toEqual(state.hutStages)
+    set.apply(state)
+    expect(set.huts.map(hut => hut.progress)).toEqual(state.hutStages)
+    set.apply(prologueStateAt(PROLOGUE_DURATION, blueprint))
+    expect(set.huts.map(hut => hut.progress)).toEqual([1, 1, 1])
     expect(set.huts.every(hut => hut.state === 'built')).toBe(true)
     set.dispose()
   })
@@ -142,21 +140,16 @@ describe('PrologueSet', () => {
 
     set.apply(prologueStateAt(0, blueprint))
     expect(piles.map(pile => pile.visible)).toEqual(Array(12).fill(true))
-    set.apply(prologueStateAt(3.6, blueprint))
+    // By 7.3s the huts are one stage in and the fire, built during the first
+    // night, has already consumed all three of its logs.
+    set.apply(prologueStateAt(7.3, blueprint))
     expect(piles.map(pile => pile.visible)).toEqual([
       false, true, true,
       false, true, true,
       false, true, true,
-      true, true, true,
+      false, false, false,
     ])
-    set.apply(prologueStateAt(8.8, blueprint))
-    expect(piles.map(pile => pile.visible)).toEqual([
-      false, false, false,
-      false, false, false,
-      false, false, false,
-      false, false, true,
-    ])
-    set.apply(prologueStateAt(9.6, blueprint))
+    set.apply(prologueStateAt(PROLOGUE_DURATION, blueprint))
     expect(piles.every(pile => !pile.visible)).toBe(true)
 
     set.dispose()
@@ -254,6 +247,7 @@ describe('PrologueDirector', () => {
       reducedMotion: () => false,
       onCue: vi.fn(),
       onFinished,
+      applyDay: vi.fn(),
     })
 
     director.updateTitlePreview(PROLOGUE_DURATION / 2)
@@ -285,6 +279,7 @@ describe('PrologueDirector', () => {
       reducedMotion: () => false,
       onCue,
       onFinished,
+      applyDay: vi.fn(),
     })
 
     const initialSet = director.set
@@ -296,7 +291,7 @@ describe('PrologueDirector', () => {
     director.update(0.7)
     expect(director.set).toBe(initialSet)
     for (const dt of [1.43, 0.92, 2.31, 0.17, 3.08, 0.56, 2.3]) director.update(dt)
-    director.update(5)
+    director.update(6)
 
     expect(onCue.mock.calls.map(([cue]) => cue)).toEqual(PROLOGUE_CUES)
     expect(onFinished).toHaveBeenCalledOnce()
@@ -324,13 +319,14 @@ describe('PrologueDirector', () => {
       reducedMotion: () => reduced,
       onCue,
       onFinished: vi.fn(),
+      applyDay: vi.fn(),
     })
 
     director.update(3.3)
     reduced = true
     director.update(0.1)
     expect(camera.setPose).toHaveBeenLastCalledWith(CAMERA_HOME)
-    director.update(7.6)
+    director.update(13.6)
     expect(onCue.mock.calls.map(([cue]) => cue)).toEqual(PROLOGUE_CUES)
   })
 
@@ -348,6 +344,7 @@ describe('PrologueDirector', () => {
       reducedMotion: () => false,
       onCue,
       onFinished,
+      applyDay: vi.fn(),
     })
 
     director.update(4.1)
@@ -361,6 +358,57 @@ describe('PrologueDirector', () => {
       PROLOGUE_CUES.filter(cue => cue.at <= 4.1),
     )
     expect(camera.setPose).toHaveBeenLastCalledWith(CAMERA_HOME)
+  })
+
+  it('drives scene lighting from the prologue day sweep', () => {
+    const blueprint = createInitialWorldBlueprint(7)
+    const applied: string[] = []
+    const director = new PrologueDirector({
+      blueprint,
+      lowFx: true,
+      stageRoot: new THREE.Group(),
+      camera: fakeCamera() as never,
+      reducedMotion: () => false,
+      onCue: () => {},
+      onFinished: () => {},
+      applyDay: params => { applied.push(params.kind) },
+    })
+
+    for (let step = 0; step < 34; step++) director.update(0.5)
+
+    expect(applied.length).toBeGreaterThan(0)
+    expect(applied).toContain('night')
+    expect(applied).toContain('day')
+    director.dispose()
+  })
+
+  it('exposes its current day sample so the render loop can sweep night effects', () => {
+    const blueprint = createInitialWorldBlueprint(7)
+    const director = new PrologueDirector({
+      blueprint,
+      lowFx: true,
+      stageRoot: new THREE.Group(),
+      camera: fakeCamera() as never,
+      reducedMotion: () => false,
+      onCue: () => {},
+      onFinished: () => {},
+      applyDay: () => {},
+    })
+
+    const kinds = new Set<string>()
+    const starLevels: number[] = []
+    for (let step = 0; step < 34; step++) {
+      director.update(0.5)
+      kinds.add(director.dayParams().kind)
+      starLevels.push(director.dayParams().starOpacity)
+    }
+
+    // The sweep must actually pass through night, not merely dim.
+    expect(kinds.has('night')).toBe(true)
+    expect(kinds.has('day')).toBe(true)
+    // Stars must actually come out, or nights read as dim rather than dark.
+    expect(Math.max(...starLevels)).toBeGreaterThan(0.5)
+    director.dispose()
   })
 
   it('has no gameplay-world or event-bus dependency in its constructor contract', () => {

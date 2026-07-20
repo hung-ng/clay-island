@@ -5,7 +5,7 @@ import type { CelebrationSoundCue } from '../celebration/fireworks'
 type SfxStorage = Pick<Storage, 'getItem' | 'setItem'>
 type Voice = { sources: AudioScheduledSourceNode[]; nodes: AudioNode[]; stop(): void }
 
-export type PrologueSoundCue = 'growth' | 'step' | 'hammer' | 'place' | 'ignite'
+export type PrologueSoundCue = 'growth' | 'step' | 'hammer' | 'chop' | 'place' | 'ignite'
 export type CelebrationSoundProfile = {
   kind: 'tone' | 'knock'
   from: number
@@ -25,6 +25,8 @@ export type ShutterSoundProfile = {
 export function prologueSoundProfile(cue: PrologueSoundCue): PrologueSoundProfile {
   if (cue === 'step') return { kind: 'step' }
   if (cue === 'hammer') return { kind: 'knock', pitch: 150, seconds: 0.10, volume: 0.028 }
+  // Deeper and longer than a hammer: an axe biting wood, not a peg going in.
+  if (cue === 'chop') return { kind: 'knock', pitch: 82, seconds: 0.18, volume: 0.036 }
   if (cue === 'place') return { kind: 'knock', pitch: 95, seconds: 0.14, volume: 0.032 }
   if (cue === 'growth') {
     return { kind: 'tone', from: 150, to: 230, seconds: 0.15, volume: 0.012 }

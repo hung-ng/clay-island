@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { CameraController } from '../camera/controller'
 import { CAMERA_HOME, type CameraPose } from '../camera/policy'
+import type { DayParams } from '../core/dayClock'
 import { RNG } from '../core/rng'
 import { clayMaterial } from '../fx/clayMaterial'
 import { PALETTE } from '../ui/tokens'
@@ -192,8 +193,8 @@ export class PrologueSet {
   private readonly materialPiles: THREE.Object3D[] = []
   private readonly blueprint: InitialWorldBlueprint
   private readonly reducedMotion: boolean
-  private readonly appliedHutStages: [number, number, number] = [0, 0, 0]
   private appliedCampfireProgress = 0
+  private appliedCampfireElapsed = 0
   private disposed = false
 
   constructor(blueprint: InitialWorldBlueprint, lowFx: boolean, reducedMotion: boolean) {
@@ -260,6 +261,7 @@ export class PrologueSet {
       setPresentationOpacity(tree.group, 1)
     }
     for (const hut of this.huts) setPresentationOpacity(hut.group, 1)
+    this.campfire.settleFlames()
     setPresentationOpacity(this.campfire.group, 1)
     this.group.rotation.set(0, this.blueprint.stageRotationY, 0)
   }
@@ -310,7 +312,7 @@ export class PrologueSet {
     this.trees.forEach((tree, index) => {
       if (!state.reducedMotion) {
         tree.group.visible = true
-        tree.setGrowthProgress(state.treeGrowth)
+        tree.setGrowthProgress(state.treeGrowths[index] ?? state.treeGrowth)
         setPresentationOpacity(tree.group, 1)
         return
       }
@@ -323,19 +325,24 @@ export class PrologueSet {
   }
 
   private applyHuts(state: PrologueState): void {
-    state.hutStages.forEach((stage, index) => {
+    state.hutStages.forEach((growth, index) => {
       const hut = this.builtHuts[index]
       if (!hut) return
-      while ((this.appliedHutStages[index] ?? 0) < stage) {
-        hut.buildTick()
-        this.appliedHutStages[index] = (this.appliedHutStages[index] ?? 0) + 1
-      }
-      if (!state.reducedMotion || stage === 0) {
+      if (!state.reducedMotion) {
+        hut.setProgress(growth)
         setPresentationOpacity(hut.group, 1)
         return
       }
-      const revealAt = HUT_BEATS[index]?.[stage - 1]
-      setPresentationOpacity(hut.group, revealAt === undefined ? 1 : revealAmount(state.elapsed, revealAt))
+
+      const beats = HUT_BEATS[index]
+      if (!beats) return
+      const stage = beats.filter(at => at <= state.elapsed).length
+      hut.setProgress(stage / beats.length)
+      const revealAt = beats[stage - 1]
+      setPresentationOpacity(
+        hut.group,
+        revealAt === undefined ? 1 : revealAmount(state.elapsed, revealAt),
+      )
     })
   }
 
@@ -345,17 +352,25 @@ export class PrologueSet {
       this.campfire.buildTick(delta)
       this.appliedCampfireProgress = state.campfireProgress
     }
+    // Gameplay drives the flame from the shared quantized clock, which never
+    // runs during the prologue; without this the fire lights and then sits
+    // frozen. The 12fps prologue frame counter is the same cadence.
+    this.campfire.update(
+      Math.max(0, state.elapsed - this.appliedCampfireElapsed),
+      state.frame / 12,
+    )
+    this.appliedCampfireElapsed = state.elapsed
     if (!state.reducedMotion || state.campfireProgress <= 0) {
       setPresentationOpacity(this.campfire.group, 1)
       return
     }
     const beat = state.campfireProgress >= 1
-      ? 10
+      ? 15.4
       : state.campfireProgress >= 0.99
-        ? 9.6
+        ? 15
         : state.campfireProgress >= 0.66
-          ? 8.8
-          : 8
+          ? 14.2
+          : 13.4
     setPresentationOpacity(this.campfire.group, revealAmount(state.elapsed, beat))
   }
 
@@ -364,7 +379,7 @@ export class PrologueSet {
       const hut = Math.floor(index / 3)
       const stage = index % 3
       const pile = this.materialPiles[index]
-      if (pile) pile.visible = this.hutStage(state, hut) <= stage
+      if (pile) pile.visible = this.hutStage(state, hut) < (stage + 1) / 3
     }
     for (let index = 0; index < 3; index++) {
       const consumed = state.campfireProgress >= (index + 1) * 0.33
@@ -443,6 +458,7 @@ export type PrologueDirectorOptions = {
   reducedMotion: () => boolean
   onCue(cue: PrologueCue): void
   onFinished(): void
+  applyDay(params: DayParams, dt: number): void
 }
 
 export class PrologueDirector {
@@ -452,6 +468,7 @@ export class PrologueDirector {
   private titleYaw = 0
   private titlePreviewActive = false
   private readonly initialCamera: CameraPose
+  private currentDay: DayParams
   private finished = false
   private disposed = false
 
@@ -461,7 +478,9 @@ export class PrologueDirector {
     options.camera.lock('prologue')
     const initial = prologueStateAt(0, options.blueprint, options.reducedMotion())
     this.initialCamera = initial.camera
+    this.currentDay = initial.day
     this.set.apply(initial)
+    options.applyDay(initial.day, 0)
     options.camera.setPose(initial.camera)
   }
 
@@ -484,10 +503,21 @@ export class PrologueDirector {
       this.options.blueprint,
       this.options.reducedMotion(),
     )
+    this.currentDay = state.day
     this.set.apply(state)
+    this.options.applyDay(state.day, Math.max(0, dt))
     this.options.camera.setPose(this.presentCamera(state.camera))
     for (const cue of crossedPrologueCues(this.previous, this.elapsed)) this.options.onCue(cue)
     if (state.finished) this.finish()
+  }
+
+  /**
+   * The day sample for the frame the director last applied. The shared render
+   * path sources its `dayParams` from this during the prologue so sky, clouds,
+   * sun position, shadows, stars, and fireflies all sweep together.
+   */
+  dayParams(): DayParams {
+    return this.currentDay
   }
 
   skip(): void {
