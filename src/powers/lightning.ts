@@ -5,7 +5,7 @@ import { wobble } from '../fx/wobble'
 import { PALETTE } from '../ui/tokens'
 import { resolveInteraction } from './matrix'
 import { applyInteractions } from './outcomes'
-import { impactContext, Power, type CastCtx } from './power'
+import { impactContext, type Power, type CastCtx } from './power'
 
 type Actor = {
   start(): void
@@ -122,7 +122,7 @@ function boltGeometry(ctx: CastCtx, y0: number): Actor {
   }
 }
 
-export class Lightning extends Power {
+export class Lightning implements Power {
   readonly id = 'lightning' as const
   readonly cooldown = 3
 

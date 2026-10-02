@@ -36,10 +36,10 @@ export function impactContext(ctx: CastCtx): CastCtx {
   return { ...ctx, kind: ctx.world.resolveTarget(ctx.x, ctx.z) }
 }
 
-export abstract class Power {
-  abstract readonly id: PowerId
-  abstract readonly cooldown: number
-  abstract cast(ctx: CastCtx): Timeline
+export interface Power {
+  readonly id: PowerId
+  readonly cooldown: number
+  cast(ctx: CastCtx): Timeline
 }
 
 export class PowerManager {

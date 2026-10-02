@@ -604,19 +604,6 @@ export class Villager {
     })
   }
 
-  setIntroWake(progress: number): void {
-    if (!this.alive) return
-    const amount = THREE.MathUtils.clamp(progress, 0, 1)
-    this.model.scale.set(
-      MODEL_SCALE,
-      MODEL_SCALE * THREE.MathUtils.lerp(0.68, 1, amount),
-      MODEL_SCALE,
-    )
-    this.group.rotation.z = THREE.MathUtils.lerp(-0.15, 0, amount)
-    this.arms[0].rotation.z = THREE.MathUtils.lerp(-1.2, this.arms[0].userData.baseRotation, amount)
-    this.arms[1].rotation.z = THREE.MathUtils.lerp(1.2, this.arms[1].userData.baseRotation, amount)
-  }
-
   zap(): void {
     if (!this.alive || this.zapTime >= 0) return
     this.wakeFromHut()

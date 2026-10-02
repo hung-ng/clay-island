@@ -17,7 +17,6 @@ type PowerControl = {
 }
 
 export const POWER_IDS: readonly PowerId[] = ['meteor', 'lightning', 'rain', 'wind', 'nudge']
-export const TRAY_AUXILIARY_CONTROLS = ['photo', 'journal'] as const
 const COOLDOWN_STEPS = 12
 const POWER_LABELS: Record<PowerId, string> = {
   meteor: 'Meteor',

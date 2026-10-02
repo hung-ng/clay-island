@@ -6,7 +6,7 @@ import { PALETTE } from '../ui/tokens'
 import { ISLAND_RADIUS } from '../world/island'
 import { resolveInteraction } from './matrix'
 import { applyInteractions } from './outcomes'
-import { impactContext, Power, type CastCtx } from './power'
+import { impactContext, type Power, type CastCtx } from './power'
 
 const RAIN_RADIUS = 5
 const DROP_COUNT = 120
@@ -209,7 +209,7 @@ function rainField(ctx: CastCtx): RainActor {
   }
 }
 
-export class Rain extends Power {
+export class Rain implements Power {
   readonly id = 'rain' as const
   readonly cooldown = 8
 

@@ -1,7 +1,7 @@
 import { PALETTE } from '../ui/tokens'
 import type { SuggestionKind } from '../villagers/fsm'
 import { isBuildable } from '../world/terrain'
-import type { Interaction, InteractionKind } from './matrix'
+import type { InteractionKind } from './matrix'
 import { groundNudge } from './nudge'
 import type { CastCtx } from './power'
 import { gustDirection } from './wind'
@@ -141,9 +141,9 @@ export const OUTCOME_HANDLERS: Record<
 }
 
 export function applyInteractions(
-  interactions: readonly Interaction[],
+  interactions: readonly InteractionKind[],
   ctx: CastCtx,
   y0: number,
 ): void {
-  for (const interaction of interactions) OUTCOME_HANDLERS[interaction.kind](ctx, y0)
+  for (const kind of interactions) OUTCOME_HANDLERS[kind](ctx, y0)
 }

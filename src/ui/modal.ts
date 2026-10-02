@@ -1,19 +1,27 @@
-export type InertElement = { inert: boolean }
+type InertElement = Element & { inert: boolean }
 
-/** Preserve and restore background state so independently-owned modals compose safely. */
-export function setModalBackgroundInert<T extends InertElement>(
-  elements: Iterable<T>,
-  previousState: Map<T, boolean>,
-  value: boolean,
-): void {
-  if (value) {
-    for (const element of elements) {
-      if (!previousState.has(element)) previousState.set(element, element.inert)
-      element.inert = true
+function hasInert(element: Element): element is InertElement {
+  return 'inert' in element && typeof element.inert === 'boolean'
+}
+
+/** Save sibling inert states when opening and restore them when closing. */
+export function createModalBackground(
+  host: { readonly children: Iterable<Element> },
+  modal: Element,
+): (inert: boolean) => void {
+  const previousState = new Map<InertElement, boolean>()
+
+  return (inert) => {
+    if (inert) {
+      for (const element of host.children) {
+        if (element === modal || !hasInert(element)) continue
+        if (!previousState.has(element)) previousState.set(element, element.inert)
+        element.inert = true
+      }
+      return
     }
-    return
-  }
 
-  for (const [element, wasInert] of previousState) element.inert = wasInert
-  previousState.clear()
+    for (const [element, wasInert] of previousState) element.inert = wasInert
+    previousState.clear()
+  }
 }

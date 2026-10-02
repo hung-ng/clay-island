@@ -5,8 +5,6 @@ import type { InitialVillagerSpec, InitialWorldBlueprint } from '../world/bluepr
 import { islandSurfaceY } from '../world/island'
 
 export const PROLOGUE_DURATION = 17
-/** Full day+night cycles the intro sweeps through. */
-export const PROLOGUE_CYCLES = 3
 /**
  * The sweep starts and ends on the canonical golden phase. The title holds that
  * exact sample and only advances its preview orbit, so beginning anywhere else

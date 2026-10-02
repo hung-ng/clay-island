@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 import { EventBus } from '../core/events'
 import { RNG } from '../core/rng'
 import { Timeline } from '../core/timeline'
-import { Power, PowerManager, type CastCtx, type PowerContext } from './power'
+import { PowerManager, type Power, type CastCtx, type PowerContext } from './power'
 
-class TestPower extends Power {
+class TestPower implements Power {
   readonly id = 'meteor' as const
   readonly cooldown = 2
   casts = 0

@@ -41,7 +41,6 @@ export class CelebrationDirector {
 
   constructor(private readonly options: CelebrationDirectorOptions) {}
 
-  get busy(): boolean { return this.clock.busy }
   get active(): boolean { return this.clock.active }
 
   request(): boolean {

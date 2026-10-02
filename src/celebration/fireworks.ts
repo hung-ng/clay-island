@@ -71,11 +71,20 @@ const TUBE_X = [-0.48, 0, 0.48] as const
 const TUBE_Z = 1.1
 const ANTICIPATION_START = 2.55
 const FIRST_LAUNCH = FIREWORK_LAUNCHES[0]!.at
+const BURST_LIGHT = {
+  height: 10,
+  distance: 34,
+  peak: 5,
+  finalePeak: 8,
+  maxIntensity: 12,
+  decaySeconds: 0.5,
+} as const
 
 export class CelebrationFireworks {
   readonly group = new THREE.Group()
   readonly poolCapacity: number
   private readonly pool: ParticleBurst
+  private readonly burstLight: THREE.PointLight | null
   private readonly tubes = new THREE.Group()
   private readonly tubeMaterials: THREE.MeshToonMaterial[] = []
   private readonly rockets: RocketSlot[] = []
@@ -96,13 +105,18 @@ export class CelebrationFireworks {
     private readonly options: {
       lowFx: boolean
       reducedMotion(): boolean
-      onBurst?(color: string, finale: boolean): void
     },
   ) {
     this.group.name = 'celebration-fireworks'
     this.group.visible = false
     this.poolCapacity = options.lowFx ? 200 : 560
     this.pool = new ParticleBurst(this.group, this.poolCapacity, 1515)
+    this.burstLight = options.lowFx ? null : new THREE.PointLight(PALETTE.cloud, 0, BURST_LIGHT.distance)
+    if (this.burstLight) {
+      this.burstLight.name = 'celebration-burst-light'
+      this.burstLight.visible = false
+      parent.add(this.burstLight)
+    }
 
     for (const [index, x] of TUBE_X.entries()) {
       const material = clayMaterial([PALETTE.smockA, PALETTE.smockB, PALETTE.smockC][index]!)
@@ -161,12 +175,14 @@ export class CelebrationFireworks {
     if (this.disposed) return
     this.reset()
     this.group.position.set(centre.x, centre.y, centre.z)
+    this.burstLight?.position.set(centre.x, centre.y + BURST_LIGHT.height, centre.z)
     this.group.visible = true
   }
 
   update(dt: number): CelebrationSoundCue[] {
     if (this.disposed || !this.group.visible) return []
     const delta = Math.max(0, dt)
+    this.updateBurstLight(delta)
     const before = this.elapsed
     this.elapsed += delta
     let launched = false
@@ -228,7 +244,12 @@ export class CelebrationFireworks {
       slot.mesh.visible = false
       this.emitBurst(launch, slot.mesh.position.x, slot.mesh.position.y, slot.mesh.position.z)
       this.flash(slot.mesh.position.x, slot.mesh.position.y, slot.mesh.position.z, launch.color)
-      this.options.onBurst?.(launch.color, launch.finale)
+      if (this.burstLight) {
+        this.burstLight.color.set(launch.color)
+        const added = launch.finale ? BURST_LIGHT.finalePeak : BURST_LIGHT.peak
+        this.burstLight.intensity = Math.min(BURST_LIGHT.maxIntensity, this.burstLight.intensity + added)
+        this.burstLight.visible = true
+      }
       if (launch.echo && !this.options.reducedMotion()) {
         this.scheduleEcho(slot.mesh.position.x, slot.mesh.position.y, slot.mesh.position.z, launch.color)
       }
@@ -291,6 +312,10 @@ export class CelebrationFireworks {
       flash.material.opacity = 0
     }
     this.group.visible = false
+    if (this.burstLight) {
+      this.burstLight.intensity = 0
+      this.burstLight.visible = false
+    }
   }
 
   dispose(): void {
@@ -298,6 +323,8 @@ export class CelebrationFireworks {
     this.reset()
     this.disposed = true
     this.pool.dispose()
+    this.burstLight?.removeFromParent()
+    this.burstLight?.dispose()
     for (const flash of this.flashes) {
       flash.mesh.removeFromParent()
       flash.material.dispose()
@@ -310,6 +337,18 @@ export class CelebrationFireworks {
       const materials = Array.isArray(object.material) ? object.material : [object.material]
       for (const material of materials) material.dispose()
     })
+  }
+
+  private updateBurstLight(dt: number): void {
+    if (!this.burstLight?.visible) return
+    this.burstLight.intensity = Math.max(
+      0,
+      this.burstLight.intensity - (BURST_LIGHT.peak / BURST_LIGHT.decaySeconds) * dt,
+    )
+    if (this.burstLight.intensity <= 0.01) {
+      this.burstLight.intensity = 0
+      this.burstLight.visible = false
+    }
   }
 
   private updateAnticipation(before: number, after: number): void {

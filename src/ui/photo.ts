@@ -1,6 +1,5 @@
-import { canArmPower, type AppFlowState } from '../core/appFlow'
 import type { DayKind } from '../core/dayClock'
-import { setModalBackgroundInert } from './modal'
+import { createModalBackground } from './modal'
 import { PALETTE } from './tokens'
 
 /** Capture is capped here; aspect follows the live canvas. */
@@ -84,14 +83,6 @@ export function composePostcard(
   context.fillText(caption, layout.captionX, layout.captionY + press, captionMaxWidth)
   context.fillStyle = PALETTE.ink
   context.fillText(caption, layout.captionX, layout.captionY, captionMaxWidth)
-}
-
-/**
- * Same condition as arming a power: gameplay, no modal owner. Deliberately
- * ignores celebration — photographing the fireworks is the point.
- */
-export function photoArmable(state: AppFlowState, modalOpen: boolean): boolean {
-  return canArmPower(state, modalOpen)
 }
 
 export type CaptureRenderer = {
@@ -336,14 +327,7 @@ export function createPhotoPreview(
   let saving = false
   let disposed = false
   let restoreFocus: HTMLElement | null = null
-  const backgroundInertState = new Map<HTMLElement, boolean>()
-
-  const setBackgroundInert = (value: boolean): void => {
-    const background = [...host.children].filter((child): child is HTMLElement => (
-      child instanceof HTMLElement && child !== layer
-    ))
-    setModalBackgroundInert(background, backgroundInertState, value)
-  }
+  const setBackgroundInert = createModalBackground(host, layer)
 
   const finishPendingClose = (): void => {
     window.clearTimeout(closeTimer)

@@ -1,3 +1,5 @@
+import { createModalBackground } from './modal'
+
 export type TitleUI = {
   showBegin(): void
   showPrologue(canSkip: boolean): void
@@ -44,7 +46,7 @@ export function createTitleUI(
   let coverTimer = 0
   let plaqueTimer = 0
   let disposed = false
-  const backgroundInertState = new Map<HTMLElement, boolean>()
+  const setBackgroundInert = createModalBackground(ui, layer)
 
   const clearCoverTimer = (): void => {
     window.clearTimeout(coverTimer)
@@ -54,19 +56,6 @@ export function createTitleUI(
   const clearPlaqueTimer = (): void => {
     window.clearTimeout(plaqueTimer)
     plaqueTimer = 0
-  }
-
-  const setBackgroundInert = (inert: boolean): void => {
-    if (inert) {
-      for (const child of ui.children) {
-        if (!(child instanceof HTMLElement) || child === layer) continue
-        if (!backgroundInertState.has(child)) backgroundInertState.set(child, child.inert)
-        child.inert = true
-      }
-      return
-    }
-    for (const [element, wasInert] of backgroundInertState) element.inert = wasInert
-    backgroundInertState.clear()
   }
 
   const setMode = (mode: 'begin' | 'prologue' | 'cover' | 'hidden'): void => {

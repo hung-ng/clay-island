@@ -9,7 +9,6 @@ import {
   celebrationActPose,
   type CameraPose,
 } from './camera/policy'
-import { CelebrationBurstLight } from './celebration/burstLight'
 import { CelebrationDirector } from './celebration/director'
 import { CelebrationFireworks } from './celebration/fireworks'
 import {
@@ -26,7 +25,6 @@ import {
 import { createBackgroundTicker } from './core/backgroundTicker'
 import { DayClock, GOLDEN_T, sampleAt } from './core/dayClock'
 import { GameLoop, QuantizedClock } from './core/loop'
-import { applyReducedMotion, prefersReducedMotion } from './core/motion'
 import { Preferences } from './core/preferences'
 import { RNG } from './core/rng'
 import { Journal, MOMENTS } from './discovery/moments'
@@ -56,7 +54,6 @@ import {
   createPhotoCapture,
   createPhotoPreview,
   downloadBlob,
-  photoArmable,
   type PhotoCanvas,
   type PhotoPreviewUI,
 } from './ui/photo'
@@ -72,9 +69,11 @@ const splash = document.getElementById('splash')!
 let storage: Storage | null = null
 try { storage = localStorage } catch { /* Persistence is optional. */ }
 
-const preferences = new Preferences(storage, location.search, prefersReducedMotion())
+const systemReducedMotion = typeof matchMedia === 'function'
+  && matchMedia('(prefers-reduced-motion: reduce)').matches
+const preferences = new Preferences(storage, location.search, systemReducedMotion)
 const reducedMotion = (): boolean => preferences.snapshot.reducedMotion
-applyReducedMotion(document.documentElement, reducedMotion())
+document.documentElement.dataset.reducedMotion = String(reducedMotion())
 const startup = preferences.snapshot
 const blueprint = createInitialWorldBlueprint(7)
 const sceneBundle = createScene({ lowFx: startup.lowFx, reducedMotion })
@@ -244,7 +243,7 @@ const photoCapture = createPhotoCapture({
   },
 })
 takePhoto = () => {
-  if (photoArmable(flow, modalOpen())) photoCapture.capture()
+  if (canArmPower(flow, modalOpen())) photoCapture.capture()
 }
 
 const journal = new Journal(storage)
@@ -291,7 +290,7 @@ settingsUI = createSettingsUI(ui, {
   },
   onReducedMotionChange(on) {
     preferences.setReducedMotion(on)
-    applyReducedMotion(document.documentElement, reducedMotion())
+    document.documentElement.dataset.reducedMotion = String(reducedMotion())
     settingsUI?.setReducedMotion(reducedMotion())
   },
   onTimeOfDayChange(mode) {
@@ -306,35 +305,15 @@ settingsUI = createSettingsUI(ui, {
   onReplayIntro() { beginSettingsReplay() },
 })
 settingsUI.setVisible(false)
-const celebrationBurstLight = lowFx ? null : new CelebrationBurstLight(stageRoot)
 const celebrationFireworks = new CelebrationFireworks(stageRoot, {
   lowFx,
   reducedMotion,
-  onBurst: (color, finale) => celebrationBurstLight?.onBurst(color, finale),
 })
-const celebrationShow = {
-  begin(origin: { x: number; y: number; z: number }): void {
-    celebrationFireworks.begin(origin)
-    celebrationBurstLight?.begin(origin)
-  },
-  update(dt: number) {
-    celebrationBurstLight?.update(dt)
-    return celebrationFireworks.update(dt)
-  },
-  reset(): void {
-    celebrationFireworks.reset()
-    celebrationBurstLight?.reset()
-  },
-  dispose(): void {
-    celebrationFireworks.dispose()
-    celebrationBurstLight?.dispose()
-  },
-}
 let celebrationCameraRevision = 0
 let celebrationDragAtStart = false
 celebration = new CelebrationDirector({
   world,
-  fireworks: celebrationShow,
+  fireworks: celebrationFireworks,
   isGameplay: () => flow.phase === 'gameplay',
   toastsIdle: () => journalUI?.isToastIdle() ?? true,
   modalsClosed: () => !settingsOpen && !(journalUI?.isOpen() ?? false),
@@ -643,7 +622,7 @@ const loop = new GameLoop(
       celebration?.update(dt)
       particles.update(dt)
       for (const power of powerIds) tray.setCooldown(power, powers.cooldown01(power))
-      tray.setPhotoEnabled(photoArmable(flow, modalOpen()))
+      tray.setPhotoEnabled(canArmPower(flow, modalOpen()))
       world.updateFireLights(camera.position)
     }
 

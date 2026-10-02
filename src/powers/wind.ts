@@ -6,7 +6,7 @@ import { PALETTE } from '../ui/tokens'
 import { ISLAND_RADIUS } from '../world/island'
 import { resolveInteraction } from './matrix'
 import { applyInteractions } from './outcomes'
-import { impactContext, Power, type CastCtx } from './power'
+import { impactContext, type Power, type CastCtx } from './power'
 
 /** Wind gust tuning: one source for the module and the outcome handlers. */
 export const WIND = {
@@ -144,7 +144,7 @@ function gustField(ctx: CastCtx, reduced: boolean, gustSeconds: number): GustAct
   }
 }
 
-export class Wind extends Power {
+export class Wind implements Power {
   readonly id = 'wind' as const
   readonly cooldown = WIND.cooldown
 

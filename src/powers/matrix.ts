@@ -16,8 +16,6 @@ export type InteractionKind =
   | 'startleVillager'
   | 'tumble'
 
-export type Interaction = { kind: InteractionKind }
-
 export const INTERACTION_KINDS: readonly InteractionKind[] = [
   'ignite',
   'destroy',
@@ -35,7 +33,7 @@ export const INTERACTION_KINDS: readonly InteractionKind[] = [
   'tumble',
 ] as const
 
-const MATRIX: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
+const MATRIX: Record<PowerId, Record<TargetKind, readonly InteractionKind[]>> = {
   meteor: {
     // The struck tree is annihilated; blast fire is handled separately nearby.
     tree: ['destroy'],
@@ -86,6 +84,6 @@ const MATRIX: Record<PowerId, Record<TargetKind, InteractionKind[]>> = {
   },
 }
 
-export function resolveInteraction(power: PowerId, target: TargetKind): Interaction[] {
-  return MATRIX[power][target].map(kind => ({ kind }))
+export function resolveInteraction(power: PowerId, target: TargetKind): readonly InteractionKind[] {
+  return MATRIX[power][target]
 }

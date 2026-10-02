@@ -5,7 +5,7 @@ import { wobble } from '../fx/wobble'
 import { PALETTE } from '../ui/tokens'
 import { resolveInteraction } from './matrix'
 import { applyInteractions } from './outcomes'
-import { impactContext, Power, type CastCtx } from './power'
+import { impactContext, type Power, type CastCtx } from './power'
 
 type AnimatedActor = {
   start(): void
@@ -128,7 +128,7 @@ function dustRing(parent: THREE.Object3D, x: number, y: number, z: number): void
   }
 }
 
-export class Meteor extends Power {
+export class Meteor implements Power {
   readonly id = 'meteor' as const
   readonly cooldown = 6
 

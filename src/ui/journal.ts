@@ -1,5 +1,5 @@
 import { MOMENTS, type Journal, type Moment, type MomentId } from '../discovery/moments'
-import { setModalBackgroundInert } from './modal'
+import { createModalBackground } from './modal'
 
 export type CelebrationRewardStatus = 'ready' | 'queued' | 'active'
 
@@ -129,7 +129,7 @@ export function createJournalUI(
   let closeTimer = 0
   let unlockedCount = journal.count()
   let celebrationStatus: CelebrationRewardStatus = 'ready'
-  const backgroundInertState = new Map<HTMLElement, boolean>()
+  const setBackgroundInert = createModalBackground(ui, layer)
 
   const syncCelebrationReward = (): void => {
     const view = celebrationRewardView(unlockedCount, celebrationStatus)
@@ -137,13 +137,6 @@ export function createJournalUI(
     celebrateButton.disabled = view.disabled
     celebrateButton.textContent = view.label
     slab.classList.toggle('journal-complete', !view.hidden)
-  }
-
-  const setBackgroundInert = (value: boolean): void => {
-    const background = [...ui.children].filter((child): child is HTMLElement => (
-      child instanceof HTMLElement && child !== layer
-    ))
-    setModalBackgroundInert(background, backgroundInertState, value)
   }
 
   const setOpen = (value: boolean): void => {

@@ -58,7 +58,7 @@ describe('resolveInteraction', () => {
   for (const power of POWERS) {
     for (const target of TARGETS) {
       it(`${power} on ${target}`, () => {
-        expect(resolveInteraction(power, target).map(i => i.kind)).toEqual(EXPECTED[power][target])
+        expect(resolveInteraction(power, target)).toEqual(EXPECTED[power][target])
       })
     }
   }
@@ -92,7 +92,7 @@ describe('matrix completeness', () => {
     const emitted = new Set<InteractionKind>()
     for (const power of POWERS) {
       for (const target of TARGETS) {
-        for (const interaction of resolveInteraction(power, target)) emitted.add(interaction.kind)
+        for (const kind of resolveInteraction(power, target)) emitted.add(kind)
       }
     }
     for (const kind of emitted) {
@@ -110,7 +110,7 @@ describe('matrix completeness', () => {
     const emitted = new Set<InteractionKind>()
     for (const power of POWERS) {
       for (const target of TARGETS) {
-        for (const interaction of resolveInteraction(power, target)) emitted.add(interaction.kind)
+        for (const kind of resolveInteraction(power, target)) emitted.add(kind)
       }
     }
     expect([...INTERACTION_KINDS].sort()).toEqual([...emitted].sort())

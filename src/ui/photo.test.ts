@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { initialAppFlow, transitionAppFlow } from '../core/appFlow'
 import { PALETTE } from './tokens'
 import {
   composePostcard,
   createPhotoCapture,
   exportPhoto,
-  photoArmable,
   photoFilename,
   postcardCaption,
   postcardLayout,
@@ -97,18 +95,6 @@ describe('composePostcard', () => {
     expect(context.textAlign).toBe('center')
     expect(context.textBaseline).toBe('middle')
     expect(context.font).toContain(`${layout.fontPx}px`)
-  })
-})
-
-describe('photoArmable', () => {
-  it('is armable only in gameplay with no modal owner', () => {
-    const title = initialAppFlow(true)
-    expect(photoArmable(title, false)).toBe(false)
-    const prologue = transitionAppFlow(title, { type: 'begin' })
-    expect(photoArmable(prologue, false)).toBe(false)
-    const gameplay = transitionAppFlow(prologue, { type: 'finishPrologue' })
-    expect(photoArmable(gameplay, false)).toBe(true)
-    expect(photoArmable(gameplay, true)).toBe(false)
   })
 })
 

@@ -6,7 +6,7 @@ import type { SuggestionKind } from '../villagers/fsm'
 import { MAX_HUTS } from '../world/world'
 import { resolveInteraction } from './matrix'
 import { applyInteractions } from './outcomes'
-import { impactContext, Power, type CastCtx } from './power'
+import { impactContext, type Power, type CastCtx } from './power'
 
 type Ripple = {
   start(): void
@@ -123,7 +123,7 @@ function pokeRipple(
   }
 }
 
-export class Nudge extends Power {
+export class Nudge implements Power {
   readonly id = 'nudge' as const
   readonly cooldown = 2
 

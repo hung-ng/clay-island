@@ -163,10 +163,6 @@ export class World {
     return Boolean(this.campfire) && !this.campfire.lit && !this.campfire.scattered
   }
 
-  buildSite(): Hut | null {
-    return this.huts.find(hut => hut.state === 'site' || hut.state === 'building' || hut.state === 'ruin') ?? null
-  }
-
   hasHutWork(): boolean {
     return this.huts.some(hut => (
       hut.state === 'site' || hut.state === 'building' || hut.state === 'abandoned'

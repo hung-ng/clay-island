@@ -64,7 +64,6 @@ export class CelebrationClock {
 
   get busy(): boolean { return this.phase !== 'idle' }
   get active(): boolean { return this.phase !== 'idle' && this.phase !== 'queued' }
-  get phaseElapsed(): number { return this.elapsed }
   get totalElapsed(): number {
     if (!this.active) return 0
     return PHASE_START[this.phase as ActiveCelebrationPhase] + this.elapsed

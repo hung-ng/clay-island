@@ -1,6 +1,6 @@
 import type { TimeOfDayMode } from '../core/dayClock'
 import type { VisualQuality } from '../core/preferences'
-import { setModalBackgroundInert } from './modal'
+import { createModalBackground } from './modal'
 
 export const TIME_OF_DAY_OPTIONS: readonly { value: TimeOfDayMode; label: string }[] = [
   { value: 'auto', label: 'Auto' },
@@ -187,7 +187,7 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
   let openRaf = 0
   let closeTimer = 0
   let disposed = false
-  const backgroundInertState = new Map<HTMLElement, boolean>()
+  const setBackgroundInert = createModalBackground(ui, layer)
 
   const syncSound = (): void => {
     const on = !muted
@@ -212,13 +212,6 @@ export function createSettingsUI(ui: HTMLElement, options: SettingsUIOptions): S
 
   const syncTimeOfDay = (): void => {
     for (const [value, radio] of timeRadios) radio.checked = value === timeOfDay
-  }
-
-  const setBackgroundInert = (value: boolean): void => {
-    const background = [...ui.children].filter((child): child is HTMLElement => (
-      child instanceof HTMLElement && child !== layer
-    ))
-    setModalBackgroundInert(background, backgroundInertState, value)
   }
 
   const showSettingsBody = (focus = true): void => {

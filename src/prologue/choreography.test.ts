@@ -6,7 +6,6 @@ import {
   crossedPrologueCues,
   HUT_BEATS,
   PROLOGUE_CUES,
-  PROLOGUE_CYCLES,
   PROLOGUE_DURATION,
   TREE_CHOPS,
   prologueDayParams,
@@ -133,8 +132,6 @@ describe('prologue choreography', () => {
   })
 
   it('sweeps three day-night cycles and lands on the golden handoff phase', () => {
-    expect(PROLOGUE_CYCLES).toBe(3)
-
     // The sweep opens on the golden phase the title already holds, so the first
     // transition the viewer sees is that evening's sunset.
     expect(prologueDayParams(0).kind).toBe('dusk')
