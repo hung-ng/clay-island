@@ -333,7 +333,9 @@ export class Tree {
     this.crown.name = 'tree-crown'
     this.crown.rotation.y = rng.range(0, Math.PI * 2)
     this.group.add(this.crown)
-    this.fireVisual = new BurningVisual(seedFromId(id), 1.25, 0.34, lowFx)
+    // On the crown's crest, not at its heart: inside the leaves the flames are
+    // hidden and a burning tree only reads as a charred one.
+    this.fireVisual = new BurningVisual(seedFromId(id), 2.05, 0.68, lowFx)
     this.group.add(this.fireVisual.group)
     this.shadow = addBlobShadow(this.group, 1.05, lowFx)
     this.syncAppearance()
@@ -714,6 +716,8 @@ export class Tree {
     this.trunk.position.y = 0.55 * scale
     this.crown.scale.setScalar(scale)
     this.crown.position.y = 1.45 * scale
+    // Fire sits on the crown's crest, so it grows with the crown.
+    this.fireVisual.group.scale.setScalar(scale)
     this.shadow.setScale(scale)
   }
 
@@ -869,7 +873,8 @@ export class Hut {
     }
 
     this.group.add(this.base, this.door, this.roofKnob, this.siteStones)
-    this.fireVisual = new BurningVisual(seedFromId(id), 1.05, 0.42, lowFx)
+    // Licking up from the dome's crown, where they show over the clay.
+    this.fireVisual = new BurningVisual(seedFromId(id), 1.55, 0.55, lowFx)
     this.group.add(this.fireVisual.group)
     addBlobShadow(this.group, 1.35, lowFx)
     this.syncAppearance()
