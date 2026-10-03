@@ -1,6 +1,7 @@
 // Feature showcase capture (see README.md beside this file).
 //   node showcase.mjs preview        stills at 960x540 (four per shot) into preview/
-//   node showcase.mjs final [A..D]   1920x1080 @30fps frames + audio into frames/
+//   node showcase.mjs final [A..D]   1920x1080 @30fps frames + audio into out/frames
+//     (a part may name several sections, e.g. BCD; AUDIO_ONLY=1 skips frames)
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -107,7 +108,7 @@ async function frame({ timeScale = 1 } = {}) {
   gameT += ms / 1000
   await vt.frame(ms, recording ? 1 / fps : ms / 1000, recording && final)
   if (!recording) return
-  if (final) {
+  if (final && !process.env.AUDIO_ONLY) {
     await page.screenshot({ path: `${outDir}/${section}-${String(frameNo).padStart(5, '0')}.jpg`, type: 'jpeg', quality: 94, timeout: 180000 })
   }
   frameNo++
@@ -155,9 +156,21 @@ function shot(name) {
   shotFrame = 0
   console.log(`[${section}] ${name} @ video frame ${frameNo}`)
 }
-function startSection(name) {
+async function finish() {
+  console.log('done', frameNo, 'frames')
+  if (final) {
+    const audio = await vt.writeAudio(`${outDir}/${part}.wav`)
+    console.log('audio', audio)
+    writeFileSync(`${outDir}/${part}.json`, JSON.stringify({ frames: frameNo, audio }))
+  }
+  await vt.close()
+  process.exit(0)
+}
+async function startSection(name) {
+  if (part !== 'all' && name > [...part].sort().at(-1)) await finish()
   section = name
-  recording = part === 'all' || part === name
+  // `part` may name several sections (e.g. BCD) to record them in one run.
+  recording = part === 'all' || part.includes(name)
   console.log(`== section ${name} (${recording ? 'recording' : 'skipping'})`)
 }
 
@@ -220,7 +233,7 @@ const world = (fn, arg) => page.evaluate(fn, arg)
 // ============================================================================
 // The show
 // ============================================================================
-startSection('A')
+await startSection('A')
 
 shot('title')
 await play(1.4)
@@ -243,7 +256,7 @@ await (async () => {
 await play(0.6)
 
 // ---------------------------------------------------------------------------
-startSection('B')
+await startSection('B')
 dayT = 212
 
 shot('village-life')
@@ -297,7 +310,7 @@ await hideCursor()
 await play(3.4, { camera: move(strikeCam, { ...strikeCam, dist: 8.8 }) })
 
 // ---------------------------------------------------------------------------
-startSection('C')
+await startSection('C')
 dayT = 212
 
 // The forest changes as villagers chop and saplings grow, so find a standing
@@ -369,7 +382,7 @@ const after = await villagerAt()
 await play(3.8, { camera: move(grumpCam, { ...grumpCam, target: V(after.x, 1, after.z), dist: 6.5, height: 2.6 }) })
 
 // ---------------------------------------------------------------------------
-startSection('D')
+await startSection('D')
 dayT = 212
 
 const windCam = { target: V(-1, 1, 0.8), angle: 200, dist: 17, height: 6.5 }
@@ -420,10 +433,4 @@ currentCamera = () => orbit(skyCam)
 await until(() => window.__clay.celebration.active, 20)
 await play(9.4, { camera: move(skyCam, { ...skyCam, angle: 188, dist: 15 }, t => t) })
 
-console.log('done', frameNo, 'frames')
-if (final) {
-  const audio = await vt.writeAudio(`${outDir}/${part}.wav`)
-  console.log('audio', audio)
-  writeFileSync(`${outDir}/${part}.json`, JSON.stringify({ frames: frameNo, audio }))
-}
-await vt.close()
+await finish()

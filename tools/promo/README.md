@@ -26,9 +26,9 @@ npx http-server tools/promo/out/site -p 5174 -s &
 # 2. framing check: stills at 960x540 into out/preview (optionally only some sections)
 node tools/promo/showcase.mjs preview          # or: preview C,D
 
-# 3. 1920x1080 frames + audio into out/frames. Sections A-D are independent:
-#    each replays the ones before it unrecorded, so they can run in parallel.
-for p in A B C D; do node tools/promo/showcase.mjs final $p & done; wait
+# 3. 1920x1080 frames + audio into out/frames. A part replays the sections
+#    before it unrecorded, so two runs side by side is the sweet spot:
+node tools/promo/showcase.mjs final A & node tools/promo/showcase.mjs final BCD; wait
 
 # 4. stitch, loudness-normalise (-16 LUFS) and encode for X
 tools/promo/encode-showcase.sh               # -> tools/promo/out/clay-island-showcase.mp4
