@@ -6,8 +6,13 @@ import { fitTitle, type Glyph, type Stroke } from './clayLettering'
 import { PALETTE, TIMING } from './tokens'
 
 const WORDS = ['CLAY', 'ISLAND'] as const
-/** Each letter a different lump of the village's clay. */
-const COLORS = [PALETTE.smockA, PALETTE.smockB, PALETTE.smockC, PALETTE.leafA, PALETTE.bloom]
+/**
+ * Cream clay with a dark ink outline: the lettering has to read over blue sky,
+ * green grass and night alike, and no single fill colour contrasts with all of
+ * them. The outline does that job; the cream keeps it bright and friendly.
+ */
+const FILL = PALETTE.paper
+const OUTLINE = 0.034
 /** Distance in front of the camera; the island sits well behind this. */
 const DEPTH = 12
 /** Coil radius, in cap heights. */
@@ -23,6 +28,23 @@ const LEAVE_STAGGER = 0.05
 const LEAVE_SECONDS = 0.6
 
 const UP = new THREE.Vector3(0, 1, 0)
+
+/** Pushes every vertex out along its normal: the hull for an ink outline. */
+function inflate(geometry: THREE.BufferGeometry, amount: number): THREE.BufferGeometry {
+  const hull = geometry.clone()
+  hull.computeVertexNormals()
+  const position = hull.getAttribute('position') as THREE.BufferAttribute
+  const normal = hull.getAttribute('normal') as THREE.BufferAttribute
+  for (let i = 0; i < position.count; i++) {
+    position.setXYZ(
+      i,
+      position.getX(i) + normal.getX(i) * amount,
+      position.getY(i) + normal.getY(i) * amount,
+      position.getZ(i) + normal.getZ(i) * amount,
+    )
+  }
+  return hull
+}
 
 function coil(from: THREE.Vector3, to: THREE.Vector3, rng: RNG): THREE.BufferGeometry {
   const geometry = new THREE.CapsuleGeometry(COIL, from.distanceTo(to), 6, 14)
@@ -76,13 +98,16 @@ export class TitleLetters {
     camera.add(this.root)
 
     const rng = new RNG(1717)
+    // A soft rim only: cream clay at full rim strength would bloom.
+    const fill = clayMaterial(FILL, { rim: 0.15 })
+    // Back faces of an inflated hull read as a hand-drawn ink line.
+    const ink = new THREE.MeshBasicMaterial({ color: PALETTE.ink, side: THREE.BackSide })
     const { layout } = fitTitle(WORDS, 1, 1, 1)
     layout.glyphs.forEach((placed, index) => {
-      const material = clayMaterial(COLORS[index % COLORS.length]!)
       const group = new THREE.Group()
       group.name = `title-letter-${placed.char}`
       for (const geometry of this.glyphGeometries(placed.glyph, rng)) {
-        group.add(new THREE.Mesh(geometry, material))
+        group.add(new THREE.Mesh(geometry, fill), new THREE.Mesh(inflate(geometry, OUTLINE), ink))
       }
       this.root.add(group)
       this.letters.push({ group, index })
