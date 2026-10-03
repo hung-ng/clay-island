@@ -59,6 +59,7 @@ import {
 } from './ui/photo'
 import { createSettingsUI, type SettingsUI } from './ui/settings'
 import { createTitleUI } from './ui/title'
+import { TitleLetters } from './ui/titleLetters'
 import { PALETTE, TIMING } from './ui/tokens'
 import { createTray } from './ui/tray'
 import { createInitialWorldBlueprint } from './world/blueprint'
@@ -89,6 +90,7 @@ const {
   composer,
   lowFx,
 } = sceneBundle
+const titleLetters = new TitleLetters(camera, scene, reducedMotion)
 const cameraController = new CameraController({
   camera,
   dom: renderer.domElement,
@@ -487,6 +489,7 @@ function beginNormalPrologue(): void {
   auditMask = null
   sfx.unlock()
   titleUI.showPrologue(canSkipPrologue(flow))
+  titleLetters.dismiss()
   island.group.visible = false
 }
 
@@ -505,6 +508,7 @@ function prepareNormalTitle(): void {
   if (flow.phase !== 'title' || director) return
   director = createDirector(flow.generation + 1)
   titleUI.showBegin()
+  titleLetters.show()
 }
 
 prepareNormalTitle()
@@ -611,6 +615,7 @@ const loop = new GameLoop(
       && !normalHandoffSwapped
       && swapToFrozenGameplay()
 
+    titleLetters.update(dt)
     if (flow.phase === 'title' && !document.hidden) {
       director?.updateTitlePreview(dt)
     } else if (flow.phase === 'prologue' && !pendingNormalHandoff && !document.hidden) {
