@@ -69,32 +69,35 @@ export function clayMaterial(color: THREE.ColorRepresentation, opts: ClayOptions
         .replace('#include <common>', `#include <common>
 varying vec3 vClayPos;
 uniform float clayRimStrength;
-float clayHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
-// Smooth value noise. Sampling the raw hash per floor() cell (as this used to)
-// gives hard-edged cells that read as voxel speckle up close and as a faint
-// checkerboard across the ground; interpolated noise reads as pressed clay.
-float clayNoise(vec3 p) {
+// Smooth three-channel value noise. Sampling a raw hash per floor() cell (as
+// this used to) gives hard-edged cells that read as voxel speckle up close and
+// as a faint checkerboard across the ground. One vec3 hash per lattice corner
+// feeds all three dent axes at once, keeping it cheap enough for laptop GPUs.
+vec3 clayHash3(vec3 p) {
+  return fract(sin(vec3(
+    dot(p, vec3(127.1, 311.7, 74.7)),
+    dot(p, vec3(269.5, 183.3, 246.1)),
+    dot(p, vec3(113.5, 271.9, 124.6)))) * 43758.5453);
+}
+vec3 clayNoise3(vec3 p) {
   vec3 i = floor(p);
   vec3 f = fract(p);
   f = f * f * (3.0 - 2.0 * f);
   return mix(
-    mix(mix(clayHash(i), clayHash(i + vec3(1.0, 0.0, 0.0)), f.x),
-        mix(clayHash(i + vec3(0.0, 1.0, 0.0)), clayHash(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
-    mix(mix(clayHash(i + vec3(0.0, 0.0, 1.0)), clayHash(i + vec3(1.0, 0.0, 1.0)), f.x),
-        mix(clayHash(i + vec3(0.0, 1.0, 1.0)), clayHash(i + vec3(1.0, 1.0, 1.0)), f.x), f.y),
+    mix(mix(clayHash3(i), clayHash3(i + vec3(1.0, 0.0, 0.0)), f.x),
+        mix(clayHash3(i + vec3(0.0, 1.0, 0.0)), clayHash3(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+    mix(mix(clayHash3(i + vec3(0.0, 0.0, 1.0)), clayHash3(i + vec3(1.0, 0.0, 1.0)), f.x),
+        mix(clayHash3(i + vec3(0.0, 1.0, 1.0)), clayHash3(i + vec3(1.0, 1.0, 1.0)), f.x), f.y),
     f.z);
-}
-vec3 clayDent(vec3 p) {
-  return vec3(clayNoise(p), clayNoise(p + 17.3), clayNoise(p + 41.9)) - 0.5;
 }`)
         // MeshToonMaterial has NO <normal_fragment_maps> chunk — patching it is a
         // silent no-op. <normal_fragment_begin> is the one that defines `normal`.
         .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
 // thumb-pressed undulation plus finer fingerprint texture
-normal = normalize(normal + clayDent(vClayPos * 7.0) * 0.32 + clayDent(vClayPos * 23.0) * 0.16);`)
+normal = normalize(normal + (clayNoise3(vClayPos * 7.0) - 0.5) * 0.32 + (clayNoise3(vClayPos * 23.0) - 0.5) * 0.16);`)
         .replace('#include <color_fragment>', `#include <color_fragment>
 // hand-mixed clay: subtle low-frequency color unevenness
-diffuseColor.rgb *= 1.0 + (clayNoise(vClayPos * 2.3) - 0.5) * 0.14;`)
+diffuseColor.rgb *= 1.0 + (clayNoise3(vClayPos * 2.3).x - 0.5) * 0.14;`)
         // Per-vertex and per-instance colour tints the glow too, so one pooled
         // material can carry many differently-coloured lights (firework sparks).
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
