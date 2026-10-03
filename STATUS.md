@@ -1,15 +1,16 @@
 # Project Status
 
-**Current goal:** Finish the intro time-lapse — a 17-second prologue where three days and nights pass while villagers build continuously.
+**Current goal:** Make the island look good on camera for a short promo clip on X (16:9).
 
-**Last done:** Rebuilt the prologue as a time-lapse: three shaped day/night cycles driven through the pure `sampleAt()` so sky, clouds, sun position, shadows, stars, and fireflies all sweep together; varied cycle lengths so it reads as a progression rather than a loop; continuous hut growth and villager work circuits replacing the old stop-motion beats; trees growing across the full run with three felled for timber and regrown; campfire built during the first night with a live flickering flame. Fixed the Begin flash by starting and ending the sweep on `GOLDEN_T`, where the title already sits. 680 tests, TypeScript, and production build pass.
+**Last done:** Visual pass for screen capture. Rendering: multisampled half-float composer (the post stack had no anti-aliasing), bloom for things that glow, Neutral tone mapping on both quality paths, no film grain (video compression smears it), lighter vignette, up to 2x DPR. Clay: smooth three-channel value-noise thumbprints and tint (the per-cell hash read as speckle and a checkerboard), soft rim light off the terrain, brighter moonlight. Models: villager eyes, coil-built huts with arched doorways lamp-lit at night, smoother crowns, white chimney smoke, layered strata on the island underside, glowing clay flames with a stronger campfire light, a flame-lump meteor trail and stop-motion impact burst, a zigzag bolt, soft round fireflies and stars, glowing firework sparks. A dev-only `window.__clay` handle lets a headless browser script the camera, clock and powers for captures.
 
-**Next step:** Watch the intro in a browser — it was never verified visually, only measured numerically. Check specifically: whether the chop reads clearly at 12fps, whether `PROLOGUE_CLOUD_DRIFT = 14` (in `choreography.ts`) looks right, and whether the sky bands during dawn (if so, lower `skyRedrawCooldown` in `src/scene.ts:198` from `0.25`).
+**Next step:** Review the rendered promo draft; tune any shot or effect the owner flags.
 
 **Blockers:** None.
 
 ## Log
 
+- 2026-10-03 — Visual pass for screen capture (anti-aliasing, bloom, tone mapping, clay noise, faces, coil huts, night lamps, strata underside, glowing fire and power effects) plus a dev-only capture handle; 679 tests, TypeScript and build pass; verified in headless Chromium.
 - 2026-07-20 — Rebuilt the intro as a 17s three-cycle time-lapse with swept lighting/stars/shadows, varied cycles, continuous hut and tree growth, first-night campfire with animated flame, tree felling, and a seamless golden-hour start/end; 680 tests plus clean type/build checks. Not yet verified in a browser.
 - 2026-07-20 — Completed photo mode with editable postcard preview, opt-in save/discard flow, persisted day captions, responsive two-row phone controls, and 669 passing tests plus clean type/build/browser/diff checks.
 - 2026-07-19 — Completed Wind with radius sway/fruit/tumble effects, directional fire embers, dropped-fruit gathering and corrected pickup presentation, tray polish, and 650 passing tests plus clean type/build/diff checks.
