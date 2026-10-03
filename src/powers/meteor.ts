@@ -82,9 +82,9 @@ function fallingMeteor(parent: THREE.Object3D, ctx: CastCtx, y0: number): Animat
   const trailGeometry = wobble(new THREE.IcosahedronGeometry(0.8, 2), trailRng, 0.12)
   const trailMaterials = [flameClay(true), flameClay(false)]
   for (let i = 0; i < TRAIL_PUFFS; i++) {
-    const puff = new THREE.Mesh(trailGeometry, trailMaterials[i < 2 ? 0 : 1]!)
+    const puff = new THREE.Mesh(trailGeometry, trailMaterials[i < 3 ? 0 : 1]!)
     puff.frustumCulled = false
-    puff.scale.setScalar(0.85 * (1 - i / TRAIL_PUFFS) + 0.2)
+    puff.scale.setScalar(0.95 * (1 - i / TRAIL_PUFFS) + 0.15)
     puff.rotation.set(trailRng.range(0, 6), trailRng.range(0, 6), trailRng.range(0, 6))
     trail.add(puff)
   }
@@ -133,7 +133,7 @@ function fallingMeteor(parent: THREE.Object3D, ctx: CastCtx, y0: number): Animat
  */
 function impactBurst(parent: THREE.Object3D, x: number, y: number, z: number): void {
   const rng = new RNG(131)
-  const geometry = wobble(new THREE.IcosahedronGeometry(0.55, 2), rng, 0.1)
+  const geometry = wobble(new THREE.IcosahedronGeometry(0.75, 2), rng, 0.12)
   const materials = [flameClay(true), flameClay(false)]
   const burst = new THREE.Group()
   burst.name = 'meteor-impact-burst'
@@ -148,7 +148,7 @@ function impactBurst(parent: THREE.Object3D, x: number, y: number, z: number): v
     lumps.push({
       mesh,
       angle: (i / IMPACT_LUMPS) * Math.PI * 2 + rng.range(-0.25, 0.25),
-      reach: rng.range(1.2, 2.4),
+      reach: rng.range(1.6, 3),
       lift: rng.range(0.6, 1.6),
       size: rng.range(0.7, 1.25),
     })
@@ -177,11 +177,11 @@ function impactBurst(parent: THREE.Object3D, x: number, y: number, z: number): v
   }
 }
 
-const TRAIL_PUFFS = 7
+const TRAIL_PUFFS = 12
 const IMPACT_LUMPS = 9
 const IMPACT_SECONDS = 0.6
 /** Fraction of the fall between trail puffs. */
-const TRAIL_SPACING = 0.045
+const TRAIL_SPACING = 0.014
 
 function dustRing(parent: THREE.Object3D, x: number, y: number, z: number): void {
   const geometry = new THREE.RingGeometry(0.72, 1, 48)
