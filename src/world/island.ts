@@ -18,6 +18,70 @@ export function islandSurfaceY(x: number, z: number): number {
   return dome + bumps
 }
 
+const UNDER_DEPTH = 10
+const UNDER_STEPS = 48
+const UNDER_AROUND = 112
+
+/** Strata from the topsoil down: [thickness in metres, colour]. The last repeats. */
+const STRATA: readonly [number, THREE.Color][] = [
+  [0.75, new THREE.Color(PALETTE.dirt)],
+  [1.1, new THREE.Color(PALETTE.strataLight)],
+  [0.6, new THREE.Color(PALETTE.rock)],
+  [1.5, new THREE.Color(PALETTE.dirt)],
+  [0.8, new THREE.Color(PALETTE.strataLight)],
+  [1.3, new THREE.Color(PALETTE.rock)],
+  [10, new THREE.Color(PALETTE.strataDeep)],
+]
+
+function strataColor(depthBelow: number, out: THREE.Color): THREE.Color {
+  let top = 0
+  for (let i = 0; i < STRATA.length; i++) {
+    const [thickness, color] = STRATA[i]!
+    const bottom = top + thickness
+    if (depthBelow < bottom || i === STRATA.length - 1) {
+      out.copy(color)
+      // Soften each boundary over a few centimetres so bands don't alias.
+      const next = STRATA[i + 1]?.[1]
+      const blend = next ? THREE.MathUtils.smoothstep(depthBelow, bottom - 0.12, bottom + 0.12) : 0
+      if (next) out.lerp(next, blend)
+      return out
+    }
+    top = bottom
+  }
+  return out
+}
+
+/**
+ * Lumps the lathe's smooth cone and paints it in wavy horizontal strata, so the
+ * underside reads as a slab of layered clay pulled off a bigger block. The rim
+ * ring is left exactly in place so it still meets the grass top.
+ */
+function sculptStrata(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const position = geometry.getAttribute('position') as THREE.BufferAttribute
+  const colors = new Float32Array(position.count * 3)
+  const color = new THREE.Color()
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i), y = position.getY(i), z = position.getZ(i)
+    const below = -y
+    // Two decorrelated samples, as in wobble(): continuous all the way round,
+    // so the lathe seam does not show.
+    const lump = (fbm2(x * 0.32 + 5, z * 0.32 - y * 0.25) + fbm2(y * 0.45 + 9, x * 0.21 - z * 0.27)) * 0.5
+    // Lumps fade in over the first few metres: near the rim they would stand
+    // proud of the grass disk and read as jagged ledges.
+    const hold = THREE.MathUtils.smoothstep(below, 0.3, 3)
+    const scale = 1 + lump * 0.09 * hold
+    position.setXYZ(i, x * scale, y, z * scale)
+    const wave = fbm2(x * 0.18 + 31, z * 0.18 + 17) * 0.55
+    strataColor(Math.max(0, below + wave * hold), color)
+    // A little darker toward the tip, which the sun never reaches.
+    color.multiplyScalar(1 - 0.25 * (below / UNDER_DEPTH))
+    colors.set([color.r, color.g, color.b], i * 3)
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  geometry.computeVertexNormals()
+  return geometry
+}
+
 const GRASS_A = new THREE.Color(PALETTE.grassDark)
 const GRASS_B = new THREE.Color(PALETTE.grassLight)
 const DIRT = new THREE.Color(PALETTE.dirt)
@@ -59,7 +123,7 @@ export class Island {
     topGeo.setIndex(index)
     topGeo.computeVertexNormals()
     // White base so the per-vertex grass colors come through unmodulated.
-    const topMat = clayMaterial(PALETTE.unmodulated); topMat.vertexColors = true
+    const topMat = clayMaterial(PALETTE.unmodulated, { rim: 0 }); topMat.vertexColors = true
     this.topMesh = new THREE.Mesh(topGeo, topMat)
     this.topMesh.receiveShadow = true
     this.group.add(this.topMesh)
@@ -67,17 +131,17 @@ export class Island {
     this.baseColors = Float32Array.from(colors)
     this.scorchAmt = new Float32Array(positions.length / 3)
 
-    // --- underside: lathe cone with chunky noise, rock colored
+    // --- underside: lumpy lathe cone of stacked clay strata
     const profile: THREE.Vector2[] = []
-    const depth = 10
-    for (let i = 0; i <= 12; i++) {
-      const t = i / 12
+    for (let i = 0; i <= UNDER_STEPS; i++) {
+      const t = i / UNDER_STEPS
       const noise = fbm2(t * 5, 3.7) * 0.15 * Math.sin(t * Math.PI)
       const r = ISLAND_RADIUS * (1 - t * t) * (1 + noise)
-      profile.push(new THREE.Vector2(Math.max(r, 0.01), -t * depth))
+      profile.push(new THREE.Vector2(Math.max(r, 0.01), -t * UNDER_DEPTH))
     }
-    const underGeo = new THREE.LatheGeometry(profile, 48)
-    const under = new THREE.Mesh(underGeo, clayMaterial(PALETTE.rock))
+    const underGeo = sculptStrata(new THREE.LatheGeometry(profile, UNDER_AROUND))
+    const underMat = clayMaterial(PALETTE.unmodulated); underMat.vertexColors = true
+    const under = new THREE.Mesh(underGeo, underMat)
     under.castShadow = false
     this.group.add(under)
   }

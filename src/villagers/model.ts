@@ -65,6 +65,7 @@ export class VillagerModel {
     this.head.position.y = 0.94
     this.head.scale.set(1, 0.96, 0.94)
     this.addPart(this.head, lowFx)
+    this.addEyes()
 
     const arms: THREE.Mesh[] = []
     const legs: THREE.Mesh[] = []
@@ -219,6 +220,23 @@ export class VillagerModel {
       const materials = Array.isArray(object.material) ? object.material : [object.material]
       for (const material of materials) material.dispose()
     })
+  }
+
+  /**
+   * Two pressed-in dots. Without a face the villagers read as pegs on camera;
+   * with one they read as little people looking at things. Unlit, so they stay
+   * readable in shadow, and drawn without the seeded RNG so every villager's
+   * clay geometry is unchanged.
+   */
+  private addEyes(): void {
+    const geometry = new THREE.SphereGeometry(0.032, 8, 6)
+    const material = new THREE.MeshBasicMaterial({ color: PALETTE.ink })
+    for (const side of [-1, 1] as const) {
+      const eye = new THREE.Mesh(geometry, material)
+      eye.position.set(side * 0.078, 0.035, 0.207)
+      eye.scale.set(0.85, 1.25, 0.8)
+      this.head.add(eye)
+    }
   }
 
   private addPart(mesh: THREE.Mesh, lowFx: boolean): void {

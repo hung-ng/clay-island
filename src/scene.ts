@@ -1,12 +1,13 @@
 import * as THREE from 'three'
 import {
-  BlendFunction,
-  Effect,
+  BloomEffect,
   EffectComposer,
   EffectPass,
   HueSaturationEffect,
   RenderPass,
   TiltShiftEffect,
+  ToneMappingEffect,
+  ToneMappingMode,
   VignetteEffect,
 } from 'postprocessing'
 import type { DayParams } from './core/dayClock'
@@ -15,38 +16,6 @@ import { clayMaterial } from './fx/clayMaterial'
 import { VisualQualityController } from './fx/quality'
 import { wobble } from './fx/wobble'
 import { PALETTE } from './ui/tokens'
-
-const heldNoiseFragment = `
-uniform float seed;
-
-float heldRand(vec2 p) {
-  vec2 wrapped = mod(p + vec2(seed * 17.0, seed * 31.0), 289.0);
-  return fract(sin(dot(wrapped, vec2(12.9898, 78.233))) * 43758.5453);
-}
-
-void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
-  float noise = heldRand(uv * 2048.0);
-  float filmGrain = 0.5 + (noise - 0.5) * 0.15;
-  outputColor = vec4(vec3(filmGrain), inputColor.a);
-}
-`
-
-class HeldNoiseEffect extends Effect {
-  private readonly seedUniform: THREE.Uniform<number>
-
-  constructor() {
-    const seedUniform = new THREE.Uniform(0)
-    super('HeldNoiseEffect', heldNoiseFragment, {
-      blendFunction: BlendFunction.SOFT_LIGHT,
-      uniforms: new Map([['seed', seedUniform]]),
-    })
-    this.seedUniform = seedUniform
-  }
-
-  set seed(value: number) {
-    this.seedUniform.value = value
-  }
-}
 
 function createSky(): { texture: THREE.CanvasTexture; redraw(high: string, low: string): void } {
   const canvas = document.createElement('canvas')
@@ -67,6 +36,17 @@ function createSky(): { texture: THREE.CanvasTexture; redraw(high: string, low: 
   return { texture, redraw }
 }
 
+/**
+ * Bloom only catches what glows. Lit clay tops out a little over 1.0 at noon;
+ * emissive flame, embers, bolts and bursts are pushed well past it.
+ */
+const BLOOM = {
+  threshold: 1.0,
+  smoothing: 0.3,
+  intensity: 0.85,
+  radius: 0.7,
+} as const
+
 type SceneOptions = {
   lowFx: boolean
   reducedMotion(): boolean
@@ -84,9 +64,15 @@ export function createScene(options: SceneOptions) {
     throw new Error('no webgl')
   }
 
-  renderer.setPixelRatio(lowFx ? 1 : Math.min(devicePixelRatio, 1.5))
+  // Full device resolution up to 2x: screen captures of a retina window are
+  // upscaled (and visibly soft) at anything less.
+  renderer.setPixelRatio(lowFx ? 1 : Math.min(devicePixelRatio, 2))
   renderer.setSize(innerWidth, innerHeight)
-  renderer.toneMapping = THREE.ACESFilmicToneMapping
+  // Three only tone-maps draws to the screen, so this reaches the reduced path;
+  // enhanced quality renders to the composer's buffers and maps in its own pass.
+  // Neutral keeps the palette's hues and only rolls off highlights; ACES washed
+  // the clay out to pastel.
+  renderer.toneMapping = THREE.NeutralToneMapping
   // VSM must be selected before any material compiles.
   renderer.shadowMap.type = THREE.VSMShadowMap
   renderer.shadowMap.enabled = !lowFx
@@ -148,21 +134,35 @@ export function createScene(options: SceneOptions) {
   const fill = new THREE.HemisphereLight(PALETTE.fillSky, PALETTE.fillGround, 1.1)
   scene.add(key, fill)
 
-  const composer = new EffectComposer(renderer)
+  // Enhanced quality renders into a multisampled half-float buffer: the
+  // multisampling is the only anti-aliasing the post stack gets (edges were
+  // visibly stepped without it), and the float range lets glowing things
+  // (flame, bolts, fireworks) exceed 1.0 so bloom can pick them out from merely
+  // bright clay.
+  const composer = lowFx
+    ? new EffectComposer(renderer)
+    : new EffectComposer(renderer, { multisampling: 4, frameBufferType: THREE.HalfFloatType })
   composer.addPass(new RenderPass(scene, camera))
 
   let tilt: TiltShiftEffect | null = null
-  let grain: HeldNoiseEffect | null = null
   if (!lowFx) {
-    tilt = new TiltShiftEffect({ focusArea: 0.45, feather: 0.35 })
+    const bloom = new BloomEffect({
+      mipmapBlur: true,
+      luminanceThreshold: BLOOM.threshold,
+      luminanceSmoothing: BLOOM.smoothing,
+      intensity: BLOOM.intensity,
+      radius: BLOOM.radius,
+    })
+    tilt = new TiltShiftEffect({ focusArea: 0.5, feather: 0.3 })
     tilt.blendMode.opacity.value = 0.45
-    const vignette = new VignetteEffect({ darkness: 0.55, offset: 0.3 })
-    grain = new HeldNoiseEffect()
-    grain.blendMode.opacity.value = 0.12
+    const toneMapping = new ToneMappingEffect({ mode: ToneMappingMode.NEUTRAL })
+    const vignette = new VignetteEffect({ darkness: 0.32, offset: 0.38 })
     const grade = new HueSaturationEffect({ saturation: 0.12 })
-    composer.addPass(new EffectPass(camera, tilt, vignette, grain, grade))
+    // Tilt shift samples the raw input, so it must precede bloom or it would
+    // blur the glow away inside its feathered bands.
+    composer.addPass(new EffectPass(camera, tilt, bloom, toneMapping, vignette, grade))
   }
-  const quality = new VisualQualityController(tilt, grain, lowFx)
+  const quality = new VisualQualityController(tilt, lowFx)
 
   let elapsed = 0
 

@@ -68,32 +68,40 @@ function gatheringCloud(ctx: CastCtx): Actor {
 }
 
 function boltGeometry(ctx: CastCtx, y0: number): Actor {
+  // Alternating kinks give the cartoon zigzag; the draws are the same as the
+  // old smooth bolt's, so the shared RNG stream is unchanged.
   const points: THREE.Vector3[] = []
   for (let i = 0; i < 8; i++) {
     const progress = i / 7
+    const side = i % 2 === 0 ? 1 : -1
+    const kink = (jitter: number): number => side * (0.35 + Math.abs(jitter) * 1.1)
     points.push(new THREE.Vector3(
-      ctx.x + (i === 7 ? 0 : ctx.rng.range(-0.6, 0.6)),
+      ctx.x + (i === 7 ? 0 : kink(ctx.rng.range(-0.6, 0.6))),
       THREE.MathUtils.lerp(25, y0, progress),
-      ctx.z + (i === 7 ? 0 : ctx.rng.range(-0.6, 0.6)),
+      ctx.z + (i === 7 ? 0 : kink(ctx.rng.range(-0.6, 0.6)) * 0.5),
     ))
   }
 
-  const material = clayMaterial(PALETTE.ghost, { flat: true })
+  // Unlit and far past 1.0: the bolt is a light source, so it blooms white-hot.
+  const material = new THREE.MeshBasicMaterial({ color: PALETTE.ghost })
+  material.color.multiplyScalar(8)
   const geometries: THREE.BufferGeometry[] = []
   const group = new THREE.Group()
   group.name = 'lightning-bolt'
   group.visible = false
 
   const addTube = (path: THREE.Vector3[], radius: number): void => {
-    const curve = new THREE.CatmullRomCurve3(path)
-    const geometry = new THREE.TubeGeometry(curve, 32, radius, 4, false)
+    // Straight segments, not a spline: a bolt has hard corners.
+    const curve = new THREE.CurvePath<THREE.Vector3>()
+    for (let i = 1; i < path.length; i++) curve.add(new THREE.LineCurve3(path[i - 1]!, path[i]!))
+    const geometry = new THREE.TubeGeometry(curve, 16 * (path.length - 1), radius, 6, false)
     const mesh = new THREE.Mesh(geometry, material)
-    mesh.name = radius > 0.05 ? 'lightning-main-bolt' : 'lightning-fork'
+    mesh.name = radius > 0.1 ? 'lightning-main-bolt' : 'lightning-fork'
     mesh.castShadow = false
     group.add(mesh)
     geometries.push(geometry)
   }
-  addTube(points, 0.075)
+  addTube(points, 0.13)
 
   for (const [index, side] of [[3, -1], [5, 1]] as const) {
     const start = points[index]!
@@ -105,7 +113,7 @@ function boltGeometry(ctx: CastCtx, y0: number): Actor {
     const middle = start.clone().lerp(end, 0.52)
     middle.x += ctx.rng.range(-0.35, 0.35)
     middle.z += ctx.rng.range(-0.35, 0.35)
-    addTube([start.clone(), middle, end], 0.042)
+    addTube([start.clone(), middle, end], 0.07)
   }
 
   ctx.island.group.add(group)

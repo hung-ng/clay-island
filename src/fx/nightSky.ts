@@ -30,6 +30,26 @@ export function fireflyBasePositions(count: number, seed: number): Float32Array 
   return positions
 }
 
+/** A soft round dot, drawn once: without a map, points render as hard squares. */
+let glowDot: THREE.Texture | null = null
+function glowDotTexture(): THREE.Texture {
+  if (glowDot) return glowDot
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = 64
+  const context = canvas.getContext('2d')!
+  const gradient = context.createRadialGradient(32, 32, 0, 32, 32, 32)
+  gradient.addColorStop(0, 'rgba(255,255,255,1)')
+  gradient.addColorStop(0.35, 'rgba(255,255,255,0.85)')
+  gradient.addColorStop(1, 'rgba(255,255,255,0)')
+  context.fillStyle = gradient
+  context.fillRect(0, 0, 64, 64)
+  glowDot = new THREE.CanvasTexture(canvas)
+  return glowDot
+}
+
+/** Fireflies are tiny lights: past 1.0 so the bloom pass haloes them. */
+const FIREFLY_GLOW = 3.5
+
 const STAR_COUNT = 300
 const STAR_COUNT_LOWFX = 120
 const FIREFLY_COUNT = 14
@@ -53,7 +73,8 @@ export class NightSky {
     ))
     this.starMaterial = new THREE.PointsMaterial({
       color: PALETTE.cloud,
-      size: 0.7,
+      map: glowDotTexture(),
+      size: 2.2,
       sizeAttenuation: false,
       transparent: true,
       opacity: 0,
@@ -76,11 +97,13 @@ export class NightSky {
       )
       this.fireflyMaterial = new THREE.PointsMaterial({
         color: PALETTE.ember,
-        size: 0.28,
+        map: glowDotTexture(),
+        size: 0.42,
         transparent: true,
         opacity: 0,
         depthWrite: false,
       })
+      this.fireflyMaterial.color.multiplyScalar(FIREFLY_GLOW)
       this.fireflies = new THREE.Points(fireflyGeometry, this.fireflyMaterial)
       this.fireflies.visible = false
       const rng = new RNG(23)

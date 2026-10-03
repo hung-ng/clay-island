@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { RNG } from '../core/rng'
 import { clayMaterial } from '../fx/clayMaterial'
+import { flameClay } from '../fx/flameClay'
 import { wobble } from '../fx/wobble'
 import { PALETTE, TIMING } from '../ui/tokens'
 import { Charring } from './charring'
@@ -124,7 +125,7 @@ class BurningVisual {
       const size = rng.range(radius * 0.55, radius)
       const flame = new THREE.Mesh(
         wobble(new THREE.SphereGeometry(size, 9, 7), rng, size * 0.15),
-        clayMaterial(i % 2 === 0 ? PALETTE.flame : PALETTE.ember),
+        flameClay(i % 2 !== 0),
       )
       flame.name = 'fire-flame'
       const angle = rng.range(0, Math.PI * 2)
@@ -314,7 +315,7 @@ export class Tree {
       const radius = rng.range(0.7, 1)
       const material = clayMaterial(rng.pick(leafColors))
       const blob = new THREE.Mesh(
-        wobble(new THREE.SphereGeometry(radius, 14, 10), rng, 0.08),
+        wobble(new THREE.SphereGeometry(radius, 24, 18), rng, 0.08),
         material,
       )
       blob.position.set(
@@ -752,6 +753,38 @@ export class Tree {
   }
 }
 
+/** Doorway lamp strength at full night. */
+const HUT_LAMP_GLOW = 1.5
+let hutLampLevel = 0
+
+/** 0 by day, 1 at full night. Every hut doorway reads it as it draws. */
+export function setHutLampLevel(level: number): void {
+  hutLampLevel = THREE.MathUtils.clamp(level, 0, 1)
+}
+
+/**
+ * Pinches horizontal grooves into a sphere, like the coils of a hand-built clay
+ * pot, so a hut reads as something built rather than a smooth bun. Grooves fade
+ * out toward the poles, where the rings would bunch together.
+ */
+function coilGrooves(
+  geometry: THREE.BufferGeometry,
+  radius: number,
+  coils: number,
+  depth: number,
+): THREE.BufferGeometry {
+  const position = geometry.getAttribute('position') as THREE.BufferAttribute
+  for (let i = 0; i < position.count; i++) {
+    const height = (position.getY(i) / radius + 1) / 2
+    const groove = (0.5 + 0.5 * Math.cos(height * coils * Math.PI * 2)) ** 6
+    const squeeze = 1 - depth * groove * Math.sin(height * Math.PI)
+    position.setX(i, position.getX(i) * squeeze)
+    position.setZ(i, position.getZ(i) * squeeze)
+  }
+  geometry.computeVertexNormals()
+  return geometry
+}
+
 export class Hut {
   group = new THREE.Group()
   progress: number
@@ -784,7 +817,7 @@ export class Hut {
 
     const baseMaterial = clayMaterial(PALETTE.hutClay)
     this.base = new THREE.Mesh(
-      wobble(new THREE.SphereGeometry(1.1, 18, 12), rng, 0.1),
+      wobble(coilGrooves(new THREE.SphereGeometry(1.1, 36, 40), 1.1, 6, 0.045), rng, 0.1),
       baseMaterial,
     )
     this.base.name = 'hut-base'
@@ -792,12 +825,19 @@ export class Hut {
     setShadow(this.base, lowFx)
 
     const doorMaterial = clayMaterial(PALETTE.scorch)
+    doorMaterial.emissive.set(PALETTE.flame)
+    doorMaterial.emissiveIntensity = 0
     this.door = new THREE.Mesh(
-      wobble(new THREE.BoxGeometry(0.52, 0.74, 0.14, 3, 3, 2), rng, 0.025),
+      wobble(new THREE.CapsuleGeometry(0.25, 0.3, 4, 14), rng, 0.02),
       doorMaterial,
     )
     this.door.name = 'hut-door'
-    this.door.position.set(0, 0.6, 0.96)
+    this.door.scale.z = 0.3
+    this.door.position.set(0, 0.62, 0.96)
+    // An arched opening, lamp-lit from inside once the sun goes down.
+    this.door.onBeforeRender = () => {
+      doorMaterial.emissiveIntensity = hutLampLevel * HUT_LAMP_GLOW
+    }
     setShadow(this.door, lowFx)
 
     const knobMaterial = clayMaterial(PALETTE.hutClay)
@@ -815,7 +855,7 @@ export class Hut {
     this.siteStones = ringMesh(5, 0.82, 0.22, rng, lowFx)
 
     for (let i = 0; i < 3; i++) {
-      const material = clayMaterial(PALETTE.stone)
+      const material = clayMaterial(PALETTE.cloud)
       material.transparent = true
       material.depthWrite = false
       const blob = new THREE.Mesh(
@@ -943,6 +983,9 @@ export class Hut {
   }
 }
 
+/** The village's one steady light: a warm pool that reaches the nearest huts. */
+const CAMPFIRE_LIGHT = 4
+
 export class Campfire {
   group = new THREE.Group()
   progress: number
@@ -989,11 +1032,10 @@ export class Campfire {
       this.group.add(log)
     }
 
-    const colors = [PALETTE.flame, PALETTE.ember, PALETTE.flame]
     for (let i = 0; i < 3; i++) {
       const flame = new THREE.Mesh(
         wobble(new THREE.SphereGeometry(0.27 - i * 0.035, 10, 8), rng, 0.045),
-        clayMaterial(colors[i]!),
+        flameClay(i === 1),
       )
       flame.name = 'campfire-flame'
       flame.userData.index = i
@@ -1004,7 +1046,7 @@ export class Campfire {
       this.group.add(flame)
     }
 
-    this.light = new THREE.PointLight(PALETTE.flame, 1.5, 6)
+    this.light = new THREE.PointLight(PALETTE.flame, CAMPFIRE_LIGHT, 9)
     this.light.position.y = 1.05
     this.light.castShadow = false
     this.group.add(this.light)
@@ -1106,7 +1148,7 @@ export class Campfire {
     const flareScale = this.flareTime > 0 ? this.flareScale : 1
     for (const flame of this.flames) flame.visible = this.lit
     this.light.visible = this.lit && this.lightEnabled
-    this.light.intensity = this.lit ? 1.5 * flareScale : 0
+    this.light.intensity = this.lit ? CAMPFIRE_LIGHT * flareScale : 0
 
     if (!this.lit || qt === this.lastQt) return
     const frame = Math.floor(qt * 12)
@@ -1145,7 +1187,7 @@ export class Campfire {
     }
     for (const flame of this.flames) flame.visible = this.lit
     this.light.visible = this.lit && this.lightEnabled
-    this.light.intensity = this.lit ? 1.5 : 0
+    this.light.intensity = this.lit ? CAMPFIRE_LIGHT : 0
   }
 }
 

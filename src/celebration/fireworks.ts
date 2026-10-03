@@ -71,6 +71,9 @@ const TUBE_X = [-0.48, 0, 0.48] as const
 const TUBE_Z = 1.1
 const ANTICIPATION_START = 2.55
 const FIRST_LAUNCH = FIREWORK_LAUNCHES[0]!.at
+/** Sparks and burst flashes are light sources; past 1.0 so they bloom. */
+const SPARK_GLOW = 2.6
+
 const BURST_LIGHT = {
   height: 10,
   distance: 34,
@@ -110,7 +113,7 @@ export class CelebrationFireworks {
     this.group.name = 'celebration-fireworks'
     this.group.visible = false
     this.poolCapacity = options.lowFx ? 200 : 560
-    this.pool = new ParticleBurst(this.group, this.poolCapacity, 1515)
+    this.pool = new ParticleBurst(this.group, this.poolCapacity, 1515, SPARK_GLOW)
     this.burstLight = options.lowFx ? null : new THREE.PointLight(PALETTE.cloud, 0, BURST_LIGHT.distance)
     if (this.burstLight) {
       this.burstLight.name = 'celebration-burst-light'
@@ -477,7 +480,7 @@ export class CelebrationFireworks {
     flash.mesh.position.set(x, y, z)
     flash.mesh.scale.setScalar(0.65)
     flash.mesh.visible = true
-    flash.material.color.set(color)
+    flash.material.color.set(color).multiplyScalar(SPARK_GLOW)
     flash.material.opacity = this.options.reducedMotion() ? 0.5 : 0.92
   }
 }

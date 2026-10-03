@@ -63,6 +63,7 @@ import { PALETTE, TIMING } from './ui/tokens'
 import { createTray } from './ui/tray'
 import { createInitialWorldBlueprint } from './world/blueprint'
 import { buildInitialWorld } from './world/initial'
+import { setHutLampLevel } from './world/objects'
 
 const ui = document.getElementById('ui')!
 const splash = document.getElementById('splash')!
@@ -642,11 +643,12 @@ const loop = new GameLoop(
       : (sweeping ? director!.dayParams() : canonicalDay)
     applyDay(dayParams, ambientDt)
     nightSky.setLevels(dayParams.starOpacity, dayParams.fireflyLevel)
+    setHutLampLevel(dayParams.starOpacity)
     nightSky.update(ambientDt, reducedMotion())
     // Clouds drift at time-lapse speed through the prologue so its daylight
     // stretches have visible motion rather than reading as a held frame.
     updateSky(ambientDt, sweeping ? PROLOGUE_CLOUD_DRIFT : 1)
-    quality.update(ambientDt, cameraController.distance(), reducedMotion())
+    quality.update(cameraController.distance())
     renderScene()
 
     if (pendingNormalHandoff && !renderedFinalPrologue) {
@@ -675,3 +677,11 @@ document.addEventListener('visibilitychange', () => {
     loop.setBackground(false)
   }
 })
+
+// Dev-only handle for scripted captures (promo footage, visual checks): drive
+// the camera, clock and powers from a headless browser. Stripped from builds.
+if (import.meta.env.DEV) {
+  Object.assign(window, {
+    __clay: { camera: cameraController, dayClock, powers, celebration, world, island },
+  })
+}

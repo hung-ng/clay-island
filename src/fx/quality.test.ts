@@ -9,14 +9,18 @@ describe('adaptive quality', () => {
     expect(tiltOpacityAtDistance(55)).toBe(0.45)
   })
 
-  it('writes adaptive tilt and restrained grain without recreating effects', () => {
+  it('writes adaptive tilt without recreating the effect', () => {
     const tilt = { blendMode: { opacity: { value: 1 } } }
-    const grain = { blendMode: { opacity: { value: 1 } }, seed: 0 }
-    const subject = new VisualQualityController(tilt, grain, false)
-    subject.update(1 / 12, 20, false)
+    const subject = new VisualQualityController(tilt, false)
+    subject.update(20)
     expect(tilt.blendMode.opacity.value).toBe(0)
-    expect(grain.blendMode.opacity.value).toBe(0.12)
-    subject.update(1 / 12, 40, true)
-    expect(grain.blendMode.opacity.value).toBe(0.06)
+    subject.update(55)
+    expect(tilt.blendMode.opacity.value).toBe(0.45)
+  })
+
+  it('leaves reduced quality untouched', () => {
+    const tilt = { blendMode: { opacity: { value: 1 } } }
+    new VisualQualityController(tilt, true).update(20)
+    expect(tilt.blendMode.opacity.value).toBe(1)
   })
 })

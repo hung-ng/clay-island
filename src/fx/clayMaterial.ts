@@ -23,10 +23,38 @@ function toonRamp(): THREE.Texture {
   return ramp
 }
 
-export function clayMaterial(color: THREE.ColorRepresentation, opts: { flat?: boolean } = {}): THREE.MeshToonMaterial {
+export type ClayOptions = {
+  /** Skip the thumbprint/tint/rim shader patch (clouds, water). */
+  flat?: boolean
+  /**
+   * Self-lit strength. Flame, embers and other light sources set this well past
+   * 1 so the HDR bloom pass picks them out; lit clay never gets that bright.
+   */
+  glow?: number
+  /**
+   * What colour the glow is, if not the clay's own. Flames glow yellower than
+   * they look: an orange pushed into HDR tone-maps toward pink.
+   */
+  glowColor?: THREE.ColorRepresentation
+  /**
+   * Edge brightening, 0 to switch off. Ground seen at a grazing angle would read
+   * as all rim, so the island top turns it off.
+   */
+  rim?: number
+}
+
+const DEFAULT_RIM = 0.45
+
+export function clayMaterial(color: THREE.ColorRepresentation, opts: ClayOptions = {}): THREE.MeshToonMaterial {
   const mat = new THREE.MeshToonMaterial({ color, gradientMap: toonRamp() })
+  if (opts.glow) {
+    mat.emissive.set(opts.glowColor ?? color)
+    mat.emissiveIntensity = opts.glow
+  }
   if (!opts.flat) {
+    const rim = { value: opts.rim ?? DEFAULT_RIM }
     mat.onBeforeCompile = (shader) => {
+      shader.uniforms.clayRimStrength = rim
       shader.vertexShader = shader.vertexShader
         .replace('#include <common>', '#include <common>\nvarying vec3 vClayPos;')
         // World-ish position, so InstancedMesh instances each get their own clay
@@ -40,20 +68,45 @@ export function clayMaterial(color: THREE.ColorRepresentation, opts: { flat?: bo
       shader.fragmentShader = shader.fragmentShader
         .replace('#include <common>', `#include <common>
 varying vec3 vClayPos;
-float clayHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }`)
+uniform float clayRimStrength;
+float clayHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+// Smooth value noise. Sampling the raw hash per floor() cell (as this used to)
+// gives hard-edged cells that read as voxel speckle up close and as a faint
+// checkerboard across the ground; interpolated noise reads as pressed clay.
+float clayNoise(vec3 p) {
+  vec3 i = floor(p);
+  vec3 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mix(clayHash(i), clayHash(i + vec3(1.0, 0.0, 0.0)), f.x),
+        mix(clayHash(i + vec3(0.0, 1.0, 0.0)), clayHash(i + vec3(1.0, 1.0, 0.0)), f.x), f.y),
+    mix(mix(clayHash(i + vec3(0.0, 0.0, 1.0)), clayHash(i + vec3(1.0, 0.0, 1.0)), f.x),
+        mix(clayHash(i + vec3(0.0, 1.0, 1.0)), clayHash(i + vec3(1.0, 1.0, 1.0)), f.x), f.y),
+    f.z);
+}
+vec3 clayDent(vec3 p) {
+  return vec3(clayNoise(p), clayNoise(p + 17.3), clayNoise(p + 41.9)) - 0.5;
+}`)
         // MeshToonMaterial has NO <normal_fragment_maps> chunk — patching it is a
         // silent no-op. <normal_fragment_begin> is the one that defines `normal`.
         .replace('#include <normal_fragment_begin>', `#include <normal_fragment_begin>
-// fingerprint-scale dents: perturb the normal with high-frequency hash noise
-vec3 dent = vec3(
-  clayHash(floor(vClayPos * 40.0)),
-  clayHash(floor(vClayPos * 40.0 + 13.0)),
-  clayHash(floor(vClayPos * 40.0 + 47.0))) - 0.5;
-normal = normalize(normal + dent * 0.18);`)
+// thumb-pressed undulation plus finer fingerprint texture
+normal = normalize(normal + clayDent(vClayPos * 7.0) * 0.32 + clayDent(vClayPos * 23.0) * 0.16);`)
         .replace('#include <color_fragment>', `#include <color_fragment>
 // hand-mixed clay: subtle low-frequency color unevenness
-float tint = clayHash(floor(vClayPos * 3.0)) * 0.08 - 0.04;
-diffuseColor.rgb *= 1.0 + tint;`)
+diffuseColor.rgb *= 1.0 + (clayNoise(vClayPos * 2.3) - 0.5) * 0.14;`)
+        // Per-vertex and per-instance colour tints the glow too, so one pooled
+        // material can carry many differently-coloured lights (firework sparks).
+        .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+#if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA ) || defined( USE_INSTANCING_COLOR )
+totalEmissiveRadiance *= vColor.rgb;
+#endif`)
+        // Light scatters a little way into real clay, so silhouettes glow softly
+        // instead of ending on a hard cel edge. Multiplicative, so it follows the
+        // light: bright at noon, barely there at night.
+        .replace('#include <opaque_fragment>', `float clayRim = 1.0 - saturate(dot(normal, normalize(vViewPosition)));
+outgoingLight *= 1.0 + clayRim * clayRim * clayRim * clayRimStrength;
+#include <opaque_fragment>`)
     }
     // Without this, three caches the compiled program by material *type* and the
     // flat and non-flat variants collide — whichever compiles first wins for both.

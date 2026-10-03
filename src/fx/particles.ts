@@ -33,11 +33,12 @@ export class ParticleBurst {
   private cursor = 0
   private disposed = false
 
-  constructor(parent: THREE.Object3D, private readonly max = 400, seed = 83) {
+  /** `glow` makes every particle self-lit in its own colour (firework sparks). */
+  constructor(parent: THREE.Object3D, private readonly max = 400, seed = 83, glow = 0) {
     this.seed = seed
     this.rng = new RNG(seed)
     const geometry = wobble(new THREE.IcosahedronGeometry(0.1, 0), this.rng, 0.035)
-    const material = clayMaterial(PALETTE.unmodulated)
+    const material = clayMaterial(PALETTE.unmodulated, { glow })
     this.mesh = new THREE.InstancedMesh(geometry, material, max)
     this.mesh.name = 'clay-particle-pool'
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)

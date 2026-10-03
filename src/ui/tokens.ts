@@ -8,6 +8,9 @@ export const PALETTE = {
   dirt: '#9c6644',
   rock: '#7f5539',
   scorch: '#3d3436',
+  // the island's underside: layered clay strata, light and deep
+  strataLight: '#d9a676',
+  strataDeep: '#4e3325',
   // objects
   bark: '#8a5a44',
   leafA: '#6a994e',
@@ -22,6 +25,10 @@ export const PALETTE = {
   smockC: '#e0c341',
   flame: '#ff8c42',
   ember: '#ffd166',
+  // what flames glow, as opposed to what colour the clay is: yellower, because
+  // an orange pushed into HDR blooms red and tone-maps toward pink
+  flameGlow: '#ff9e3c',
+  emberGlow: '#ffd86f',
   water: '#6d9dc5',
   bloom: '#e56b9f',
   ghost: '#e8ecf1',
