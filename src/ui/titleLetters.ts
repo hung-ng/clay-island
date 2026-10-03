@@ -14,7 +14,10 @@ const WORDS = ['CLAY', 'ISLAND'] as const
 const FILL = PALETTE.paper
 const OUTLINE = 0.034
 /** Distance in front of the camera; the island sits well behind this. */
-const DEPTH = 12
+export const TITLE_DEPTH = 12
+const DEPTH = TITLE_DEPTH
+/** Seconds to rack focus from the lettering to the island on Begin. */
+const REFOCUS_SECONDS = 1.1
 /** Coil radius, in cap heights. */
 const COIL = 0.088
 /** Largest cap height, in world units at DEPTH (about an eighth of the view). */
@@ -85,6 +88,8 @@ export class TitleLetters {
   private state: 'hidden' | 'entering' | 'idle' | 'leaving' = 'hidden'
   private elapsed = 0
   private aspect = 0
+  private blur = 0
+  private blurGoal = 0
 
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -114,14 +119,23 @@ export class TitleLetters {
     })
   }
 
+  /**
+   * How far to blur the world behind the lettering, 0..1. Full while the title
+   * shows, so the letters read over anything; racks to sharp on Begin.
+   */
+  get backgroundBlur(): number { return this.blur }
+
   show(): void {
     this.state = this.reducedMotion() ? 'idle' : 'entering'
     this.elapsed = 0
     this.root.visible = true
     this.aspect = 0
+    this.blur = this.blurGoal = 1
   }
 
   dismiss(): void {
+    this.blurGoal = 0
+    if (this.reducedMotion()) this.blur = 0
     if (this.state === 'hidden') return
     if (this.reducedMotion()) {
       this.hide()
@@ -137,6 +151,13 @@ export class TitleLetters {
   }
 
   update(dt: number): void {
+    // Focus moves smoothly, like a lens; only the clay is held to 12fps.
+    if (this.blur !== this.blurGoal) {
+      const step = dt / REFOCUS_SECONDS
+      this.blur = this.blur > this.blurGoal
+        ? Math.max(this.blurGoal, this.blur - step)
+        : Math.min(this.blurGoal, this.blur + step)
+    }
     if (this.state === 'hidden') return
     if (this.camera.aspect !== this.aspect) this.relayout()
     this.elapsed += dt

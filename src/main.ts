@@ -59,7 +59,7 @@ import {
 } from './ui/photo'
 import { createSettingsUI, type SettingsUI } from './ui/settings'
 import { createTitleUI } from './ui/title'
-import { TitleLetters } from './ui/titleLetters'
+import { TITLE_DEPTH, TitleLetters } from './ui/titleLetters'
 import { PALETTE, TIMING } from './ui/tokens'
 import { createTray } from './ui/tray'
 import { createInitialWorldBlueprint } from './world/blueprint'
@@ -86,6 +86,7 @@ const {
   renderer,
   updateSky,
   applyDay,
+  setBackgroundBlur,
   quality,
   composer,
   lowFx,
@@ -616,6 +617,9 @@ const loop = new GameLoop(
       && swapToFrozenGameplay()
 
     titleLetters.update(dt)
+    // Eased so the rack focus starts and lands gently.
+    const blur = titleLetters.backgroundBlur
+    setBackgroundBlur(blur * blur * (3 - 2 * blur), TITLE_DEPTH)
     if (flow.phase === 'title' && !document.hidden) {
       director?.updateTitlePreview(dt)
     } else if (flow.phase === 'prologue' && !pendingNormalHandoff && !document.hidden) {

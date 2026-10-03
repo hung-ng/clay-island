@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import {
   BloomEffect,
+  DepthOfFieldEffect,
   EffectComposer,
   EffectPass,
   HueSaturationEffect,
@@ -46,6 +47,9 @@ const BLOOM = {
   intensity: 0.85,
   radius: 0.7,
 } as const
+
+/** Largest background blur behind the title lettering. */
+const TITLE_BOKEH = 5
 
 type SceneOptions = {
   lowFx: boolean
@@ -145,7 +149,15 @@ export function createScene(options: SceneOptions) {
   composer.addPass(new RenderPass(scene, camera))
 
   let tilt: TiltShiftEffect | null = null
+  // Depth of field for the title: lettering sharp, island soft behind it. Its
+  // own pass, switched off whenever it isn't blurring, so play pays nothing.
+  let focusBlur: DepthOfFieldEffect | null = null
+  let focusPass: EffectPass | null = null
   if (!lowFx) {
+    focusBlur = new DepthOfFieldEffect(camera, { focusDistance: 12, focusRange: 6, bokehScale: 0 })
+    focusPass = new EffectPass(camera, focusBlur)
+    focusPass.enabled = false
+    composer.addPass(focusPass)
     const bloom = new BloomEffect({
       mipmapBlur: true,
       luminanceThreshold: BLOOM.threshold,
@@ -207,6 +219,14 @@ export function createScene(options: SceneOptions) {
     }
   }
 
+  /** 0 = everything sharp; 1 = all but `focusDistance` fully blurred. */
+  function setBackgroundBlur(amount: number, focusDistance: number): void {
+    if (!focusBlur || !focusPass) return
+    focusPass.enabled = amount > 0.001
+    focusBlur.bokehScale = amount * TITLE_BOKEH
+    focusBlur.cocMaterial.focusDistance = focusDistance
+  }
+
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight
     camera.updateProjectionMatrix()
@@ -214,5 +234,7 @@ export function createScene(options: SceneOptions) {
     composer.setSize(innerWidth, innerHeight)
   })
 
-  return { scene, stageRoot, camera, renderer, updateSky, applyDay, quality, composer, lowFx }
+  return {
+    scene, stageRoot, camera, renderer, updateSky, applyDay, setBackgroundBlur, quality, composer, lowFx,
+  }
 }
