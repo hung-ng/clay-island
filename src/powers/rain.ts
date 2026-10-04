@@ -9,7 +9,7 @@ import { applyInteractions } from './outcomes'
 import { impactContext, type Power, type CastCtx } from './power'
 
 const RAIN_RADIUS = 5
-const DROP_COUNT = 120
+const DROP_COUNT = 180
 const RIPPLE_COUNT = 24
 
 type RainActor = {
@@ -56,7 +56,7 @@ function rainField(ctx: CastCtx): RainActor {
   ] as const
   for (const [i, [x, y, z, scale]] of cloudOffsets.entries()) {
     const geometry = wobble(new THREE.SphereGeometry(0.95, 12, 9), ctx.rng, 0.1)
-    const material = clayMaterial(i === 4 ? PALETTE.stone : PALETTE.cloud)
+    const material = clayMaterial(i === 4 ? PALETTE.stone : i % 2 === 0 ? PALETTE.rainCloud : PALETTE.cloud)
     const blob = new THREE.Mesh(geometry, material)
     blob.name = 'rain-cloud-blob'
     blob.position.set(x, y, z)
@@ -68,8 +68,13 @@ function rainField(ctx: CastCtx): RainActor {
   }
   group.add(cloud)
 
-  const dropGeometry = wobble(new THREE.SphereGeometry(0.055, 7, 5), ctx.rng, 0.012)
-  const dropMaterial = clayMaterial(PALETTE.water, { flat: true })
+  const dropGeometry = wobble(new THREE.SphereGeometry(0.06, 7, 5), ctx.rng, 0.012)
+  // Unlit and pale so streaks read against both grass and sky.
+  const dropMaterial = new THREE.MeshBasicMaterial({
+    color: PALETTE.rainDrop,
+    transparent: true,
+    opacity: 0.85,
+  })
   const droplets = new THREE.InstancedMesh(dropGeometry, dropMaterial, DROP_COUNT)
   droplets.name = 'rain-droplets'
   droplets.frustumCulled = false
@@ -155,7 +160,7 @@ function rainField(ctx: CastCtx): RainActor {
         const y = THREE.MathUtils.lerp(9, ground, cycle)
         dummy.position.set(localX, y, localZ)
         dummy.rotation.set(0, 0, 0)
-        dummy.scale.set(0.75, 2.8, 0.75)
+        dummy.scale.set(0.7, 4, 0.7)
         dummy.updateMatrix()
         droplets.setMatrixAt(i, dummy.matrix)
         if (cycle < previousCycle[i]!) spawnRipple(localX, ground, localZ, now)

@@ -110,7 +110,12 @@ export class CelebrationFireworks {
     this.group.name = 'celebration-fireworks'
     this.group.visible = false
     this.poolCapacity = options.lowFx ? 200 : 560
-    this.pool = new ParticleBurst(this.group, this.poolCapacity, 1515)
+    this.pool = new ParticleBurst(
+      this.group,
+      this.poolCapacity,
+      1515,
+      options.lowFx ? {} : { glow: 2.4, radius: 0.15 },
+    )
     this.burstLight = options.lowFx ? null : new THREE.PointLight(PALETTE.cloud, 0, BURST_LIGHT.distance)
     if (this.burstLight) {
       this.burstLight.name = 'celebration-burst-light'
@@ -477,7 +482,7 @@ export class CelebrationFireworks {
     flash.mesh.position.set(x, y, z)
     flash.mesh.scale.setScalar(0.65)
     flash.mesh.visible = true
-    flash.material.color.set(color)
+    flash.material.color.set(color).multiplyScalar(this.options.lowFx ? 1 : 2.6)
     flash.material.opacity = this.options.reducedMotion() ? 0.5 : 0.92
   }
 }

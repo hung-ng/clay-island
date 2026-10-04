@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { describe, expect, it, vi } from 'vitest'
 import { RNG } from '../core/rng'
-import { Campfire, Hut, Tree } from './objects'
+import { Campfire, flameAnchors, Hut, Tree } from './objects'
 
 vi.mock('../fx/clayMaterial', async () => {
   const actual = await import('three')
@@ -508,5 +508,47 @@ describe('Campfire construction', () => {
     expect(subject.scattered).toBe(true)
     expect(subject.group.getObjectByName('campfire-stones')?.visible).toBe(true)
     expect(subject.group.getObjectByName('campfire-log')?.visible).toBe(true)
+  })
+})
+
+describe('fire placement', () => {
+  /** How far out a point sits, in dome radii: 1 is on the surface. */
+  const reach = (point: THREE.Vector3, shell: { y: number; radius: number; squash: number }): number => Math.hypot(
+    point.x / shell.radius,
+    (point.y - shell.y) / (shell.radius * shell.squash),
+    point.z / shell.radius,
+  )
+
+  it('sets every flame just outside the dome and above its middle, crest first', () => {
+    const shell = { y: 1.6, radius: 0.95, squash: 0.85 }
+    const anchors = flameAnchors(shell, 5, 0.3, new RNG(4))
+    for (const anchor of anchors) {
+      expect(reach(anchor, shell)).toBeGreaterThan(1)
+      expect(anchor.y).toBeGreaterThan(shell.y)
+    }
+    expect(anchors[0]!.y).toBe(Math.max(...anchors.map(anchor => anchor.y)))
+  })
+
+  it('shows a burning hut\'s flames on the roof, not inside the dome', () => {
+    const hut = new Hut('hut-fire', 0, 0, 'built', 0, new RNG(1))
+    hut.ignite()
+    const dome = { y: 0.82, radius: 1.1, squash: 0.75 }
+    const flames: THREE.Object3D[] = []
+    hut.group.traverse(child => { if (child.name === 'fire-flame') flames.push(child) })
+    expect(flames.length).toBeGreaterThan(1)
+    for (const flame of flames) expect(reach(flame.position, dome)).toBeGreaterThan(1)
+  })
+})
+
+describe('hut dome', () => {
+  it('keeps the doorway on the dome while the hut is going up', () => {
+    const hut = new Hut('hut-door', 0, 0, 'site', 0, new RNG(1))
+    hut.buildTick()
+    const base = hut.group.getObjectByName('hut-base')!
+    const door = hut.group.getObjectByName('hut-door')!
+    // Both grow about the dome's centre, so the doorway never floats off the wall.
+    expect(door.position.y).toBe(base.position.y)
+    expect(door.scale.x).toBeCloseTo(base.scale.x)
+    expect(door.getObjectByName('hut-door-frame')).toBeDefined()
   })
 })

@@ -3,7 +3,7 @@ import { RNG } from '../core/rng'
 import type { CelebrationSoundCue } from '../celebration/fireworks'
 
 type SfxStorage = Pick<Storage, 'getItem' | 'setItem'>
-type Voice = { sources: AudioScheduledSourceNode[]; nodes: AudioNode[]; stop(): void }
+type Voice = { sources: AudioScheduledSourceNode[]; nodes: AudioNode[]; sustained: boolean; stop(): void }
 
 export type PrologueSoundCue = 'growth' | 'step' | 'hammer' | 'chop' | 'place' | 'ignite'
 export type CelebrationSoundProfile = {
@@ -60,6 +60,15 @@ export function shutterSoundProfile(): ShutterSoundProfile {
 const MUTE_KEY = 'clayisland.muted'
 const MAX_VOICES = 6
 
+/**
+ * The voice to cut when the cap is reached: the oldest short one. Sustained
+ * beds (the rain, a gust) go only when nothing else can, so a burst of
+ * footsteps can't silence the rain while it is still falling.
+ */
+export function voiceToEvict<T extends { sustained: boolean }>(voices: readonly T[]): T | undefined {
+  return voices.find(voice => !voice.sustained) ?? voices[0]
+}
+
 export class Sfx {
   private context: AudioContext | null = null
   private master: GainNode | null = null
@@ -71,6 +80,9 @@ export class Sfx {
   private detachBus: (() => void) | null = null
   private readonly rng = new RNG(907)
   private mutedValue = false
+  private birdTimer = 1.5
+  private cricketTimer = 0.8
+  private crackleTimer = 0
 
   constructor(private readonly options: { storage?: SfxStorage | null } = {}) {
     try { this.mutedValue = options.storage?.getItem(MUTE_KEY) === 'true' } catch { /* optional */ }
@@ -153,6 +165,8 @@ export class Sfx {
 
   celebration(cue: CelebrationSoundCue): void {
     const profile = celebrationSoundProfile(cue)
+    if (cue === 'pop' || cue === 'finale') this.burstAir(cue === 'finale' ? 1.6 : 1)
+    if (cue === 'crackle' || cue === 'finale') this.crackle(cue === 'finale' ? 14 : 8, 0.5)
     if (profile.kind === 'knock') {
       this.knock(profile.from, profile.seconds, profile.volume)
       return
@@ -160,8 +174,38 @@ export class Sfx {
     this.oscillator('sine', profile.from, profile.to, profile.seconds, profile.volume)
   }
 
+  /** A Moment pressed into the journal: a soft two-note clay marimba. */
   reward(): void {
     this.oscillator('sine', 116, 82, 0.18, 0.022)
+    this.chime(659, 0, 0.016)
+    this.chime(988, 0.11, 0.014)
+  }
+
+  /**
+   * Ambient life, called once per rendered frame. Birds sing by day, crickets
+   * by night, and any open fire crackles; everything rides the ambient bus so
+   * impacts duck it.
+   */
+  update(dt: number, nightLevel: number, burning: number): void {
+    if (!this.context || !this.ambientGain || dt <= 0) return
+    const day = 1 - nightLevel
+    this.birdTimer -= dt
+    if (this.birdTimer <= 0) {
+      this.birdTimer = this.rng.range(1.4, 4.2)
+      if (day > 0.35 && this.rng.chance(day)) this.birdsong()
+    }
+    this.cricketTimer -= dt
+    if (this.cricketTimer <= 0) {
+      this.cricketTimer = this.rng.range(0.35, 0.9)
+      if (nightLevel > 0.4 && this.rng.chance(nightLevel)) this.cricket()
+    }
+    if (burning > 0) {
+      this.crackleTimer -= dt
+      if (this.crackleTimer <= 0) {
+        this.crackleTimer = this.rng.range(0.05, 0.22) / Math.min(3, burning)
+        this.fireTick()
+      }
+    }
   }
 
   shutter(): void {
@@ -207,8 +251,14 @@ export class Sfx {
     }
     if (event.type === 'power:impact') {
       this.duckAmbient()
-      if (event.power === 'meteor') this.thud()
-      if (event.power === 'lightning') this.crack()
+      if (event.power === 'meteor') {
+        this.thud()
+        this.rumble(0, 1.8, 0.11, 150)
+      }
+      if (event.power === 'lightning') {
+        this.crack()
+        this.rumble(0.12, 2.4, 0.085, 230)
+      }
       return
     }
     if (event.type === 'fire:doused') {
@@ -371,7 +421,7 @@ export class Sfx {
     source.connect(filter).connect(gain).connect(audio.master)
     source.start(now)
     source.stop(now + seconds)
-    this.trackVoice([source], [filter, gain])
+    this.trackVoice([source], [filter, gain], true)
   }
 
   private whoosh(seconds: number): void {
@@ -396,7 +446,174 @@ export class Sfx {
     source.connect(filter).connect(gain).connect(audio.master)
     source.start(now)
     source.stop(now + seconds)
+    this.trackVoice([source], [filter, gain], true)
+  }
+
+  /** Low noise swell: thunder after the crack, the ground settling after a meteor. */
+  private rumble(delay: number, seconds: number, volume: number, cutoff: number): void {
+    const audio = this.ready()
+    if (!audio || !this.noiseBuffer) return
+    const { context } = audio
+    const start = context.currentTime + delay
+    const source = context.createBufferSource()
+    source.buffer = this.noiseBuffer
+    source.loop = true
+    source.playbackRate.value = 0.6
+    const filter = context.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.setValueAtTime(cutoff * 1.8, start)
+    filter.frequency.exponentialRampToValueAtTime(cutoff * 0.5, start + seconds)
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(0.0001, start)
+    gain.gain.exponentialRampToValueAtTime(volume, start + 0.14)
+    gain.gain.exponentialRampToValueAtTime(volume * 0.35, start + seconds * 0.4)
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + seconds)
+    source.connect(filter).connect(gain).connect(audio.master)
+    source.start(start)
+    source.stop(start + seconds + 0.05)
     this.trackVoice([source], [filter, gain])
+  }
+
+  /** The bright airy part of a firework pop. */
+  private burstAir(scale: number): void {
+    const audio = this.ready()
+    if (!audio || !this.noiseBuffer) return
+    const { context } = audio
+    const now = context.currentTime
+    const source = context.createBufferSource()
+    source.buffer = this.noiseBuffer
+    const filter = context.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.setValueAtTime(2200, now)
+    filter.frequency.exponentialRampToValueAtTime(700, now + 0.3)
+    filter.Q.value = 0.6
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(0.05 * scale, now)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.32)
+    source.connect(filter).connect(gain).connect(audio.master)
+    source.start(now)
+    source.stop(now + 0.34)
+    this.trackVoice([source], [filter, gain])
+  }
+
+  /** A scatter of tiny ticks spread over `seconds`, scheduled on the audio clock. */
+  private crackle(count: number, seconds: number): void {
+    for (let i = 0; i < count; i++) {
+      this.tick(this.rng.range(0, seconds), this.rng.range(2600, 5200), this.rng.range(0.012, 0.026))
+    }
+  }
+
+  private fireTick(): void {
+    this.tick(0, this.rng.range(900, 2400), this.rng.range(0.006, 0.016))
+  }
+
+  /** One unvoiced noise click. Untracked: too short to need voice stealing. */
+  private tick(delay: number, frequency: number, volume: number): void {
+    const audio = this.ready()
+    if (!audio || !this.noiseBuffer) return
+    const { context } = audio
+    const start = context.currentTime + delay
+    const source = context.createBufferSource()
+    source.buffer = this.noiseBuffer
+    source.playbackRate.value = this.rng.range(0.8, 1.3)
+    const filter = context.createBiquadFilter()
+    filter.type = 'bandpass'
+    filter.frequency.value = frequency
+    filter.Q.value = 1.4
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(volume, start)
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.035)
+    source.connect(filter).connect(gain).connect(this.ambientGain ?? audio.master)
+    source.start(start, this.rng.range(0, 1.5))
+    source.stop(start + 0.04)
+    this.releaseWhenEnded(source, [filter, gain])
+  }
+
+  /** Sine with a quick strike and ring-out, like a struck wooden bar. */
+  private chime(frequency: number, delay: number, volume: number): void {
+    const audio = this.ready()
+    if (!audio) return
+    const { context } = audio
+    const start = context.currentTime + delay
+    const tone = context.createOscillator()
+    tone.type = 'sine'
+    tone.frequency.value = frequency
+    const overtone = context.createOscillator()
+    overtone.type = 'sine'
+    overtone.frequency.value = frequency * 3.98
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(0.0001, start)
+    gain.gain.exponentialRampToValueAtTime(volume, start + 0.008)
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.9)
+    const overtoneGain = context.createGain()
+    overtoneGain.gain.setValueAtTime(volume * 0.25, start)
+    overtoneGain.gain.exponentialRampToValueAtTime(0.0001, start + 0.12)
+    tone.connect(gain).connect(audio.master)
+    overtone.connect(overtoneGain).connect(audio.master)
+    tone.start(start)
+    overtone.start(start)
+    tone.stop(start + 0.92)
+    overtone.stop(start + 0.14)
+    this.releaseWhenEnded(tone, [gain])
+    this.releaseWhenEnded(overtone, [overtoneGain])
+  }
+
+  /** Two to four quick rising whistles, quiet and far away. */
+  private birdsong(): void {
+    const audio = this.ready()
+    if (!audio || !this.ambientGain) return
+    const { context } = audio
+    const base = this.rng.range(2500, 3900)
+    const notes = this.rng.int(2, 4)
+    let at = context.currentTime
+    for (let i = 0; i < notes; i++) {
+      const length = this.rng.range(0.05, 0.11)
+      const from = base * this.rng.range(0.92, 1.08)
+      const tone = context.createOscillator()
+      tone.type = 'sine'
+      tone.frequency.setValueAtTime(from, at)
+      tone.frequency.exponentialRampToValueAtTime(from * this.rng.range(1.15, 1.45), at + length)
+      const gain = context.createGain()
+      gain.gain.setValueAtTime(0.0001, at)
+      // The ambient bus sits at ~0.024, so this lands near 0.015 at the master.
+      gain.gain.exponentialRampToValueAtTime(0.6, at + 0.012)
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + length)
+      tone.connect(gain).connect(this.ambientGain)
+      tone.start(at)
+      tone.stop(at + length + 0.01)
+      this.releaseWhenEnded(tone, [gain])
+      at += length + this.rng.range(0.03, 0.09)
+    }
+  }
+
+  /** A three-pulse cricket chirp. */
+  private cricket(): void {
+    const audio = this.ready()
+    if (!audio || !this.ambientGain) return
+    const { context } = audio
+    const frequency = this.rng.chance(0.5) ? 4300 : 4750
+    let at = context.currentTime
+    for (let i = 0; i < 3; i++) {
+      const tone = context.createOscillator()
+      tone.type = 'sine'
+      tone.frequency.value = frequency
+      const gain = context.createGain()
+      gain.gain.setValueAtTime(0.0001, at)
+      gain.gain.exponentialRampToValueAtTime(0.45, at + 0.004)
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.022)
+      tone.connect(gain).connect(this.ambientGain)
+      tone.start(at)
+      tone.stop(at + 0.025)
+      this.releaseWhenEnded(tone, [gain])
+      at += 0.034
+    }
+  }
+
+  private releaseWhenEnded(source: AudioScheduledSourceNode, nodes: AudioNode[]): void {
+    source.addEventListener('ended', () => {
+      source.disconnect()
+      for (const node of nodes) node.disconnect()
+    }, { once: true })
   }
 
   private duckAmbient(): void {
@@ -453,17 +670,18 @@ export class Sfx {
     return buffer
   }
 
-  private trackVoice(sources: AudioScheduledSourceNode[], nodes: AudioNode[]): void {
+  private trackVoice(sources: AudioScheduledSourceNode[], nodes: AudioNode[], sustained = false): void {
     while (this.voices.length >= MAX_VOICES) {
-      const oldest = this.voices[0]
-      if (!oldest) break
-      oldest.stop()
+      const victim = voiceToEvict(this.voices)
+      if (!victim) break
+      victim.stop()
     }
     let ended = 0
     let cleaned = false
     const voice: Voice = {
       sources,
       nodes,
+      sustained,
       stop: () => {
         if (cleaned) return
         for (const source of sources) {

@@ -5,7 +5,7 @@ type OpacityEffect = { blendMode: { opacity: { value: number } } }
 type GrainEffect = OpacityEffect & { seed: number }
 
 const HOME_DISTANCE = Math.hypot(14, 34)
-const HOME_TILT_OPACITY = 0.45
+const HOME_TILT_OPACITY = 0.32
 
 export function tiltOpacityAtDistance(distance: number): number {
   if (distance <= 22) return 0
@@ -29,7 +29,7 @@ export class VisualQualityController {
     this.clock.advance(dt)
     if (this.tilt) this.tilt.blendMode.opacity.value = tiltOpacityAtDistance(distance)
     if (!this.grain) return
-    this.grain.blendMode.opacity.value = reducedMotion ? 0.06 : 0.12
+    this.grain.blendMode.opacity.value = reducedMotion ? 0.04 : 0.08
     if (!reducedMotion && this.clock.ticked) this.grain.seed = this.clock.quantizedTime
   }
 }

@@ -17,6 +17,16 @@ export type BurstOptions = {
   shape?: 'fountain' | 'sphere' | 'ring'
 }
 
+export type ParticlePoolOptions = {
+  /**
+   * Render the pool unlit at this brightness multiple. Above 1 the particles
+   * glow through the bloom pass: sparks, embers, fireworks.
+   */
+  glow?: number
+  /** Radius of one particle at size 1. */
+  radius?: number
+}
+
 export class ParticleBurst {
   readonly mesh: THREE.InstancedMesh
   private rng: RNG
@@ -33,11 +43,19 @@ export class ParticleBurst {
   private cursor = 0
   private disposed = false
 
-  constructor(parent: THREE.Object3D, private readonly max = 400, seed = 83) {
+  constructor(
+    parent: THREE.Object3D,
+    private readonly max = 400,
+    seed = 83,
+    options: ParticlePoolOptions = {},
+  ) {
     this.seed = seed
     this.rng = new RNG(seed)
-    const geometry = wobble(new THREE.IcosahedronGeometry(0.1, 0), this.rng, 0.035)
-    const material = clayMaterial(PALETTE.unmodulated)
+    const radius = options.radius ?? 0.1
+    const geometry = wobble(new THREE.IcosahedronGeometry(radius, 0), this.rng, radius * 0.35)
+    const material = options.glow
+      ? new THREE.MeshBasicMaterial({ color: new THREE.Color(PALETTE.unmodulated).multiplyScalar(options.glow) })
+      : clayMaterial(PALETTE.unmodulated)
     this.mesh = new THREE.InstancedMesh(geometry, material, max)
     this.mesh.name = 'clay-particle-pool'
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage)

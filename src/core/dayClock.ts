@@ -65,8 +65,8 @@ const DUSK: DayLook = {
 }
 
 const NIGHT: DayLook = {
-  keyColor: PALETTE.nightKeyLight, keyIntensity: 0.55, keyX: -18, keyY: 26, keyZ: -8,
-  fillSky: PALETTE.nightFillSky, fillGround: PALETTE.nightFillGround, fillIntensity: 0.5,
+  keyColor: PALETTE.nightKeyLight, keyIntensity: 0.8, keyX: -18, keyY: 26, keyZ: -8,
+  fillSky: PALETTE.nightFillSky, fillGround: PALETTE.nightFillGround, fillIntensity: 0.62,
   skyHigh: PALETTE.nightSkyHigh, skyLow: PALETTE.nightSkyLow, cloudTint: PALETTE.nightCloud,
   starOpacity: 1, fireflyLevel: 1,
 }

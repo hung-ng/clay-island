@@ -9,6 +9,8 @@ import type { World } from '../world/world'
 
 export type PowerFx = {
   particles: ParticleBurst
+  /** Unlit, bloom-bright particles for sparks and embers; absent in reduced quality. */
+  sparks?: ParticleBurst
   shake: Shake
   flash(color: string, seconds: number): void
 }

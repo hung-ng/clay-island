@@ -8,6 +8,10 @@ export type TitleUI = {
   dispose(): void
 }
 
+/** Hand-placed, not random: the wordmark should look the same every visit. */
+const TITLE_TILTS = [-6, 4, -3, 7, -5, 3, -7, 5, -2, 6]
+const TITLE_LIFTS = [0, -3, 2, -1, 3, -2, 1, -4, 2, 0]
+
 export function createTitleUI(
   ui: HTMLElement,
   handlers: { reducedMotion(): boolean; onBegin(): void; onSkip(): void },
@@ -23,7 +27,26 @@ export function createTitleUI(
 
   const heading = document.createElement('h1')
   heading.id = 'title-heading'
-  heading.textContent = 'Clay Island'
+  heading.setAttribute('aria-label', 'Clay Island')
+  // Each letter is its own pressed lump of clay: own colour, own small tilt.
+  let letterIndex = 0
+  for (const word of ['Clay', 'Island']) {
+    const group = document.createElement('span')
+    group.className = 'title-word'
+    group.setAttribute('aria-hidden', 'true')
+    for (const char of word) {
+      const letter = document.createElement('span')
+      letter.className = 'title-letter'
+      letter.textContent = char
+      letter.style.setProperty('--i', String(letterIndex))
+      letter.style.setProperty('--tilt', `${TITLE_TILTS[letterIndex % TITLE_TILTS.length]}deg`)
+      letter.style.setProperty('--lift', `${TITLE_LIFTS[letterIndex % TITLE_LIFTS.length]}px`)
+      letter.dataset.clay = String(letterIndex % 4)
+      group.append(letter)
+      letterIndex++
+    }
+    heading.append(group)
+  }
 
   const begin = document.createElement('button')
   begin.id = 'begin-btn'

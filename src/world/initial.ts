@@ -10,8 +10,9 @@ export type GameplayWorldSet = { island: Island; world: World }
 export function buildInitialWorld(
   blueprint: InitialWorldBlueprint,
   lowFx: boolean,
+  reducedMotion: () => boolean = () => false,
 ): GameplayWorldSet {
-  const island = new Island(new RNG(blueprint.islandSeed))
+  const island = new Island(new RNG(blueprint.islandSeed), lowFx, reducedMotion)
   island.group.name = 'gameplay-island'
   const world = new World(island)
 

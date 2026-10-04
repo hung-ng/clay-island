@@ -6,6 +6,7 @@ import {
   clampCameraTarget,
   maxPolarAngleAt,
   smooth01,
+  surfaceTargetFloor,
   type CameraPose,
 } from './policy'
 
@@ -48,6 +49,8 @@ export type CameraControllerOptions = {
   autoRotate: boolean
   reducedMotion: () => boolean
   controls?: CameraControlsPort
+  /** World-space ground height under a world-space point, for close framing. */
+  groundHeight?: (x: number, z: number) => number
 }
 
 type CameraTween = {
@@ -74,6 +77,7 @@ export class CameraController {
   private readonly camera: THREE.PerspectiveCamera
   private readonly dom: HTMLElement
   private readonly reducedMotion: () => boolean
+  private readonly groundHeight: ((x: number, z: number) => number) | null
   private readonly locks = new Set<CameraLockReason>()
   private readonly autoMotionSuppressions = new Set<CameraAutoMotionReason>()
   private autoRotateEnabled: boolean
@@ -90,6 +94,7 @@ export class CameraController {
     this.camera = options.camera
     this.dom = options.dom
     this.reducedMotion = options.reducedMotion
+    this.groundHeight = options.groundHeight ?? null
     this.autoRotateEnabled = options.autoRotate
     this.controls = options.controls ?? new OrbitControls(options.camera, options.dom)
 
@@ -363,6 +368,15 @@ export class CameraController {
 
   private enforcePolicy(): void {
     const target = clampCameraTarget(this.controls.target, this.targetLift)
+    // Authored shots (prologue, celebration intro) keep their exact framing.
+    if (this.groundHeight && this.locks.size === 0) {
+      const floor = surfaceTargetFloor(this.groundHeight(target.x, target.z), this.distance())
+      if (floor > target.y) {
+        // Lift the camera with the target so the chosen angle survives.
+        this.camera.position.y += floor - this.controls.target.y
+        target.y = floor
+      }
+    }
     if (this.controls.target.x !== target.x
       || this.controls.target.y !== target.y
       || this.controls.target.z !== target.z) {

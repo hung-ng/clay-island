@@ -54,15 +54,19 @@ function growingShadow(parent: THREE.Object3D, x: number, y: number, z: number):
 function fallingMeteor(parent: THREE.Object3D, ctx: CastCtx, y0: number): AnimatedActor {
   const geometry = wobble(new THREE.IcosahedronGeometry(1.05, 1), ctx.rng, 0.16)
   const coreMaterial = clayMaterial(PALETTE.scorch)
-  const rimMaterial = new THREE.MeshBasicMaterial({ color: PALETTE.ember, side: THREE.BackSide })
+  // The molten rim is over-bright so the bloom pass gives the rock a corona.
+  const rimMaterial = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(PALETTE.ember).multiplyScalar(2.6),
+    side: THREE.BackSide,
+  })
   const core = new THREE.Mesh(geometry, coreMaterial)
   const rim = new THREE.Mesh(geometry, rimMaterial)
-  rim.scale.setScalar(1.1)
+  rim.scale.setScalar(1.16)
   core.frustumCulled = false
   core.castShadow = true
   rim.frustumCulled = false
 
-  const light = new THREE.PointLight(PALETTE.ember, 3.5, 10)
+  const light = new THREE.PointLight(PALETTE.ember, ctx.lowFx ? 3.5 : 14, 16)
   const group = new THREE.Group()
   group.name = 'falling-meteor'
   group.visible = false
@@ -72,12 +76,24 @@ function fallingMeteor(parent: THREE.Object3D, ctx: CastCtx, y0: number): Animat
   const from = new THREE.Vector3(ctx.x + 6, 40, ctx.z - 6)
   const to = new THREE.Vector3(ctx.x, y0, ctx.z)
   let startedAt = Number.POSITIVE_INFINITY
+  let lastTrail = Number.NEGATIVE_INFINITY
   let removed = false
   core.onBeforeRender = () => {
-    const progress = Math.min(1, (performance.now() - startedAt) / 1200)
+    const now = performance.now()
+    const progress = Math.min(1, (now - startedAt) / 1200)
     const eased = progress * progress
     group.position.lerpVectors(from, to, eased)
     group.rotation.set(progress * 4.5, progress * 6.2, progress * 2.8)
+    // onBeforeRender also fires for the shadow pass; meter the trail by time.
+    if (removed || now - lastTrail < 33 || ctx.reducedMotion()) return
+    lastTrail = now
+    const { x, y, z } = group.position
+    ctx.fx.sparks?.burst({
+      x, y, z, n: 4, color: PALETTE.ember, speed: 1.4, gravity: -0.6, life: 0.5, size: 1.1, shape: 'sphere',
+    })
+    ctx.fx.particles.burst({
+      x, y: y + 0.4, z, n: 1, color: PALETTE.stone, speed: 0.5, gravity: -1.4, life: 1.1, size: 2.6,
+    })
   }
 
   return {
@@ -165,6 +181,10 @@ export class Meteor implements Power {
         ctx.fx.particles.burst({
           x: ctx.x, y: particleY, z: ctx.z, n: 40,
           color: PALETTE.scorch, speed: 5, gravity: 3, life: 2.2,
+        })
+        ctx.fx.sparks?.burst({
+          x: ctx.x, y: particleY + 0.3, z: ctx.z, n: 70,
+          color: PALETTE.ember, speed: 8, gravity: 9, life: 0.9, size: 1.2, shape: 'sphere',
         })
         ctx.island.addCrater({ x: ctx.x, z: ctx.z, radius: 2.8, depth: 1.3 })
         ctx.world.clearFlowersNear(ctx.x, ctx.z, 2.8)

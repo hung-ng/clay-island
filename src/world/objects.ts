@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js'
 import { RNG } from '../core/rng'
 import { clayMaterial } from '../fx/clayMaterial'
 import { wobble } from '../fx/wobble'
@@ -89,6 +90,22 @@ function ringMesh(
   return stones
 }
 
+/** Clay that also emits: fire stays bright at night and feeds the bloom pass. */
+function glowingClay(color: string, intensity: number): THREE.MeshToonMaterial {
+  const material = clayMaterial(color)
+  material.emissive.set(color)
+  material.emissiveIntensity = intensity
+  return material
+}
+
+/** Burning trees and huts: daylight already overexposes them, so stay subtle. */
+const FLAME_GLOW = 0.6
+/** The campfire glows hardest after dark, when it is the light source. */
+const CAMPFIRE_DAY_GLOW = 0.25
+const CAMPFIRE_NIGHT_GLOW = 1.6
+const CAMPFIRE_DAY_LIGHT = 1.5
+const CAMPFIRE_NIGHT_LIGHT = 7
+
 function hash(value: number): number {
   return Math.sin(value * 12.9898) * 43758.5453 % 1
 }
@@ -100,6 +117,45 @@ function seedFromId(value: string): number {
     seed = Math.imul(seed, 16777619)
   }
   return seed >>> 0
+}
+
+/**
+ * The dome a fire burns on: a tree's crown or a hut's roof. `y` is its centre
+ * height, `radius` its horizontal reach, `squash` its height over its width.
+ */
+export type FireShell = { y: number; radius: number; squash: number }
+
+const TREE_FIRE: FireShell = { y: 1.62, radius: 0.95, squash: 0.85 }
+
+/**
+ * Where a fire's flames sit: one on the crest, the rest round the shoulders a
+ * golden angle apart, so the fire shows from every side. Each sits just proud
+ * of the dome. Inside it, the leaves or clay would hide the flames and a
+ * burning tree would only read as a charring one.
+ */
+export function flameAnchors(shell: FireShell, count: number, size: number, rng: RNG): THREE.Vector3[] {
+  const anchors: THREE.Vector3[] = []
+  const turn = rng.range(0, Math.PI * 2)
+  for (let i = 0; i < count; i++) {
+    // Crest first, then shoulders from 60 down to 25 degrees above the middle.
+    const elevation = i === 0
+      ? Math.PI / 2
+      : THREE.MathUtils.lerp(1.05, 0.45, (i - 1) / Math.max(1, count - 2)) + rng.range(-0.08, 0.08)
+    const azimuth = turn + i * 2.4 + rng.range(-0.2, 0.2)
+    const ring = Math.cos(elevation) * shell.radius
+    const point = new THREE.Vector3(
+      Math.cos(azimuth) * ring,
+      shell.y + Math.sin(elevation) * shell.radius * shell.squash,
+      Math.sin(azimuth) * ring,
+    )
+    const normal = new THREE.Vector3(
+      point.x,
+      (point.y - shell.y) / (shell.squash * shell.squash),
+      point.z,
+    ).normalize()
+    anchors.push(point.addScaledVector(normal, size * 0.35))
+  }
+  return anchors
 }
 
 class BurningVisual {
@@ -114,24 +170,25 @@ class BurningVisual {
   private flareTime = 0
   private flareScale = 1
 
-  constructor(seed: number, baseY: number, radius: number, lowFx: boolean) {
+  constructor(seed: number, shell: FireShell, radius: number, flameCount: number, lowFx: boolean) {
     const rng = new RNG(seed)
     this.group.name = 'burning-fx'
     this.group.visible = false
 
-    const flameCount = rng.int(3, 5)
+    const anchors = flameAnchors(shell, flameCount, radius, rng)
+    const top = shell.y + shell.radius * shell.squash
     for (let i = 0; i < flameCount; i++) {
-      const size = rng.range(radius * 0.55, radius)
+      // The crest flame is the biggest: it is the one seen against the sky.
+      const size = i === 0 ? radius * 1.2 : rng.range(radius * 0.6, radius)
       const flame = new THREE.Mesh(
         wobble(new THREE.SphereGeometry(size, 9, 7), rng, size * 0.15),
-        clayMaterial(i % 2 === 0 ? PALETTE.flame : PALETTE.ember),
+        glowingClay(i % 2 === 0 ? PALETTE.flame : PALETTE.ember, FLAME_GLOW),
       )
       flame.name = 'fire-flame'
-      const angle = rng.range(0, Math.PI * 2)
-      const spread = rng.range(0, radius * 0.9)
-      flame.userData.baseX = Math.cos(angle) * spread
-      flame.userData.baseY = baseY + rng.range(-radius * 0.2, radius * 0.55)
-      flame.userData.baseZ = Math.sin(angle) * spread
+      const anchor = anchors[i]!
+      flame.userData.baseX = anchor.x
+      flame.userData.baseY = anchor.y
+      flame.userData.baseZ = anchor.z
       flame.userData.phase = rng.range(0, 100)
       flame.position.set(flame.userData.baseX, flame.userData.baseY, flame.userData.baseZ)
       flame.scale.y = rng.range(1.25, 1.7)
@@ -152,7 +209,7 @@ class BurningVisual {
       blob.name = 'fire-smoke'
       blob.userData.phase = i / smokeCount
       blob.userData.curl = rng.range(0, Math.PI * 2)
-      blob.userData.baseY = baseY
+      blob.userData.baseY = top
       blob.castShadow = false
       this.smoke.push(blob)
       this.group.add(blob)
@@ -161,7 +218,9 @@ class BurningVisual {
     this.baseLightIntensity = lowFx ? 0.8 : 1.2
     this.light = new THREE.PointLight(PALETTE.flame, this.baseLightIntensity, 5)
     this.light.name = 'fire-point-light'
-    this.light.position.y = baseY + radius
+    // Above the crest, so it lights the ground round the fire instead of
+    // blowing out the flames from inside, as the campfire's light once did.
+    this.light.position.y = top + 0.4
     this.light.castShadow = false
     this.light.visible = false
     this.group.add(this.light)
@@ -332,7 +391,7 @@ export class Tree {
     this.crown.name = 'tree-crown'
     this.crown.rotation.y = rng.range(0, Math.PI * 2)
     this.group.add(this.crown)
-    this.fireVisual = new BurningVisual(seedFromId(id), 1.25, 0.34, lowFx)
+    this.fireVisual = new BurningVisual(seedFromId(id), TREE_FIRE, 0.3, 3, lowFx)
     this.group.add(this.fireVisual.group)
     this.shadow = addBlobShadow(this.group, 1.05, lowFx)
     this.syncAppearance()
@@ -713,6 +772,8 @@ export class Tree {
     this.trunk.position.y = 0.55 * scale
     this.crown.scale.setScalar(scale)
     this.crown.position.y = 1.45 * scale
+    // The fire sits on the crown, so a burning sapling's fire is sapling-sized.
+    this.fireVisual.group.scale.setScalar(scale)
     this.shadow.setScale(scale)
   }
 
@@ -752,6 +813,118 @@ export class Tree {
   }
 }
 
+/** The hut dome: centre height, radius, and its squash (height over width). */
+const HUT_DOME_Y = 0.82
+const HUT_DOME_RADIUS = 1.1
+const HUT_DOME_SQUASH = 0.75
+const HUT_FIRE: FireShell = { y: HUT_DOME_Y, radius: HUT_DOME_RADIUS, squash: HUT_DOME_SQUASH }
+/** The doorway on the dome's front: bottom height, width, and height to the top of the arch. */
+const DOORWAY = { bottom: 0.32, width: 0.46, height: 0.64 }
+/**
+ * How far the clay inside the arch is pressed back, so the doorway reads as an
+ * opening. Deep enough that the dome's own wobble (up to about 0.07) never
+ * pokes through the dark back of the doorway.
+ */
+const DOORWAY_PRESS = 0.24
+
+/**
+ * Signed distance from the doorway outline, in the dome's front view (x
+ * across, `y` height above the ground): negative inside the arch.
+ */
+function doorwayDistance(x: number, y: number): number {
+  const half = DOORWAY.width / 2
+  const shoulder = DOORWAY.bottom + DOORWAY.height - half
+  if (y <= shoulder) return Math.max(Math.abs(x) - half, DOORWAY.bottom - y)
+  return Math.hypot(x, y - shoulder) - half
+}
+
+/**
+ * Presses the doorway into the front of a unit-squash dome sphere (before the
+ * mesh's squash is applied): the clay inside the arch goes back by
+ * DOORWAY_PRESS, easing out to the wall just past the outline.
+ */
+function pressDoorway(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const position = geometry.getAttribute('position') as THREE.BufferAttribute
+  const point = new THREE.Vector3()
+  for (let i = 0; i < position.count; i++) {
+    point.fromBufferAttribute(position, i)
+    if (point.z <= 0.3) continue
+    const height = HUT_DOME_Y + point.y * HUT_DOME_SQUASH
+    const press = DOORWAY_PRESS * (1 - THREE.MathUtils.smoothstep(doorwayDistance(point.x, height), -0.01, 0.05))
+    if (press <= 0) continue
+    point.multiplyScalar(1 - press / point.length())
+    position.setXYZ(i, point.x, point.y, point.z)
+  }
+  position.needsUpdate = true
+  return geometry
+}
+
+/** An archway outline standing on y = 0: straight sides, a round top. */
+function archShape(width: number, height: number): THREE.Shape {
+  const half = width / 2
+  const shape = new THREE.Shape()
+  shape.moveTo(-half, 0)
+  shape.lineTo(-half, height - half)
+  shape.absarc(0, height - half, half, Math.PI, 0, true)
+  shape.lineTo(half, 0)
+  shape.closePath()
+  return shape
+}
+
+/** The band round an archway: an outer arch with the inner one cut out, open at the bottom. */
+function archFrameShape(outerWidth: number, outerHeight: number, innerWidth: number, innerHeight: number): THREE.Shape {
+  const outer = outerWidth / 2
+  const inner = innerWidth / 2
+  const shape = new THREE.Shape()
+  shape.moveTo(-outer, 0)
+  shape.lineTo(-outer, outerHeight - outer)
+  shape.absarc(0, outerHeight - outer, outer, Math.PI, 0, true)
+  shape.lineTo(outer, 0)
+  shape.lineTo(inner, 0)
+  shape.lineTo(inner, innerHeight - inner)
+  shape.absarc(0, innerHeight - inner, inner, 0, Math.PI, false)
+  shape.lineTo(-inner, 0)
+  shape.closePath()
+  return shape
+}
+
+/**
+ * Wraps a flat extrusion (outline in XY, depth along +Z) onto the front of the
+ * hut dome, so a doorway follows the curved wall instead of standing off it.
+ * X keeps its place across the wall, Y is height above the ground from the
+ * doorway's bottom, and depth becomes height above the clay, from `inset` under
+ * it to `proud` over it. Over its lowest 22 cm a part sinks by `settle`, so it
+ * melts into the wall where the dome curves under rather than jutting out.
+ * The result is relative to the dome's centre.
+ */
+function onHutDome(geometry: THREE.BufferGeometry, inset: number, proud: number, settle = 0): THREE.BufferGeometry {
+  geometry.computeBoundingBox()
+  const { min, max } = geometry.boundingBox!
+  const radius = HUT_DOME_RADIUS
+  const tall = HUT_DOME_RADIUS * HUT_DOME_SQUASH
+  const position = geometry.getAttribute('position') as THREE.BufferAttribute
+  const normal = new THREE.Vector3()
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i)
+    const y = DOORWAY.bottom + position.getY(i) - HUT_DOME_Y
+    const z = radius * Math.sqrt(Math.max(1e-4, 1 - (x * x) / (radius * radius) - (y * y) / (tall * tall)))
+    normal.set(x / (radius * radius), y / (tall * tall), z / (radius * radius)).normalize()
+    const lift = THREE.MathUtils.lerp(-inset, proud, (position.getZ(i) - min.z) / (max.z - min.z))
+      - settle * (1 - THREE.MathUtils.smoothstep(position.getY(i), 0, 0.22))
+    position.setXYZ(i, x + normal.x * lift, y + normal.y * lift, z + normal.z * lift)
+  }
+  // The extrusion's faces are a few big triangles; bent onto the dome, each
+  // stays flat and the toon ramp shows the creases. Welding them shades the
+  // face smoothly, while UV seams keep the edge round the face crisp.
+  geometry.deleteAttribute('normal')
+  const welded = mergeVertices(geometry)
+  geometry.dispose()
+  welded.computeVertexNormals()
+  return welded
+}
+
+const extrudeClay = { bevelEnabled: true, bevelSegments: 2, curveSegments: 14 }
+
 export class Hut {
   group = new THREE.Group()
   progress: number
@@ -762,6 +935,7 @@ export class Hut {
 
   private base: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>
   private door: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>
+  private doorGlow = 0
   private roofKnob: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>
   private siteStones: THREE.InstancedMesh
   private smoke: THREE.Mesh<THREE.BufferGeometry, THREE.MeshToonMaterial>[] = []
@@ -782,23 +956,50 @@ export class Hut {
     this.group.position.set(x, y, z)
     this.group.rotation.y = Math.atan2(-x, -z)
 
+    // Anything new draws from its own seed. The shared `rng` must see exactly
+    // the draws it always did, or every hut after this one, and the sim with
+    // them, would come out different.
+    const detail = new RNG(seedFromId(id) ^ 0x9e3779b9)
+
     const baseMaterial = clayMaterial(PALETTE.hutClay)
-    this.base = new THREE.Mesh(
-      wobble(new THREE.SphereGeometry(1.1, 18, 12), rng, 0.1),
-      baseMaterial,
-    )
+    // Finer than a bare dome needs, so the pressed-in doorway keeps a clean edge.
+    const dome = pressDoorway(new THREE.SphereGeometry(HUT_DOME_RADIUS, 64, 48))
+    this.base = new THREE.Mesh(wobble(dome, rng, 0.1), baseMaterial)
     this.base.name = 'hut-base'
-    this.base.position.y = 0.82
+    this.base.position.y = HUT_DOME_Y
     setShadow(this.base, lowFx)
 
+    // An arched doorway pressed into the wall: the dark back of the opening
+    // sits in the hollow, and a lip of pushed-out clay rings it. It lives at
+    // the dome's centre, so it shrinks onto the dome while the hut goes up.
     const doorMaterial = clayMaterial(PALETTE.scorch)
     this.door = new THREE.Mesh(
-      wobble(new THREE.BoxGeometry(0.52, 0.74, 0.14, 3, 3, 2), rng, 0.025),
+      wobble(onHutDome(
+        new THREE.ExtrudeGeometry(archShape(DOORWAY.width + 0.04, DOORWAY.height + 0.02), {
+          ...extrudeClay, depth: 0.05, bevelThickness: 0.02, bevelSize: 0.02,
+        }),
+        0.18, -0.06, 0.06,
+      ), rng, 0.01),
       doorMaterial,
     )
     this.door.name = 'hut-door'
-    this.door.position.set(0, 0.6, 0.96)
+    this.door.position.y = HUT_DOME_Y
     setShadow(this.door, lowFx)
+
+    const frameMaterial = clayMaterial(PALETTE.hutClay)
+    frameMaterial.color.multiplyScalar(0.9)
+    const frame = new THREE.Mesh(
+      wobble(onHutDome(
+        new THREE.ExtrudeGeometry(archFrameShape(
+          DOORWAY.width + 0.2, DOORWAY.height + 0.1, DOORWAY.width - 0.02, DOORWAY.height - 0.02,
+        ), { ...extrudeClay, depth: 0.06, bevelThickness: 0.025, bevelSize: 0.025 }),
+        0.06, 0.075, 0.12,
+      ), detail, 0.02),
+      frameMaterial,
+    )
+    frame.name = 'hut-door-frame'
+    setShadow(frame, lowFx)
+    this.door.add(frame)
 
     const knobMaterial = clayMaterial(PALETTE.hutClay)
     this.roofKnob = new THREE.Mesh(
@@ -810,7 +1011,7 @@ export class Hut {
     this.roofKnob.scale.y = 0.8
     setShadow(this.roofKnob, lowFx)
 
-    this.charring = new Charring([baseMaterial, doorMaterial, knobMaterial])
+    this.charring = new Charring([baseMaterial, doorMaterial, frameMaterial, knobMaterial])
 
     this.siteStones = ringMesh(5, 0.82, 0.22, rng, lowFx)
 
@@ -829,7 +1030,7 @@ export class Hut {
     }
 
     this.group.add(this.base, this.door, this.roofKnob, this.siteStones)
-    this.fireVisual = new BurningVisual(seedFromId(id), 1.05, 0.42, lowFx)
+    this.fireVisual = new BurningVisual(seedFromId(id), HUT_FIRE, 0.36, 3, lowFx)
     this.group.add(this.fireVisual.group)
     addBlobShadow(this.group, 1.35, lowFx)
     this.syncAppearance()
@@ -898,6 +1099,15 @@ export class Hut {
     this.fireVisual.setLightEnabled(on)
   }
 
+  /** A lamp-lit doorway after dark; 0 by day, 1 at full night. */
+  setNightLevel(level: number): void {
+    const glow = this.state === 'built' ? THREE.MathUtils.clamp(level, 0, 1) : 0
+    if (glow === this.doorGlow) return
+    this.doorGlow = glow
+    this.door.material.emissive.set(PALETTE.lamp)
+    this.door.material.emissiveIntensity = glow * 1.9
+  }
+
   flare(seconds = 1, scale = 1.75): void {
     if (!this.burning) return
     this.fireVisual.flare(seconds, scale)
@@ -960,6 +1170,7 @@ export class Campfire {
   private lastQt = Number.NEGATIVE_INFINITY
   private flareTime = 0
   private flareScale = 1
+  private nightLevel = 0
 
   constructor(
     public x: number,
@@ -993,7 +1204,7 @@ export class Campfire {
     for (let i = 0; i < 3; i++) {
       const flame = new THREE.Mesh(
         wobble(new THREE.SphereGeometry(0.27 - i * 0.035, 10, 8), rng, 0.045),
-        clayMaterial(colors[i]!),
+        glowingClay(colors[i]!, CAMPFIRE_DAY_GLOW),
       )
       flame.name = 'campfire-flame'
       flame.userData.index = i
@@ -1004,8 +1215,10 @@ export class Campfire {
       this.group.add(flame)
     }
 
-    this.light = new THREE.PointLight(PALETTE.flame, 1.5, 6)
-    this.light.position.y = 1.05
+    this.light = new THREE.PointLight(PALETTE.flame, CAMPFIRE_DAY_LIGHT, 10)
+    // Above the flame tips, so the light pools on the ground instead of
+    // blowing out the flames from inside.
+    this.light.position.y = 1.7
     this.light.castShadow = false
     this.group.add(this.light)
     addBlobShadow(this.group, 1.05, lowFx)
@@ -1106,7 +1319,7 @@ export class Campfire {
     const flareScale = this.flareTime > 0 ? this.flareScale : 1
     for (const flame of this.flames) flame.visible = this.lit
     this.light.visible = this.lit && this.lightEnabled
-    this.light.intensity = this.lit ? 1.5 * flareScale : 0
+    this.light.intensity = this.lit ? this.baseLight() * flareScale : 0
 
     if (!this.lit || qt === this.lastQt) return
     const frame = Math.floor(qt * 12)
@@ -1145,7 +1358,22 @@ export class Campfire {
     }
     for (const flame of this.flames) flame.visible = this.lit
     this.light.visible = this.lit && this.lightEnabled
-    this.light.intensity = this.lit ? 1.5 : 0
+    this.light.intensity = this.lit ? this.baseLight() : 0
+  }
+
+  /** 0 by day, 1 at full night: the fire throws a wider warm pool after dark. */
+  setNightLevel(level: number): void {
+    const next = THREE.MathUtils.clamp(level, 0, 1)
+    if (next === this.nightLevel) return
+    this.nightLevel = next
+    const glow = THREE.MathUtils.lerp(CAMPFIRE_DAY_GLOW, CAMPFIRE_NIGHT_GLOW, next)
+    for (const flame of this.flames) {
+      (flame.material as THREE.MeshToonMaterial).emissiveIntensity = glow
+    }
+  }
+
+  private baseLight(): number {
+    return THREE.MathUtils.lerp(CAMPFIRE_DAY_LIGHT, CAMPFIRE_NIGHT_LIGHT, this.nightLevel)
   }
 }
 
@@ -1535,6 +1763,15 @@ export class Grave {
   dispose(): void {
     disposeObjectResources(this.group)
   }
+}
+
+export function applyNightLighting(
+  huts: readonly Hut[],
+  campfire: Campfire | null | undefined,
+  level: number,
+): void {
+  for (const hut of huts) hut.setNightLevel(level)
+  campfire?.setNightLevel(level)
 }
 
 /** A wind-dropped fruit resting on the ground until gathered or spoiled. */

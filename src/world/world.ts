@@ -22,6 +22,7 @@ import {
   MAX_POND_FISH,
   Pond,
   Tree,
+  applyNightLighting,
 } from './objects'
 import {
   BUILD_CLEARANCE,
@@ -980,6 +981,11 @@ export class World {
     }
   }
 
+  /** Night-only warmth: lit doorways and a wider campfire pool. */
+  setNightLevel(level: number): void {
+    applyNightLighting(this.huts, this.campfire, level)
+  }
+
   updateFireLights(camera: Position): void {
     const candidates: Array<Tree | Hut | Campfire> = [
       ...this.trees.filter(tree => tree.burning),
@@ -1098,10 +1104,18 @@ export class World {
     this.island.group.add(sapling.group)
   }
 
-  private burningCount(): number {
+  /** Everything on fire right now, including a flared campfire. */
+  burningCount(): number {
     return this.trees.filter(tree => tree.burning).length
       + this.huts.filter(hut => hut.burning).length
       + Number(this.campfire?.burning ?? false)
+  }
+
+  /** Lit campfires also contribute to the ambient crackle bed. */
+  ambientFireCount(): number {
+    return this.trees.filter(tree => tree.burning).length
+      + this.huts.filter(hut => hut.burning).length
+      + Number(this.campfire?.lit ?? false)
   }
 
   private villageCentre(): Position {

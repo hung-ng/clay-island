@@ -9,6 +9,7 @@ import {
   clampCameraTarget,
   maxPolarAngleAt,
   smooth01,
+  surfaceTargetFloor,
 } from './policy'
 
 describe('camera policy', () => {
@@ -18,9 +19,22 @@ describe('camera policy', () => {
   })
 
   it('tightens the low viewing angle only near the island', () => {
-    expect(maxPolarAngleAt(15)).toBeCloseTo(1.20)
+    expect(maxPolarAngleAt(8)).toBeCloseTo(1.28)
     expect(maxPolarAngleAt(25)).toBeCloseTo(1.35)
     expect(maxPolarAngleAt(55)).toBeCloseTo(1.35)
+  })
+
+  it('raises the orbit target onto the ground only as the camera closes in', () => {
+    const home = Math.hypot(CAMERA_HOME.position.y, CAMERA_HOME.position.z)
+    expect(surfaceTargetFloor(2, home)).toBe(0)
+    expect(surfaceTargetFloor(2, 30)).toBe(0)
+    expect(surfaceTargetFloor(2, 12)).toBeCloseTo(2.8)
+    expect(surfaceTargetFloor(2, CAMERA_LIMITS.minDistance)).toBeCloseTo(2.8)
+    const halfway = surfaceTargetFloor(2, 21)
+    expect(halfway).toBeGreaterThan(0)
+    expect(halfway).toBeLessThan(2.8)
+    // A crater floor below sea level never drags the target under y=0.
+    expect(surfaceTargetFloor(-3, 10)).toBe(0)
   })
 
   it('keeps exact home and distance acceptance values', () => {
@@ -29,7 +43,7 @@ describe('camera policy', () => {
       target: { x: 0, y: 0, z: 0 },
     })
     expect(CAMERA_LIMITS).toMatchObject({
-      minDistance: 15,
+      minDistance: 8,
       maxDistance: 55,
       targetRadius: 7.5,
     })

@@ -5,6 +5,8 @@ import { clayMaterial } from '../fx/clayMaterial'
 import { accumulateScorch, blendChannel } from '../fx/decals'
 import { PALETTE } from '../ui/tokens'
 import { craterInfluenceRadius, craterOffset, type Crater } from './craters'
+import { GroundCover } from './groundCover'
+import { buildIslandShell } from './islandShell'
 
 export const ISLAND_RADIUS = 15
 export const WALK_RADIUS = 12
@@ -20,20 +22,38 @@ export function islandSurfaceY(x: number, z: number): number {
 
 const GRASS_A = new THREE.Color(PALETTE.grassDark)
 const GRASS_B = new THREE.Color(PALETTE.grassLight)
+const GRASS_DEEP = new THREE.Color(PALETTE.grassDeep)
+const GRASS_SUN = new THREE.Color(PALETTE.grassSun)
 const DIRT = new THREE.Color(PALETTE.dirt)
 const SCORCH = new THREE.Color(PALETTE.scorch)
+
+/**
+ * Mottled meadow: broad light/dark patches, finer sunlit flecks, and a faint
+ * deepening toward the rim where the grass lip rolls over.
+ */
+export function grassColor(x: number, z: number): THREE.Color {
+  const r = Math.hypot(x, z)
+  const patch = (fbm2(x * 0.3, z * 0.3) + 1) / 2
+  const fleck = fbm2(x * 1.1 + 40, z * 1.1 - 12, 2)
+  const c = GRASS_A.clone().lerp(GRASS_B, patch)
+  if (fleck > 0.12) c.lerp(GRASS_SUN, Math.min(1, (fleck - 0.12) * 2.2) * 0.55)
+  if (fleck < -0.18) c.lerp(GRASS_DEEP, Math.min(1, (-0.18 - fleck) * 2.5) * 0.6)
+  const rim = Math.min(1, Math.max(0, (r - (ISLAND_RADIUS - 3.5)) / 3.5))
+  return c.lerp(GRASS_DEEP, rim * rim * 0.18)
+}
 
 export class Island {
   group = new THREE.Group()
   topMesh: THREE.Mesh
   craters: Crater[] = []
+  private readonly cover: GroundCover
   /** Per-vertex scorch amount 0..1, painted in Task 10, mixed into vertex colors. */
   private scorchAmt: Float32Array
   private baseColors: Float32Array
   private rings = 40
   private segs = 80
 
-  constructor(_rng: RNG) {
+  constructor(rng: RNG, lowFx = false, reducedMotion: () => boolean = () => false) {
     // --- top: radial grid displaced by islandSurfaceY, vertex-colored grass
     const { rings, segs } = this
     const positions: number[] = [], colors: number[] = [], index: number[] = []
@@ -43,9 +63,7 @@ export class Island {
         const a = (j / segs) * Math.PI * 2
         const x = Math.cos(a) * r, z = Math.sin(a) * r
         positions.push(x, islandSurfaceY(x, z), z)
-        const patch = (fbm2(x * 0.3, z * 0.3) + 1) / 2
-        const c = GRASS_A.clone().lerp(GRASS_B, patch)
-        if (r > ISLAND_RADIUS - 1.2) c.lerp(DIRT, (r - (ISLAND_RADIUS - 1.2)) / 1.2)
+        const c = grassColor(x, z)
         colors.push(c.r, c.g, c.b)
       }
     }
@@ -67,19 +85,21 @@ export class Island {
     this.baseColors = Float32Array.from(colors)
     this.scorchAmt = new Float32Array(positions.length / 3)
 
-    // --- underside: lathe cone with chunky noise, rock colored
-    const profile: THREE.Vector2[] = []
-    const depth = 10
-    for (let i = 0; i <= 12; i++) {
-      const t = i / 12
-      const noise = fbm2(t * 5, 3.7) * 0.15 * Math.sin(t * Math.PI)
-      const r = ISLAND_RADIUS * (1 - t * t) * (1 + noise)
-      profile.push(new THREE.Vector2(Math.max(r, 0.01), -t * depth))
-    }
-    const underGeo = new THREE.LatheGeometry(profile, 48)
-    const under = new THREE.Mesh(underGeo, clayMaterial(PALETTE.rock))
-    under.castShadow = false
-    this.group.add(under)
+    this.group.add(buildIslandShell({
+      radius: ISLAND_RADIUS,
+      surfaceY: islandSurfaceY,
+      grassColor,
+      rng,
+      lowFx,
+      reducedMotion,
+    }))
+    this.cover = new GroundCover({
+      radius: ISLAND_RADIUS,
+      sampleHeight: (x, z) => this.sampleHeight(x, z),
+      rng: new RNG(rng.int(1, 1_000_000)),
+      lowFx,
+    })
+    this.group.add(this.cover.group)
   }
 
   /** The one true ground height. Everything that stands on the island calls this. */
@@ -110,6 +130,7 @@ export class Island {
     positions.needsUpdate = true
     colors.needsUpdate = true
     geometry.computeVertexNormals()
+    this.cover.reground(this.craters)
   }
 
   scorch(x: number, z: number, radius: number): void {

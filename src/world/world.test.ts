@@ -165,6 +165,15 @@ describe('celebration ground and safety', () => {
     expect(world.hasDangerousFire()).toBe(true)
   })
 
+  it('includes a lit campfire in the ambient fire bed', () => {
+    const world = makeWorld()
+    world.campfire = { lit: true, burning: false } as Campfire
+    world.trees.push({ burning: true } as Tree)
+
+    expect(world.ambientFireCount()).toBe(2)
+    expect(world.burningCount()).toBe(1)
+  })
+
   it('keeps celebration slots dry, on-island, and away from solid props', () => {
     const world = makeWorld()
     world.campfire = { x: 0, z: 0, state: 'lit', scattered: false } as Campfire

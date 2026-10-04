@@ -8,7 +8,7 @@ import { PALETTE } from '../ui/tokens'
 import type { InitialWorldBlueprint } from '../world/blueprint'
 import type { GameplayWorldSet } from '../world/initial'
 import { Island } from '../world/island'
-import { Campfire, Hut, Tree } from '../world/objects'
+import { applyNightLighting, Campfire, Hut, Tree } from '../world/objects'
 import { PrologueActor } from './actor'
 import {
   crossedPrologueCues,
@@ -192,15 +192,20 @@ export class PrologueSet {
   private readonly builtHuts: Hut[] = []
   private readonly materialPiles: THREE.Object3D[] = []
   private readonly blueprint: InitialWorldBlueprint
-  private readonly reducedMotion: boolean
+  private readonly reducedMotionActive: () => boolean
   private appliedCampfireProgress = 0
   private appliedCampfireElapsed = 0
   private disposed = false
 
-  constructor(blueprint: InitialWorldBlueprint, lowFx: boolean, reducedMotion: boolean) {
+  constructor(
+    blueprint: InitialWorldBlueprint,
+    lowFx: boolean,
+    reducedMotion: boolean,
+    reducedMotionActive: () => boolean = () => reducedMotion,
+  ) {
     this.blueprint = blueprint
-    this.reducedMotion = reducedMotion
-    this.island = new Island(new RNG(blueprint.islandSeed))
+    this.reducedMotionActive = reducedMotionActive
+    this.island = new Island(new RNG(blueprint.islandSeed), lowFx, reducedMotionActive)
     this.group = this.island.group
     this.group.name = 'prologue-island'
 
@@ -250,7 +255,7 @@ export class PrologueSet {
 
   seekFinal(): void {
     if (this.disposed) return
-    this.apply(prologueStateAt(PROLOGUE_DURATION, this.blueprint, this.reducedMotion))
+    this.apply(prologueStateAt(PROLOGUE_DURATION, this.blueprint, this.reducedMotionActive()))
     for (const actor of this.actors) {
       actor.settle(this.island.sampleHeight(actor.spec.x, actor.spec.z))
     }
@@ -264,6 +269,11 @@ export class PrologueSet {
     this.campfire.settleFlames()
     setPresentationOpacity(this.campfire.group, 1)
     this.group.rotation.set(0, this.blueprint.stageRotationY, 0)
+  }
+
+  /** The time-lapse nights light the doorways and campfire like gameplay does. */
+  setNightLevel(level: number): void {
+    applyNightLighting(this.huts, this.campfire, level)
   }
 
   handoffRecords(): HandoffRecord[] {
@@ -473,7 +483,12 @@ export class PrologueDirector {
   private disposed = false
 
   constructor(private readonly options: PrologueDirectorOptions) {
-    this.set = new PrologueSet(options.blueprint, options.lowFx, options.reducedMotion())
+    this.set = new PrologueSet(
+      options.blueprint,
+      options.lowFx,
+      options.reducedMotion(),
+      options.reducedMotion,
+    )
     options.stageRoot.add(this.set.group)
     options.camera.lock('prologue')
     const initial = prologueStateAt(0, options.blueprint, options.reducedMotion())

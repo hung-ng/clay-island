@@ -7,6 +7,12 @@ export const PALETTE = {
   grassDark: '#7fb069',
   dirt: '#9c6644',
   rock: '#7f5539',
+  soil: '#6b4630', // the dark band right under the grass
+  strataLight: '#b98256',
+  strataDark: '#5e3f2e',
+  lipShadow: '#4f7a45', // underside of the rolled grass lip
+  grassDeep: '#6a9a50',
+  grassSun: '#bcd567',
   scorch: '#3d3436',
   // objects
   bark: '#8a5a44',
@@ -22,8 +28,12 @@ export const PALETTE = {
   smockC: '#e0c341',
   flame: '#ff8c42',
   ember: '#ffd166',
+  lamp: '#ffb05c', // hut doorways after dark
   water: '#6d9dc5',
+  rainDrop: '#d6ecfa',
+  rainCloud: '#c4ccd6',
   bloom: '#e56b9f',
+  wildflower: '#b9a3e3', // lilac; pink stays reserved for First Bloom
   ghost: '#e8ecf1',
   cloud: '#fffaf2', // clay white — never pure #fff; nothing in clay is pure white
   // sky & light
@@ -43,11 +53,11 @@ export const PALETTE = {
   duskSkyLow: '#ff9b6b',
   duskKeyLight: '#ffb37e',
   nightSkyHigh: '#141e33',
-  nightSkyLow: '#2c3a58',
+  nightSkyLow: '#34426c',
   nightKeyLight: '#a8c0e8',
   nightFillSky: '#31406b',
   nightFillGround: '#232633',
-  nightCloud: '#5a6580',
+  nightCloud: '#76829f', // moonlit, so the low deck never reads as holes in the sky
   // ui
   paper: '#e8d5b7', // clay-cream, the tray + journal surface
   ink: '#3d3436',

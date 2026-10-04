@@ -45,7 +45,7 @@ describe('CameraController', () => {
       enablePan: true,
       enableDamping: true,
       zoomToCursor: true,
-      minDistance: 15,
+      minDistance: 8,
       maxDistance: 55,
       minPolarAngle: 0.6,
       maxPolarAngle: 1.35,
@@ -54,6 +54,36 @@ describe('CameraController', () => {
     })
     expect(controls.cursor.toArray()).toEqual([0, 0, 0])
     expect(controls.touches).toEqual({ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN })
+    subject.dispose()
+  })
+
+  it('lifts a close orbit onto the ground and leaves authored shots alone', () => {
+    const camera = new THREE.PerspectiveCamera()
+    const controls = fakeControls()
+    const subject = new CameraController({
+      camera,
+      dom: new EventTarget() as HTMLElement,
+      autoRotate: false,
+      reducedMotion: () => false,
+      controls,
+      groundHeight: () => 2,
+    })
+    const close = { position: { x: 0, y: 4, z: 10 }, target: { x: 0, y: 0, z: 0 } }
+
+    subject.lock('prologue')
+    subject.setPose(close)
+    subject.update(1 / 60)
+    expect(controls.target.y).toBe(0)
+
+    subject.unlock('prologue')
+    subject.update(1 / 60)
+    expect(controls.target.y).toBeCloseTo(2.8)
+    // The camera rose with the target, so the viewing angle is unchanged.
+    expect(camera.position.y).toBeCloseTo(6.8)
+
+    subject.setPose(CAMERA_HOME)
+    subject.update(1 / 60)
+    expect(controls.target.y).toBe(0)
     subject.dispose()
   })
 

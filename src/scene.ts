@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import {
   BlendFunction,
+  BloomEffect,
   Effect,
   EffectComposer,
   EffectPass,
@@ -45,6 +46,21 @@ class HeldNoiseEffect extends Effect {
 
   set seed(value: number) {
     this.seedUniform.value = value
+  }
+}
+
+/**
+ * Caps scene radiance before any other effect runs. A light sitting inside a
+ * flame can push pixels into the hundreds; the half-precision effect shaders
+ * then overflow to Inf/NaN and the grain blend paints them cyan.
+ */
+class HdrClampEffect extends Effect {
+  constructor(ceiling: number) {
+    super('HdrClampEffect', `
+void mainImage(const in vec4 inputColor, const in vec2 uv, out vec4 outputColor) {
+  outputColor = vec4(min(inputColor.rgb, vec3(${ceiling.toFixed(1)})), inputColor.a);
+}
+`)
   }
 }
 
@@ -108,12 +124,12 @@ export function createScene(options: SceneOptions) {
   const cloudMaterial = clayMaterial(PALETTE.cloud, { flat: true })
   const cloudRng = new RNG(31)
   const clouds: THREE.Group[] = []
-  for (let i = 0; i < 6; i++) {
+  const addCloud = (angle: number, radius: number, y: number, scale: number, castShadow: boolean): void => {
     const cloud = new THREE.Group()
     const pieces = cloudRng.int(3, 5)
     for (let j = 0; j < pieces; j++) {
-      const radius = cloudRng.range(0.8, 1.5)
-      const geometry = wobble(new THREE.SphereGeometry(radius, 16, 12), cloudRng, 0.1)
+      const puffRadius = cloudRng.range(0.8, 1.5)
+      const geometry = wobble(new THREE.SphereGeometry(puffRadius, 16, 12), cloudRng, 0.1)
       const puff = new THREE.Mesh(geometry, cloudMaterial)
       puff.position.set(
         (j - (pieces - 1) * 0.5) * cloudRng.range(1, 1.5),
@@ -121,16 +137,26 @@ export function createScene(options: SceneOptions) {
         cloudRng.range(-0.7, 0.7),
       )
       puff.scale.y = cloudRng.range(0.65, 0.9)
-      puff.castShadow = true
+      puff.castShadow = castShadow
       cloud.add(puff)
     }
-    const angle = (i / 6) * Math.PI * 2 + cloudRng.range(-0.3, 0.3)
-    const radius = cloudRng.range(24, 32)
-    cloud.position.set(Math.cos(angle) * radius, cloudRng.range(5, 8), Math.sin(angle) * radius)
+    cloud.scale.setScalar(scale)
+    cloud.position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius)
+    cloud.rotation.y = -angle
     cloud.userData.baseY = cloud.position.y
     cloud.userData.phase = cloudRng.range(0, Math.PI * 2)
     clouds.push(cloud)
     cloudGroup.add(cloud)
+  }
+  for (let i = 0; i < 6; i++) {
+    const angle = (i / 6) * Math.PI * 2 + cloudRng.range(-0.3, 0.3)
+    addCloud(angle, cloudRng.range(24, 32), cloudRng.range(5, 8), 1, true)
+  }
+  // A lower deck drifting beneath the island: the camera looks down, so these
+  // are what sell "floating" in a wide shot.
+  for (let i = 0; i < 7; i++) {
+    const angle = (i / 7) * Math.PI * 2 + 0.4 + cloudRng.range(-0.25, 0.25)
+    addCloud(angle, cloudRng.range(20, 30), cloudRng.range(-16, -9), cloudRng.range(1.5, 2.3), false)
   }
   scene.add(cloudGroup)
 
@@ -148,19 +174,32 @@ export function createScene(options: SceneOptions) {
   const fill = new THREE.HemisphereLight(PALETTE.fillSky, PALETTE.fillGround, 1.1)
   scene.add(key, fill)
 
-  const composer = new EffectComposer(renderer)
+  // Half-float buffers keep fire, lightning and fireworks above 1.0 so bloom
+  // can pick them out without haloing the daylit clay before ACES tone mapping.
+  const composer = new EffectComposer(renderer, lowFx ? {} : {
+    frameBufferType: THREE.HalfFloatType,
+    multisampling: Math.min(4, renderer.capabilities.maxSamples),
+  })
   composer.addPass(new RenderPass(scene, camera))
 
   let tilt: TiltShiftEffect | null = null
   let grain: HeldNoiseEffect | null = null
   if (!lowFx) {
-    tilt = new TiltShiftEffect({ focusArea: 0.45, feather: 0.35 })
-    tilt.blendMode.opacity.value = 0.45
-    const vignette = new VignetteEffect({ darkness: 0.55, offset: 0.3 })
+    composer.addPass(new EffectPass(camera, new HdrClampEffect(4)))
+    const bloom = new BloomEffect({
+      mipmapBlur: true,
+      luminanceThreshold: 1.05,
+      luminanceSmoothing: 0.35,
+      intensity: 1.15,
+      radius: 0.7,
+    })
+    tilt = new TiltShiftEffect({ focusArea: 0.5, feather: 0.32 })
+    tilt.blendMode.opacity.value = 0.32
+    const vignette = new VignetteEffect({ darkness: 0.5, offset: 0.32 })
     grain = new HeldNoiseEffect()
-    grain.blendMode.opacity.value = 0.12
-    const grade = new HueSaturationEffect({ saturation: 0.12 })
-    composer.addPass(new EffectPass(camera, tilt, vignette, grain, grade))
+    grain.blendMode.opacity.value = 0.08
+    const grade = new HueSaturationEffect({ saturation: 0.14 })
+    composer.addPass(new EffectPass(camera, bloom, tilt, vignette, grain, grade))
   }
   const quality = new VisualQualityController(tilt, grain, lowFx)
 

@@ -22,3 +22,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Capture artifacts (scripts/video)
+output
+.playwright-cli
+scripts/

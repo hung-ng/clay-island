@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { celebrationSoundProfile, prologueSoundProfile, shutterSoundProfile } from './sfx'
+import { celebrationSoundProfile, prologueSoundProfile, shutterSoundProfile, voiceToEvict } from './sfx'
 
 describe('prologue sound profiles', () => {
   it('gives every visual cue a bounded distinct sound profile', () => {
@@ -28,4 +28,20 @@ it('keeps the shutter click short and quiet', () => {
   expect(profile.knock.volume).toBeLessThanOrEqual(0.06)
   expect(profile.tick.volume).toBeLessThanOrEqual(0.03)
   expect(profile.tick.from).toBeGreaterThan(profile.knock.pitch)
+})
+
+describe('voice cap', () => {
+  it('cuts the oldest short sound before a sustained bed like the rain', () => {
+    const rain = { id: 'rain', sustained: true }
+    const step = { id: 'step', sustained: false }
+    const chirp = { id: 'chirp', sustained: false }
+    expect(voiceToEvict([rain, step, chirp])).toBe(step)
+  })
+
+  it('falls back to the oldest voice when every voice is sustained', () => {
+    const rain = { id: 'rain', sustained: true }
+    const gust = { id: 'gust', sustained: true }
+    expect(voiceToEvict([rain, gust])).toBe(rain)
+    expect(voiceToEvict([])).toBeUndefined()
+  })
 })

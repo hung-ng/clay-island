@@ -7,11 +7,11 @@ export const CAMERA_HOME: CameraPose = {
 }
 
 export const CAMERA_LIMITS = {
-  minDistance: 15,
+  minDistance: 8,
   maxDistance: 55,
   targetRadius: 7.5,
   minPolarAngle: 0.6,
-  nearMaxPolarAngle: 1.20,
+  nearMaxPolarAngle: 1.28,
   farMaxPolarAngle: 1.35,
   polarRelaxDistance: 25,
   resetSeconds: 0.7,
@@ -89,6 +89,27 @@ export function maxPolarAngleAt(distance: number): number {
   const t = Math.max(0, Math.min(1, (distance - CAMERA_LIMITS.minDistance) / span))
   return CAMERA_LIMITS.nearMaxPolarAngle
     + (CAMERA_LIMITS.farMaxPolarAngle - CAMERA_LIMITS.nearMaxPolarAngle) * t
+}
+
+/** Below this distance the orbit target sits fully on the ground under it. */
+const SURFACE_TARGET_NEAR = 12
+/** Beyond this distance the target stays at the island's centre of mass. */
+const SURFACE_TARGET_FAR = 30
+/** Roughly villager chest height, so close-ups centre on people, not dirt. */
+const SURFACE_TARGET_EYE = 0.8
+
+/**
+ * The lowest the orbit target may sit when the camera is this close. Far away
+ * the target stays at y=0, the middle of the island's mass, which frames the
+ * whole diorama. Up close y=0 is buried under the meadow's dome, so a plain
+ * zoom aims below the grass and pushes everyone off the top of the frame; the
+ * target rides up to just above the ground instead.
+ */
+export function surfaceTargetFloor(groundY: number, distance: number): number {
+  const closeness = 1 - smooth01(
+    (distance - SURFACE_TARGET_NEAR) / (SURFACE_TARGET_FAR - SURFACE_TARGET_NEAR),
+  )
+  return closeness * Math.max(0, groundY + SURFACE_TARGET_EYE)
 }
 
 export function smooth01(value: number): number {

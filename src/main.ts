@@ -88,11 +88,17 @@ const {
   composer,
   lowFx,
 } = sceneBundle
+const groundProbe = new THREE.Vector3()
 const cameraController = new CameraController({
   camera,
   dom: renderer.domElement,
   autoRotate: startup.autoRotate,
   reducedMotion,
+  // Ignores the stage's slow bob so the target does not breathe with it.
+  groundHeight: (x, z) => {
+    groundProbe.set(x, 0, z).applyAxisAngle(THREE.Object3D.DEFAULT_UP, -stageRoot.rotation.y)
+    return island.sampleHeight(groundProbe.x, groundProbe.z)
+  },
 })
 cameraController.lock('prologue')
 const dayClock = new DayClock(reducedMotion, GOLDEN_T, startup.dayCount)
@@ -105,7 +111,7 @@ const canonicalDay = sampleAt(GOLDEN_T)
 const nightSky = new NightSky(scene, stageRoot, lowFx)
 let lastDayKind = dayClock.kind
 
-const gameplay = buildInitialWorld(blueprint, startup.lowFx)
+const gameplay = buildInitialWorld(blueprint, startup.lowFx, reducedMotion)
 const { island, world } = gameplay
 stageRoot.add(island.group)
 island.group.visible = false
@@ -143,6 +149,7 @@ world.setChipFx((x, z) => particles.burst({
   life: 0.5,
   size: 0.6,
 }))
+const sparks = lowFx ? null : new ParticleBurst(stageRoot, 360, 97, { glow: 2.8, radius: 0.08 })
 const shake = new Shake(reducedMotion)
 const powers = new PowerManager([new Meteor(), new Lightning(), new Rain(), new Nudge(), new Wind()], {
   world,
@@ -150,6 +157,7 @@ const powers = new PowerManager([new Meteor(), new Lightning(), new Rain(), new 
   scene,
   fx: {
     particles,
+    ...(sparks ? { sparks } : {}),
     shake,
     flash: (color, seconds) => flash(color, seconds, reducedMotion()),
   },
@@ -415,6 +423,7 @@ function beginSettingsReplay(): void {
 
     island.group.visible = false
     particles.mesh.visible = false
+    if (sparks) sparks.mesh.visible = false
     const prologue = transitionAppFlow(flow, { type: 'coverReady' })
     if (prologue === flow || prologue.phase !== 'prologue' || prologue.mode !== 'replay') return
     flow = prologue
@@ -459,6 +468,7 @@ function beginReplayOutboundCover(generation: number): void {
       director = null
       island.group.visible = true
       particles.mesh.visible = true
+      if (sparks) sparks.mesh.visible = true
       if (replayRestore) {
         cameraController.setPose(replayRestore.camera)
         stageRoot.position.copy(replayRestore.stagePosition)
@@ -621,6 +631,7 @@ const loop = new GameLoop(
       targeting.update()
       celebration?.update(dt)
       particles.update(dt)
+      sparks?.update(dt)
       for (const power of powerIds) tray.setCooldown(power, powers.cooldown01(power))
       tray.setPhotoEnabled(canArmPower(flow, modalOpen()))
       world.updateFireLights(camera.position)
@@ -641,7 +652,10 @@ const loop = new GameLoop(
       ? dayClock.sample()
       : (sweeping ? director!.dayParams() : canonicalDay)
     applyDay(dayParams, ambientDt)
+    if (gameplayActive) world.setNightLevel(dayParams.fireflyLevel)
+    else director?.set.setNightLevel(dayParams.fireflyLevel)
     nightSky.setLevels(dayParams.starOpacity, dayParams.fireflyLevel)
+    sfx.update(ambientDt, dayParams.fireflyLevel, gameplayActive ? world.ambientFireCount() : 0)
     nightSky.update(ambientDt, reducedMotion())
     // Clouds drift at time-lapse speed through the prologue so its daylight
     // stretches have visible motion rather than reading as a held frame.
@@ -675,3 +689,44 @@ document.addEventListener('visibilitychange', () => {
     loop.setBackground(false)
   }
 })
+
+// Dev-only handle for scripted capture (scripts/video). Vite strips this
+// block from production builds.
+if (import.meta.env.DEV) {
+  const projected = new THREE.Vector3()
+  Object.assign(window, {
+    __clay: {
+      THREE,
+      scene,
+      stageRoot,
+      camera,
+      renderer,
+      cameraController,
+      shake,
+      dayClock,
+      world,
+      island,
+      powers,
+      targeting,
+      journal,
+      journalUI,
+      celebration,
+      sfx,
+      tray,
+      flow: () => flow,
+      begin: beginNormalPrologue,
+      skipIntro: skipNormalPrologue,
+      /** Island-local ground point to CSS pixel coordinates. */
+      toScreen(x: number, z: number, lift = 0) {
+        projected.set(x, island.sampleHeight(x, z) + lift, z)
+        island.group.localToWorld(projected)
+        projected.project(camera)
+        const rect = renderer.domElement.getBoundingClientRect()
+        return {
+          x: rect.left + (projected.x + 1) / 2 * rect.width,
+          y: rect.top + (1 - projected.y) / 2 * rect.height,
+        }
+      },
+    },
+  })
+}

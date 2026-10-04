@@ -78,22 +78,29 @@ function boltGeometry(ctx: CastCtx, y0: number): Actor {
     ))
   }
 
-  const material = clayMaterial(PALETTE.ghost, { flat: true })
+  // Over-bright so bloom wraps the bolt in a halo; unlit, like real light.
+  const material = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(PALETTE.ghost).multiplyScalar(3.4),
+  })
   const geometries: THREE.BufferGeometry[] = []
   const group = new THREE.Group()
   group.name = 'lightning-bolt'
   group.visible = false
+  const strikeLight = new THREE.PointLight(PALETTE.ghost, ctx.lowFx ? 0 : 26, 16)
+  strikeLight.position.set(ctx.x, y0 + 2.2, ctx.z)
+  strikeLight.visible = !ctx.lowFx
+  group.add(strikeLight)
 
   const addTube = (path: THREE.Vector3[], radius: number): void => {
     const curve = new THREE.CatmullRomCurve3(path)
     const geometry = new THREE.TubeGeometry(curve, 32, radius, 4, false)
     const mesh = new THREE.Mesh(geometry, material)
-    mesh.name = radius > 0.05 ? 'lightning-main-bolt' : 'lightning-fork'
+    mesh.name = radius > 0.07 ? 'lightning-main-bolt' : 'lightning-fork'
     mesh.castShadow = false
     group.add(mesh)
     geometries.push(geometry)
   }
-  addTube(points, 0.075)
+  addTube(points, 0.11)
 
   for (const [index, side] of [[3, -1], [5, 1]] as const) {
     const start = points[index]!
@@ -105,7 +112,7 @@ function boltGeometry(ctx: CastCtx, y0: number): Actor {
     const middle = start.clone().lerp(end, 0.52)
     middle.x += ctx.rng.range(-0.35, 0.35)
     middle.z += ctx.rng.range(-0.35, 0.35)
-    addTube([start.clone(), middle, end], 0.042)
+    addTube([start.clone(), middle, end], 0.06)
   }
 
   ctx.island.group.add(group)
@@ -146,6 +153,10 @@ export class Lightning implements Power {
         bolt.start()
         ctx.fx.flash(PALETTE.ghost, 0.06)
         ctx.fx.shake.add(0.35, 0.24)
+        ctx.fx.sparks?.burst({
+          x: ctx.x, y: y0 + 0.2, z: ctx.z, n: 36,
+          color: PALETTE.ghost, speed: 5.5, gravity: 10, life: 0.55, size: 0.9, shape: 'sphere',
+        })
         for (const villager of ctx.world.villagers) {
           if (villager.alive) villager.flinch()
         }
