@@ -675,3 +675,6 @@ document.addEventListener('visibilitychange', () => {
     loop.setBackground(false)
   }
 })
+
+// Comparison-only handle (temporary checkout, not committed).
+if (import.meta.env.DEV) Object.assign(window, { __clay: { cameraController, dayClock } })
