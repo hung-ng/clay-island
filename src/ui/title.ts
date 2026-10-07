@@ -1,7 +1,6 @@
 import { createModalBackground } from './modal'
 
 export type TitleUI = {
-  showBegin(): void
   showPrologue(canSkip: boolean): void
   showCover(onCovered: () => void): void
   hide(): void
@@ -14,7 +13,7 @@ const TITLE_LIFTS = [0, -3, 2, -1, 3, -2, 1, -4, 2, 0]
 
 export function createTitleUI(
   ui: HTMLElement,
-  handlers: { reducedMotion(): boolean; onBegin(): void; onSkip(): void },
+  handlers: { reducedMotion(): boolean; onSkip(): void },
 ): TitleUI {
   const layer = document.createElement('div')
   layer.id = 'title-layer'
@@ -48,13 +47,6 @@ export function createTitleUI(
     heading.append(group)
   }
 
-  const begin = document.createElement('button')
-  begin.id = 'begin-btn'
-  begin.type = 'button'
-  begin.textContent = 'Begin'
-  begin.disabled = true
-  begin.tabIndex = -1
-
   const skip = document.createElement('button')
   skip.id = 'intro-skip'
   skip.type = 'button'
@@ -62,7 +54,7 @@ export function createTitleUI(
   skip.hidden = true
   skip.tabIndex = -1
 
-  plaque.append(heading, begin)
+  plaque.append(heading)
   layer.append(plaque, skip)
   ui.appendChild(layer)
 
@@ -81,7 +73,7 @@ export function createTitleUI(
     plaqueTimer = 0
   }
 
-  const setMode = (mode: 'begin' | 'prologue' | 'cover' | 'hidden'): void => {
+  const setMode = (mode: 'prologue' | 'cover' | 'hidden'): void => {
     clearCoverTimer()
     clearPlaqueTimer()
     layer.dataset.mode = mode
@@ -89,32 +81,15 @@ export function createTitleUI(
     setBackgroundInert(mode !== 'hidden')
   }
 
-  const onBegin = (): void => { handlers.onBegin() }
   const onSkip = (): void => { handlers.onSkip() }
-  begin.addEventListener('click', onBegin)
   skip.addEventListener('click', onSkip)
 
   const api: TitleUI = {
-    showBegin() {
-      if (disposed) return
-      setMode('begin')
-      plaque.hidden = false
-      plaque.removeAttribute('aria-hidden')
-      begin.hidden = false
-      begin.disabled = false
-      begin.tabIndex = 0
-      skip.hidden = true
-      skip.tabIndex = -1
-      begin.focus({ preventScroll: true })
-    },
-
     showPrologue(canSkip) {
       if (disposed) return
       setMode('prologue')
       plaque.hidden = false
       plaque.setAttribute('aria-hidden', 'true')
-      begin.disabled = true
-      begin.tabIndex = -1
       skip.hidden = !canSkip
       skip.tabIndex = canSkip ? 0 : -1
       layer.setAttribute('aria-hidden', String(!canSkip))
@@ -131,9 +106,6 @@ export function createTitleUI(
       setMode('cover')
       plaque.hidden = false
       plaque.removeAttribute('aria-hidden')
-      begin.hidden = true
-      begin.disabled = true
-      begin.tabIndex = -1
       skip.hidden = true
       skip.tabIndex = -1
       coverTimer = window.setTimeout(() => {
@@ -145,9 +117,6 @@ export function createTitleUI(
     hide() {
       if (disposed) return
       setMode('hidden')
-      begin.hidden = true
-      begin.disabled = true
-      begin.tabIndex = -1
       skip.hidden = true
       skip.tabIndex = -1
     },
@@ -158,7 +127,6 @@ export function createTitleUI(
       clearCoverTimer()
       clearPlaqueTimer()
       setBackgroundInert(false)
-      begin.removeEventListener('click', onBegin)
       skip.removeEventListener('click', onSkip)
       layer.remove()
     },

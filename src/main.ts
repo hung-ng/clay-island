@@ -506,17 +506,16 @@ function skipNormalPrologue(): void {
 
 const titleUI = createTitleUI(ui, {
   reducedMotion,
-  onBegin: beginNormalPrologue,
   onSkip: skipNormalPrologue,
 })
 
-function prepareNormalTitle(): void {
+function startNormalPrologue(): void {
   if (flow.phase !== 'title' || director) return
   director = createDirector(flow.generation + 1)
-  titleUI.showBegin()
+  beginNormalPrologue()
 }
 
-prepareNormalTitle()
+startNormalPrologue()
 
 function swapToFrozenGameplay(): boolean {
   if (!director || flow.phase !== 'prologue') return false
